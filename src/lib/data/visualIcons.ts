@@ -18,8 +18,13 @@ export interface IconCategoryDef {
  * How many icons from each category's master pool are shown to a single user.
  * Must match the server's POOL_PER_CATEGORY (services/mod.rs). The personal
  * subset is generated at registration, persisted, and replayed at login.
+ *
+ * Шестнадцать, а не восемь: знаков в пароле четыре, и весь пароль — это
+ * `POOL_PER_CATEGORY⁴`. Восемь давали 4096 сочетаний, шестнадцать дают 65 536.
+ * Число названо в двух местах — здесь и на сервере, — и разойтись им нельзя:
+ * набор, присланный страницей, сервер проверяет по своему числу.
  */
-export const POOL_PER_CATEGORY = 8;
+export const POOL_PER_CATEGORY = 16;
 
 // All SVGs: 24×24 viewBox, stroke="currentColor" fill="none" strokeWidth="1.5"
 const S = 'stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
@@ -261,11 +266,35 @@ export function getIconById(categoryId: IconCategory, iconId: string): VisualIco
  * order (animals, dishes, seasons, symbols). The full pool is the alphabet the
  * server replays at login, so it must be sent alongside the chosen selections.
  */
+/**
+ * Случайное число от 0 до `bound - 1`.
+ *
+ * `crypto`, а не `Math.random`: сам набор не секрет — его рисуют на экране
+ * всякому, кто назовёт адрес, — но по предсказуемому набору видно, какие
+ * значки в него НЕ попали, а это уже сужает выбор. Предсказуемого источника
+ * там, где рядом лежит непредсказуемый, быть не должно.
+ */
+function below(bound: number): number {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const box = new Uint32Array(1);
+    // Отбрасывание хвоста: остаток от деления сам по себе перекашивает выбор
+    // в сторону меньших чисел.
+    const edge = Math.floor(0xffffffff / bound) * bound;
+    let value: number;
+    do {
+      crypto.getRandomValues(box);
+      value = box[0];
+    } while (value >= edge);
+    return value % bound;
+  }
+  return Math.floor(Math.random() * bound);
+}
+
 export function generatePersonalPool(): string[][] {
   return VISUAL_CATEGORIES.map(cat => {
     const ids = cat.icons.map(i => i.id);
     for (let i = ids.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = below(i + 1);
       [ids[i], ids[j]] = [ids[j], ids[i]];
     }
     return ids.slice(0, POOL_PER_CATEGORY);

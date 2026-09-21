@@ -4,7 +4,7 @@
     import { cubicOut } from 'svelte/easing';
     import { api, resolveSrcset, resolveBackgroundSrcset, resolveWebpUrl } from '$lib/api';
     import { figurineHref } from '$lib/figurineHref';
-    import { createSiteAnalytics } from '$lib/analytics';
+    import { observeWork, roomCta } from '$lib/analytics';
     import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, GazetteHome, HomeContent } from '$lib/types/api';
     import { t, brandName } from '$lib/i18n';
@@ -412,18 +412,10 @@
     // the very thing it asks for. (There was such a flag; nothing ever set it.)
     let showHint = $state(false);
 
-    // Site-wide analytics for the home page. `trackWorks` so each work tile that
-    // scrolls into view (via `siteAnalytics.observeWork` on its .reel-slot) counts
-    // toward the visit's works_seen — how many pieces the visitor actually saw
-    // before leaving. `start()`/`stop()` measure dwell time + scroll depth.
-    const siteAnalytics = createSiteAnalytics({ trackWorks: true });
-
+    // The visit itself is recorded by the layout. What belongs to this page is
+    // the reel: `observeWork` on each .reel-slot counts how many pieces the
+    // visitor actually saw before leaving (works_seen).
     onMount(() => {
-        // Site-wide view, no figurine attached — respects the same DNT/admin
-        // exclusions as the figurine-detail tracking automatically. Dedupes
-        // internally, so this stays a no-op if the component ever re-mounts.
-        siteAnalytics.pageView();
-        siteAnalytics.start();
         const stopExtras = afterLoadIdle(() => { deferHomeExtras = true; });
 
         // Hydration does not touch src/srcset (see hydrate-image.ts): on this prerendered
@@ -531,7 +523,6 @@
             reduceMq.removeEventListener('change', syncTiltPreference);
             pointerMq.removeEventListener('change', syncTiltPreference);
             window.removeEventListener('message', onHlMessage);
-            siteAnalytics.stop();
         };
     });
 
@@ -839,7 +830,7 @@
 
                         <div class="work-reel" bind:this={reelEl}>
                             {#each visibleGalleryFigurines as fig, i (fig.id)}
-                                <div class="reel-slot" id="work-{fig.id}" data-reel-slot={i} use:siteAnalytics.observeWork={fig.id}>
+                                <div class="reel-slot" id="work-{fig.id}" data-reel-slot={i} use:observeWork={fig.id}>
                                     <!-- The pane's paragraph is the work's own short text,
                                          which the list payload already carries — no lookup
                                          table in between (there was one; it rebuilt an
@@ -850,7 +841,7 @@
                                         story={fig.shortText}
                                         flip={i % 2 === 1}
                                         source="home_grid"
-                                        onLike={() => siteAnalytics.cta('wishlist')}
+                                        onLike={() => roomCta('wishlist')}
                                     />
                                 </div>
                             {/each}

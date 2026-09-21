@@ -774,8 +774,8 @@ pub struct AdminFigurineAnalyticsDetail {
 }
 
 /// Per-page engagement for the generic (non-figurine) pages, keyed by the same
-/// coarse `path_group` as `site_page_views_daily` (home/archive/author/workshop/
-/// commission).
+/// coarse `path_group` as `site_page_views_daily` — one row per room of the
+/// house, named by `PATH_GROUP_SQL` in `db`.
 ///
 /// `views`/`unique_visitors` come from the permanent `site_page_views_daily`
 /// rollup and cover the full range. Everything derived from raw `page_engaged`
@@ -1615,11 +1615,18 @@ pub struct BookingsPage {
 #[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: Uuid,
-    pub email: String,
+    /// NULL у аккаунта, заведённого через Telegram и ещё не назвавшего почту.
+    /// Почту спрашивает дело (бронь, заказ, лист ожидания), а не дверь.
+    pub email: Option<String>,
     pub display_name: String,
-    pub visual_password_hash: String,
+    /// NULL у аккаунта без визуального пароля — вошедшего через Telegram.
+    /// Такому `login_verify` отвечает обычным Unauthorized, тем же, что и
+    /// неизвестной почте.
+    pub visual_password_hash: Option<String>,
     pub admin_notes: Option<String>,
     pub is_blocked: bool,
+    /// SHA-256 от ключа сброса, а не сам ключ: он живёт в почтовом ящике и в
+    /// адресной строке, и базе незачем хранить его второй раз.
     pub password_reset_token: Option<String>,
     pub password_reset_expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -1641,6 +1648,28 @@ pub struct User {
     pub last_reset_request_country_code: Option<String>,
     pub last_reset_request_city: Option<String>,
     pub last_reset_request_at: Option<DateTime<Utc>>,
+    /// Постоянный числовой идентификатор Telegram — по нему и только по нему
+    /// узнаётся вернувшийся. `@username` для этого не годится: освобождённое
+    /// имя забирает кто угодно.
+    pub telegram_id: Option<i64>,
+    /// Только чтобы напечатать «Telegram: @маша». Переписывается при каждом
+    /// входе; имя в профиле при этом не трогается.
+    pub telegram_username: Option<String>,
+    pub telegram_linked_at: Option<DateTime<Utc>>,
+    /// Когда человек открыл дверь изнутри почтового ящика. Пусто — адрес
+    /// назван, но не подтверждён: дом им ОТВЕТИТ на заказ, но не ВПУСТИТ.
+    pub email_confirmed_at: Option<DateTime<Utc>>,
+    /// SHA-256 от письма-приглашения. Тот же закон, что у ключа сброса.
+    pub email_confirm_hash: Option<String>,
+    pub email_confirm_expires_at: Option<DateTime<Utc>>,
+}
+
+impl User {
+    /// Годится ли этот адрес как дверь: сброс знаков и привязка гостевых
+    /// расписок спрашивают подтверждения, а не наличия.
+    pub fn email_confirmed(&self) -> bool {
+        self.email.is_some() && self.email_confirmed_at.is_some()
+    }
 }
 
 /// Originating request metadata captured for login attempts and sessions.
@@ -1652,6 +1681,15 @@ pub struct ClientContext {
     pub user_agent: Option<String>,
     pub country_code: Option<String>,
     pub city: Option<String>,
+}
+
+/// Три счёта неудач за один проход по журналу попыток: тесный — по паре
+/// «почта и сеть», и два широких — по имени и по сети порознь.
+#[derive(Debug, Clone, Copy)]
+pub struct FailureTally {
+    pub pair: i64,
+    pub by_email: i64,
+    pub by_ip: i64,
 }
 
 /// One token entry inside the challenge JSONB array
@@ -1707,10 +1745,25 @@ pub struct LinkBookingsRequest {
 #[serde(rename_all = "camelCase")]
 pub struct UserDto {
     pub id: String,
-    pub email: String,
+    /// Пусто у аккаунта, вошедшего через Telegram и ещё не назвавшего почту.
+    pub email: Option<String>,
     pub display_name: String,
     pub avatar_url: Option<String>,
     pub created_at: String,
+    /// `@имя` в Telegram, если вход привязан. Строка в профиле, не ключ.
+    pub telegram_username: Option<String>,
+    /// Привязан ли Telegram вообще. Отдельно от имени: у человека может не
+    /// быть `@username` вовсе, а дверь при этом есть.
+    pub telegram_linked: bool,
+    /// Заданы ли знаки. Вместе с почтой это первая дверь, и профиль по этим
+    /// двум полям знает, можно ли отвязать Telegram, ДО того как нажали:
+    /// объяснить заранее лучше, чем отказать после.
+    pub has_signs: bool,
+    /// Подтверждён ли адрес. Профиль печатает по нему приглашение открыть
+    /// письмо, а отвязка Telegram спрашивает его же: неподтверждённый адрес
+    /// дверью не является, и считать его дверью значило бы запереть человека
+    /// снаружи по опечатке.
+    pub email_confirmed: bool,
 }
 
 impl From<&User> for UserDto {
@@ -1721,14 +1774,138 @@ impl From<&User> for UserDto {
             display_name: u.display_name.clone(),
             avatar_url: u.avatar_url.clone(),
             created_at: u.created_at.to_rfc3339(),
+            telegram_username: u.telegram_username.clone(),
+            telegram_linked: u.telegram_id.is_some(),
+            has_signs: u.visual_password_hash.is_some(),
+            email_confirmed: u.email_confirmed(),
         }
     }
+}
+
+/// Что отвечает заведение имени. Ответ двух видов, и вид выбирает не запрос, а
+/// то, **есть ли у дома чем отправить письмо**.
+///
+/// `pending` — строгий порядок: письмо ушло, сессии нет. Ответ на занятый и на
+/// свободный адрес при этом одинаков, и перечислить жильцов дома по нему
+/// нельзя — разницу узнаёт только тот, у кого ключ от ящика.
+///
+/// Иначе — открытый порядок: почты у дома нет, значит подтверждать нечем, и
+/// держать человека у двери ради письма, которое никогда не придёт, незачем.
+/// Тогда приходит сессия, а занятый адрес отвечает отказом — то есть
+/// перечисление возвращается. Это цена открытого порядка, и она названа вслух
+/// в журнале при запуске.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisterResponse {
+    /// `true` — ждём перехода по ссылке из письма.
+    pub pending: bool,
+    /// Куда ушло письмо — печатается на экране, чтобы опечатку было видно
+    /// сразу, а не через сутки ожидания.
+    pub email: String,
+    /// Заполнены только в открытом порядке.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<UserDto>,
+}
+
+/// Подтверждение адреса по ссылке из письма. Тот же ответ, что у входа: дверь
+/// открыта, и человек уже внутри.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmEmailRequest {
+    pub token: String,
+}
+
+/// Открытая дверь, какой её видит хозяин имени.
+///
+/// Список нужен потому, что сессия живёт месяц и ключ от неё лежит в чужом
+/// браузере ровно столько же. Увидеть свои двери и закрыть все разом — это не
+/// украшение профиля, а единственный способ ответить на «кажется, я входил не
+/// со своего компьютера».
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnSessionDto {
+    pub id: String,
+    pub created_at: String,
+    pub expires_at: String,
+    /// Та самая, из которой смотрят. Её не закрывают кнопкой «закрыть
+    /// остальные», и отметить её надо прежде, чем человек закроет себя сам.
+    pub current: bool,
+    /// Чем смотрели — одним словом. Полная строка `User-Agent` в профиле
+    /// нечитаема, а «Chrome» отвечает на тот вопрос, который задают.
+    pub browser: Option<String>,
+    /// Откуда — город и страна, если известны.
+    pub place: Option<String>,
+}
+
+/// Почта, названная в ответ на дело, которому она нужна.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NameEmailRequest {
+    pub email: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateProfileRequest {
     pub display_name: String,
+}
+
+// ============================================================
+// TELEGRAM LOGIN — одноразовое слово
+// ============================================================
+
+/// Строка `telegram_login_codes`: одна попытка входа через бота.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TelegramLoginCode {
+    pub id: Uuid,
+    pub code: String,
+    pub word: String,
+    pub state: String,
+    pub browser: Option<String>,
+    pub country_code: Option<String>,
+    pub city: Option<String>,
+    pub ip: Option<String>,
+    /// Заполнено — привязка Telegram к этому аккаунту, а не вход.
+    pub bind_user_id: Option<Uuid>,
+    pub telegram_id: Option<i64>,
+    pub telegram_username: Option<String>,
+    pub telegram_first_name: Option<String>,
+    pub chat_id: Option<i64>,
+    pub message_id: Option<i64>,
+    pub session_token: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub taken_at: Option<DateTime<Utc>>,
+}
+
+/// Что страница показывает, пока ждёт: слово для сверки и куда идти.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramCodeResponse {
+    pub code: String,
+    pub word: String,
+    /// Готовая ссылка `https://t.me/<бот>?start=<code>`.
+    pub link: String,
+    pub expires_at: String,
+}
+
+/// Ответ на опрос. `state` — то же слово, что в базе; сессия приходит один раз.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramCodeStatus {
+    pub state: String,
+    pub session_token: Option<String>,
+    pub user: Option<UserDto>,
+}
+
+/// Есть ли вход через Telegram на этом сервере и каким ботом.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramLoginConfig {
+    pub enabled: bool,
+    pub bot_username: Option<String>,
 }
 
 /// One icon in a challenge grid step — token replaces real ID
@@ -1801,7 +1978,9 @@ pub struct UserOrderDto {
 #[serde(rename_all = "camelCase")]
 pub struct AdminUserListItem {
     pub id: String,
-    pub email: String,
+    /// NULL у аккаунта без почты — `FromRow` декодирует строку, а не Option,
+    /// и `String` здесь падал бы при чтении, а не при сборке.
+    pub email: Option<String>,
     pub display_name: String,
     pub admin_notes: Option<String>,
     pub created_at: String,
@@ -1825,8 +2004,12 @@ pub struct AdminSessionDto {
 #[serde(rename_all = "camelCase")]
 pub struct AdminUserDetail {
     pub id: String,
-    pub email: String,
+    /// Пусто у аккаунта, вошедшего через Telegram и не назвавшего почту.
+    pub email: Option<String>,
     pub display_name: String,
+    /// Какими дверями этот человек входит: `@имя` в Telegram, если привязан.
+    pub telegram_username: Option<String>,
+    pub telegram_linked: bool,
     pub admin_notes: Option<String>,
     pub created_at: String,
     pub signup_ip: Option<String>,
@@ -2365,7 +2548,8 @@ pub struct ThreadDetailDto {
 pub struct ThreadUserDto {
     pub id: String,
     pub display_name: String,
-    pub email: String,
+    /// Пусто у аккаунта без почты — дом отвечает ему запиской в профиле.
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2984,6 +3168,7 @@ pub struct GazetteLeaf {
     pub href: Option<String>,
     pub source_name: Option<String>,
     pub source_url: Option<String>,
+    pub author: Option<String>,
     pub image_url: Option<String>,
     pub image_urls: Vec<String>,
     pub pinned: bool,
@@ -3011,6 +3196,7 @@ pub struct GazetteLeafListed {
     pub href: Option<String>,
     pub source_name: Option<String>,
     pub source_url: Option<String>,
+    pub author: Option<String>,
     pub image_url: Option<String>,
     pub image_urls: Vec<String>,
     pub pinned: bool,
@@ -3046,6 +3232,8 @@ pub struct GazetteLeafDto {
     pub href: Option<String>,
     pub source_name: Option<String>,
     pub source_url: Option<String>,
+    /// Кем написана история. Пусто — дом, и подпись не печатается.
+    pub author: Option<String>,
     pub image_url: Option<String>,
     pub image_urls: Vec<String>,
     pub pinned: bool,
@@ -3098,6 +3286,7 @@ pub struct SaveGazetteLeafRequest {
     pub href: Option<String>,
     pub source_name: Option<String>,
     pub source_url: Option<String>,
+    pub author: Option<String>,
     pub image_url: Option<String>,
     #[serde(default)]
     pub image_urls: Vec<String>,
@@ -3304,6 +3493,133 @@ pub struct GazetteRefreshReport {
     pub feeds: i64,
     pub imported: i64,
     pub errors: Vec<String>,
+}
+
+// ============================================================
+// БАЙКИ — отклик читателя: комментарии, голос, просмотры
+// ============================================================
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TaleComment {
+    pub id: Uuid,
+    pub tale_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub author_name: String,
+    pub author_email: Option<String>,
+    pub body: String,
+    pub is_approved: bool,
+    pub admin_reply: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TaleCommentWithAvatar {
+    pub id: Uuid,
+    pub author_name: String,
+    pub body: String,
+    pub admin_reply: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub avatar_url: Option<String>,
+}
+
+/// Комментарий к байке в столе рассказов. Несёт байку, потому что стол
+/// показывает и очередь целиком, и отклик на открытую байку.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminTaleCommentRow {
+    pub id: Uuid,
+    pub tale_id: Uuid,
+    pub tale_title_en: String,
+    pub tale_title_ru: String,
+    pub tale_slug: String,
+    pub author_name: String,
+    pub author_email: Option<String>,
+    pub body: String,
+    pub is_approved: bool,
+    pub admin_reply: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub user_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTaleCommentDto {
+    pub id: String,
+    pub tale_id: String,
+    pub tale_title_en: String,
+    pub tale_title_ru: String,
+    pub tale_slug: String,
+    pub author_name: String,
+    pub author_email: Option<String>,
+    pub body: String,
+    pub is_approved: bool,
+    pub admin_reply: Option<String>,
+    pub created_at: String,
+    pub user_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTaleCommentsPage {
+    pub items: Vec<AdminTaleCommentDto>,
+    pub total: i64,
+    pub pending_count: i64,
+    pub page: i64,
+    pub per_page: i64,
+}
+
+/// Голос читателя. `value` — +1, −1 или 0 («снять голос»), и это явное
+/// назначение, а не переключатель: удвоенный запрос не должен снимать то,
+/// что сам же поставил.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleVoteRequest {
+    pub visitor_token: String,
+    pub value: i16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleVoteResponse {
+    /// Голос этого читателя сейчас: 1, −1 или 0.
+    pub value: i16,
+    pub likes: i64,
+    /// Число минусов. Отдаётся всегда, а печатает его только админка.
+    pub dislikes: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleViewRequest {
+    pub visitor_token: String,
+}
+
+/// Числа под байкой. `dislikes` в публичном ответе не участвует — минус видит
+/// только стол рассказов, поэтому поле необязательное и заполняется админской
+/// веткой.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleStatsDto {
+    pub views: i64,
+    pub likes: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dislikes: Option<i64>,
+    pub comments: i64,
+    /// Голос этого читателя, когда он назвал себя жетоном посетителя.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub my_vote: Option<i16>,
+}
+
+/// Строка свода по байкам в столе рассказов: сколько прочли, сколько
+/// откликнулись, сколько времени провели.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTaleStatRow {
+    pub tale_id: String,
+    pub views: i64,
+    pub likes: i64,
+    pub dislikes: i64,
+    pub comments: i64,
+    pub pending_comments: i64,
 }
 
 // ============================================================

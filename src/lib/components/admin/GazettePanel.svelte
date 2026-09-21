@@ -3,6 +3,7 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import { t, lang, type TranslationKey, type Lang } from '$lib/i18n';
   import {
+    AUTHOR_MAX,
     DEK_MAX,
     TITLE_MAX,
     decodeEntities,
@@ -65,6 +66,8 @@
   let scheduledAt = $state<string | null>(null);
   let sourceName = $state('');
   let sourceUrl = $state('');
+  // Кем написана история. Одно поле на оба языка: имя не переводится.
+  let author = $state('');
 
   let kind = $state<GazetteKind>('arrival');
   let status = $state<GazetteStatus>('draft');
@@ -229,6 +232,7 @@
       imageUrls,
       sourceName,
       sourceUrl,
+      author,
       slug,
       pinned,
       scheduledAt,
@@ -278,6 +282,7 @@
     slug = '';
     sourceName = '';
     sourceUrl = '';
+    author = '';
     publishedAt = null;
     pinned = false;
     scheduledAt = null;
@@ -313,6 +318,7 @@
     slug = leaf.slug;
     sourceName = leaf.sourceName ?? '';
     sourceUrl = leaf.sourceUrl ?? '';
+    author = leaf.author ?? '';
     publishedAt = leaf.publishedAt;
     pinned = leaf.pinned;
     scheduledAt = leaf.scheduledAt;
@@ -437,6 +443,7 @@
       href: href.trim() || null,
       sourceName: sourceName.trim() || null,
       sourceUrl: sourceUrl.trim() || null,
+      author: author.trim() || null,
       imageUrl: imageUrls[0] ?? null,
       imageUrls: imageUrls.length ? imageUrls : null,
       pinned,
@@ -964,6 +971,12 @@
               />
 
               {#if bodyMain}
+                <!-- Подпись под историей. Одно поле на оба языка: имя не
+                     переводится, а пустое поле значит «дом» — тогда под
+                     историей не печатается ничего. -->
+                <label class="lbl" for="gz-author">{$t('adminGazetteAuthor')}</label>
+                <input id="gz-author" bind:value={author} maxlength={AUTHOR_MAX} />
+                <p class="muted tight">{$t('adminGazetteAuthorHint')}</p>
                 {@render bodyField()}
               {/if}
 

@@ -4,5 +4,5 @@
 /server/target
 /server/.idea
 /server/uploads
-/server/test**
+/server/test-data
 /server/Cargo.lock

@@ -11,7 +11,7 @@
   import PlateGestures from '$lib/components/figurine-detail/PlateGestures.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
-  import FigurineComments from '$lib/components/FigurineComments.svelte';
+  import CommentsThread from '$lib/components/CommentsThread.svelte';
   import '$lib/styles/figurine-detail/layout-showcase.css';
 
   import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
@@ -457,7 +457,7 @@
     {/if}
     </div>
     <div class="dc-block--comments" class:dc-block--hidden={!isBlockVisible(ctx.displayConfig, 'comments')} style={computeBlockStyle(ctx.displayConfig, 'comments')}>
-      <FigurineComments figurineId={ctx.id} />
+      <CommentsThread target={{ kind: 'figurine', id: ctx.id }} />
     </div>
     </div>
   </div>

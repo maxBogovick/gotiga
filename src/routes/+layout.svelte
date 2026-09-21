@@ -13,6 +13,7 @@
   import { loadSiteFonts } from '$lib/load-fonts';
   import { api } from '$lib/api';
   import { matchChrome } from '$lib/stores/match-chrome.svelte';
+  import { enterRoom, leaveRoom } from '$lib/analytics';
   import type { Lang } from '$lib/i18n';
 
   type ViewTransition = { finished: Promise<void>; ready: Promise<void> };
@@ -40,6 +41,24 @@
   // passport routes, which run their own candle vignette (stacking a second
   // scroll-linked dimmer there would over-darken the specimen).
   let showDescent = $derived(showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
+
+  // Visit tracking lives here and only here. A page that has to remember to
+  // call analytics is a page that will one day be added without calling it,
+  // and the hole shows up a month later as an empty row in the report — which
+  // is exactly how /gazette, /tales, /battles, /upcoming, /hall and the rest
+  // went unrecorded. The layout survives every client-side navigation, so one
+  // effect keyed on the route covers every room at once, now and later.
+  //
+  // `enterRoom` ignores a repeated path itself (a filter rewriting the query
+  // string is not a new visit) and steps aside on routes that report
+  // themselves — the figurine page sends `figurine_view`.
+  // No cleanup returned on purpose: this effect re-runs on every `page.url`
+  // change, query string included, and a cleanup would close the room before
+  // `enterRoom` could see that the path is the same one. The room is closed by
+  // `onDestroy` below and by the instance's own `pagehide` listener.
+  $effect(() => {
+    enterRoom(page.url.pathname, page.route.id);
+  });
 
   // Keep <html lang> in sync with the active language. app.html hard-codes lang="ru",
   // but the default content language is English (i18n getInitialLang) and the reader
@@ -121,6 +140,7 @@
   });
 
   onDestroy(() => {
+    leaveRoom();
     stopFontLoader?.();
     stopPreviewListener?.();
     removeMessageListener?.();

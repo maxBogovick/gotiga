@@ -9,9 +9,11 @@
   import { jsonLdSafe } from '$lib/jsonld';
   import { leafCopy, leafCoverUrl, neighborTitle, workHref } from '$lib/gazette';
   import { renderTale, taleMorphNames, ORNAMENT } from '$lib/tales';
-  import type { GazetteLeaf } from '$lib/types/api';
+  import { visitorToken } from '$lib/visitorToken';
+  import type { GazetteLeaf, TaleVote } from '$lib/types/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import ArchClip from '$lib/components/ArchClip.svelte';
+  import CommentsThread from '$lib/components/CommentsThread.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
 
   let { data } = $props();
@@ -21,6 +23,7 @@
   // The drop cap belongs to the first paragraph, which need not be the first
   // block — a tale may open on an ornament.
   let firstPara = $derived(blocks.findIndex((b) => b.kind === 'p'));
+  let byline = $derived(data.leaf?.author?.trim() ?? '');
   let plate = $derived(data.leaf ? leafCoverUrl(data.leaf) : '');
   let work = $derived(data.leaf ? workHref(data.leaf, 'tale') : null);
   /**
@@ -36,16 +39,81 @@
    * time would freeze the neighbour's photograph into the HTML.
    */
   let shelf = $state<GazetteLeaf[]>([]);
-  onMount(async () => {
-    if (!data.leaf?.next) return;
-    try {
-      shelf = await api.getTales();
-    } catch {
-      // The invitation simply arrives without its arch. A tale that cannot
-      // reach the shelf is still a tale.
-      shelf = [];
+
+  /**
+   * Отклик читателя: сколько раз байку открывали, сколько откликнулось и что
+   * ответил этот читатель. Числа приходят с сервера, а не складываются на
+   * странице: два счётчика одного числа однажды разойдутся.
+   *
+   * Минус сюда не приходит вовсе — его печатает только стол рассказов.
+   */
+  let views = $state(0);
+  let likes = $state(0);
+  let myVote = $state<TaleVote>(0);
+  let voting = $state(false);
+
+  onMount(() => {
+    const id = data.leaf?.id;
+    if (id) {
+      const token = visitorToken();
+      // Просмотр отмечается один раз в сутки на читателя — это решает сервер.
+      // Числа спрашиваются ПОСЛЕ отметки, а не рядом с ней: посчитанные
+      // одновременно, они не включали бы этого читателя, и человек, открывший
+      // байку первым, видел бы под ней ноль.
+      void api.recordTaleView(id, token).then(() =>
+        api.getTaleStats(id, token).then((stats) => {
+          if (!stats) return;
+          views = stats.views;
+          likes = stats.likes;
+          myVote = stats.myVote ?? 0;
+        }),
+      );
+    }
+
+    if (data.leaf?.next) {
+      void api
+        .getTales()
+        .then((list) => (shelf = list))
+        // The invitation simply arrives without its arch. A tale that cannot
+        // reach the shelf is still a tale.
+        .catch(() => (shelf = []));
     }
   });
+
+  /**
+   * Голос назначается, а не переключается: повторное нажатие на уже
+   * поставленный голос снимает его (0), нажатие на другой — меняет. Решение
+   * принимает страница, а сервер записывает названное, поэтому удвоенный
+   * запрос не может снять то, что сам же поставил.
+   */
+  async function vote(next: 1 | -1) {
+    const id = data.leaf?.id;
+    if (!id || voting) return;
+    const value: TaleVote = myVote === next ? 0 : next;
+
+    // Кнопка отвечает пальцу, а не сети: голос и счётчик меняются сразу, а
+    // ответ сервера потом называет настоящее число (его мог изменить кто-то
+    // ещё). Ждать ответа нельзя — на медленной сети нажатие выглядит как
+    // кнопка, которая не работает.
+    const wasVote = myVote;
+    const wasLikes = likes;
+    myVote = value;
+    likes = Math.max(0, likes + (value === 1 ? 1 : 0) - (wasVote === 1 ? 1 : 0));
+
+    voting = true;
+    try {
+      const out = await api.setTaleVote(id, visitorToken(), value, authStore.token);
+      myVote = out.value;
+      likes = out.likes;
+    } catch {
+      // Не записалось — возвращаем то, что было: счётчик, показывающий не то,
+      // что лежит на сервере, хуже счётчика, который не изменился.
+      myVote = wasVote;
+      likes = wasLikes;
+    } finally {
+      voting = false;
+    }
+  }
 
   let nextLeaf = $derived(
     data.leaf?.next ? shelf.find((tale) => tale.slug === data.leaf?.next?.slug) ?? null : null,
@@ -123,7 +191,9 @@
           image: plateAbsolute ?? undefined,
           articleSection: $t('talesPageTitle'),
           ...(wordCount ? { wordCount } : {}),
-          author: { '@type': 'Organization', name: $brandName, url: SITE_URL },
+          author: byline
+            ? { '@type': 'Person', name: byline }
+            : { '@type': 'Organization', name: $brandName, url: SITE_URL },
           publisher: { '@type': 'Organization', name: $brandName, url: SITE_URL },
           isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
           ...(workUrl && data.leaf.figurineName
@@ -218,6 +288,15 @@
         </p>
         <h1 class="title">{copy.title}</h1>
         {#if copy.dek}<p class="epigraph">{copy.dek}</p>{/if}
+        <!-- Подпись печатается только тогда, когда она есть: небылица без
+             автора — небылица дома, и строка «Записал(а) —» под ней
+             отвечала бы на вопрос, которого никто не задавал. -->
+        {#if byline}
+          <p class="byline">
+            <span class="byline-word">{$t('talesAuthor')}</span>
+            <span class="byline-name">{byline}</span>
+          </p>
+        {/if}
       </header>
 
       <div class="leaf" in:fade={{ duration: 700, delay: 160 }}>
@@ -282,11 +361,46 @@
       <!-- Дно текста. Ничего не показывает — только отмечает, что дочитано. -->
       <span class="bottom" use:lastLine aria-hidden="true"></span>
 
+      <!-- Отклик читателя. Числа приходят с сервера; минус здесь не печатается
+           намеренно: он сказан дому, а не остальным читателям. -->
+      <section class="response" in:fade={{ duration: 500, delay: 200 }}>
+        <div class="response-votes">
+          <button
+            class="vote"
+            class:vote--on={myVote === 1}
+            onclick={() => vote(1)}
+            aria-pressed={myVote === 1}
+          >
+            <span class="vote-mark" aria-hidden="true">{myVote === 1 ? '♥' : '♡'}</span>
+            {$t('talesLikeAction')}
+          </button>
+          <button
+            class="vote vote--ill"
+            class:vote--on={myVote === -1}
+            onclick={() => vote(-1)}
+            aria-pressed={myVote === -1}
+          >
+            <span class="vote-mark" aria-hidden="true">✕</span>
+            {$t('talesDislikeAction')}
+          </button>
+        </div>
+        <p class="response-counts">
+          <span class="count"><b>{views}</b> {$t('talesViews')}</span>
+          <span class="count-rule" aria-hidden="true"></span>
+          <span class="count"><b>{likes}</b> {$t('talesLikes')}</span>
+        </p>
+      </section>
+
       {#if work}
         <footer class="stands" in:fade={{ duration: 500, delay: 220 }}>
           <a href={work}>{$t('talesWorkHere')} →</a>
         </footer>
       {/if}
+
+      <!-- Отклик — та же форма, что у работ: один компонент, своя таблица. -->
+      <div class="talk">
+        <CommentsThread target={{ kind: 'tale', id: data.leaf.id }} />
+      </div>
 
       {#if data.leaf.next}
         <a
@@ -416,6 +530,25 @@
     margin: 0;
   }
 
+  .byline {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 16px 0 0;
+  }
+  .byline-word {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--muted2, #5f4636);
+  }
+  .byline-name {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: clamp(16px, 1.6vw, 19px);
+    color: var(--ink, #34251c);
+  }
+
   /* ── The tale ──────────────────────────────────────────────────────────────
      One grid: the prose walks down column one, the work stands in column two
      and stays there while you read. Below 1100px the second column is gone and
@@ -520,6 +653,93 @@
     transition: color 0.25s;
   }
   .stands a:hover { color: var(--deep, #6f3b24); }
+
+  /* Отклик стоит по той же левой границе, что и проза: нить слева отмеряет
+     всю страницу, а не только текст. */
+  .response {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: clamp(14px, 2vw, 28px);
+    margin: clamp(34px, 5vw, 56px) 0 0 calc(var(--spine) + var(--spine-gap));
+    padding-top: 22px;
+    border-top: 1px solid rgba(52, 37, 28, 0.12);
+    max-width: 62ch;
+  }
+  .response-votes { display: flex; gap: 10px; }
+
+  .vote {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 14px;
+    background: transparent;
+    border: 1px solid rgba(52, 37, 28, 0.18);
+    color: var(--muted2, #5f4636);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s, background 0.2s;
+  }
+  /* Наведение объявлено ДО выбранного состояния и не берёт его специфичность:
+     после нажатия курсор остаётся на кнопке, и правило наведения, объявленное
+     последним и более узко, перекрывало бы выбранный голос — нажатие выглядело
+     бы как кнопка, которая ничего не сделала. */
+  .vote:hover { color: var(--ink, #34251c); border-color: rgba(52, 37, 28, 0.4); }
+  .vote:active { transform: translateY(1px); }
+  .vote-mark { font-size: 12px; line-height: 1; }
+
+  /* Выбранный голос залит: цвета текста мало — его не видно рядом с соседней
+     кнопкой, и именно на неё смотрят, решая, засчиталось ли. */
+  .vote.vote--on,
+  .vote.vote--on:hover {
+    background: var(--copper, #c65f3c);
+    border-color: var(--copper, #c65f3c);
+    color: #f8f1e7;
+  }
+  /* Минус залит чернилами, а не медью: медь в этом доме значит «отмечено
+     тепло», и красить ею отказ — врать цветом. */
+  .vote.vote--ill.vote--on,
+  .vote.vote--ill.vote--on:hover {
+    background: var(--brown, #34251c);
+    border-color: var(--brown, #34251c);
+  }
+  .vote--on .vote-mark { transform: scale(1.15); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .vote { transition: none; }
+    .vote:active { transform: none; }
+  }
+
+  .response-counts {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted2, #5f4636);
+  }
+  .response-counts b {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 17px;
+    font-weight: 400;
+    letter-spacing: 0;
+    color: var(--ink, #34251c);
+  }
+  .count { display: inline-flex; align-items: baseline; gap: 6px; }
+  .count-rule {
+    width: 18px;
+    height: 1px;
+    background: rgba(52, 37, 28, 0.2);
+  }
+
+  .talk {
+    margin: clamp(40px, 6vw, 72px) 0 0 calc(var(--spine) + var(--spine-gap));
+  }
 
   .neighbors {
     display: flex;

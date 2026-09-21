@@ -21,8 +21,12 @@ const CLAIMS_PREFIX = 'gotiga_claims_';
 const PURSE_PREFIX = 'gotiga_battle_purse_';
 
 // Identity-sensitive receipts/tokens that must not outlive a deliberate logout:
-// commission claim tokens, a pending claim awaiting account-link, and the
-// plaintext visual-password reminder written at registration.
+// commission claim tokens and a pending claim awaiting account-link.
+//
+// `gotiga_visual_reminder` больше не пишется вовсе: это были четыре выбранных
+// знака открытым текстом, то есть сам пароль, лежавший в браузере до выхода и
+// доступный без всякой сессии. Из списка он не убран — в браузерах, где его
+// успели записать, он должен уйти при первом же выходе.
 const SENSITIVE_KEYS = [
   'gotiga_commissions',
   'gotiga_pending_claim',
@@ -107,6 +111,28 @@ class AuthStore {
 
   get token(): string | null {
     return this.sessionToken;
+  }
+
+  /**
+   * Чем человек подписан под своим именем: почтой, а если её нет — `@именем`
+   * в Telegram. Ответ один на все места, где это печатается (шапка, профиль):
+   * два ответа на вопрос «как его звать» однажды разошлись бы, и у вошедшего
+   * через Telegram под именем оставалась бы пустая строка.
+   */
+  /**
+   * Вошёл, но почты у имени нет — так бывает у пришедшего через Telegram.
+   * По этому признаку дело, которому нужен обратный адрес, показывает поле
+   * почты: у двери её не спрашивают, спрашивает дело.
+   */
+  get needsEmail(): boolean {
+    return this.user !== null && !this.user.email;
+  }
+
+  get handle(): string {
+    const u = this.user;
+    if (!u) return '';
+    if (u.email) return u.email;
+    return u.telegramUsername ? `@${u.telegramUsername}` : '';
   }
 }
 

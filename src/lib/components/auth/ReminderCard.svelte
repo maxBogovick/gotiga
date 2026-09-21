@@ -7,9 +7,16 @@
     finalSelections: string[]; // 4 icon IDs in category order
     userName: string;
     onContinue: () => void;
+    /**
+     * Адрес, на который ушло письмо. Заполнен — имя заведено, но ещё не
+     * открыто: внутрь пускает ссылка из ящика, а не эта страница. Знаки при
+     * этом показываются те же самые — запомнить их надо сейчас, а не после
+     * письма.
+     */
+    sentTo?: string | null;
   }
 
-  let { finalSelections, userName, onContinue }: Props = $props();
+  let { finalSelections, userName, onContinue, sentTo = null }: Props = $props();
 
   const CATEGORY_IDS: IconCategory[] = ['animals', 'dishes', 'seasons', 'symbols'];
 
@@ -32,8 +39,12 @@
 <div class="success">
   <div class="seal">✦</div>
 
-  <h1 class="title">{$t('authSuccessTitle')}</h1>
-  <p class="text">{$t('authSuccessText')}</p>
+  <h1 class="title">{sentTo ? $t('authLetterTitle') : $t('authSuccessTitle')}</h1>
+  <p class="text">{sentTo ? $t('authLetterText') : $t('authSuccessText')}</p>
+  {#if sentTo}
+    <p class="letter-to">{sentTo}</p>
+    <p class="letter-hint">{$t('authLetterHint')}</p>
+  {/if}
 
   <div class="reminder-section">
     <p class="reminder-label">{$t('authSaveReminder')}</p>
@@ -59,12 +70,11 @@
       <button class="btn-download" onclick={downloadCard} disabled={downloading}>
         {downloading ? '…' : `↓ ${$t('authDownloadCard')}`}
       </button>
-      <span class="saved-note">✓ {$t('authSavedLocally')}</span>
     </div>
   </div>
 
   <button class="btn-primary" onclick={onContinue}>
-    {$t('authGoToArchive')}
+    {sentTo ? $t('authLetterToLogin') : $t('authGoToArchive')}
   </button>
 </div>
 
@@ -75,6 +85,23 @@
     align-items: center;
     text-align: center;
     gap: 0.5rem;
+  }
+
+  .letter-to {
+    font-family: Georgia, serif;
+    font-size: 1.05rem;
+    color: #34251c;
+    margin: 0.2rem 0 0;
+    word-break: break-all;
+  }
+  .letter-hint {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: #6f3b24;
+    opacity: 0.85;
+    margin: 0.35rem 0 0;
+    max-width: 30rem;
   }
 
   .seal {
@@ -200,12 +227,6 @@
   }
   .btn-download:hover:not(:disabled) { border-color: #6f3b24; }
   .btn-download:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .saved-note {
-    font-size: 0.75rem;
-    color: #9a7c5c;
-    font-family: 'Instrument Sans', sans-serif;
-  }
 
   .btn-primary {
     background: #34251c;

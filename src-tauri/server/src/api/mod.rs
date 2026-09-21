@@ -131,6 +131,14 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/figurines/:id/mark", post(handlers::set_figurine_mark))
             .route("/figurines/:id/like", post(handlers::set_figurine_like))
             .route("/figurines/:id/waitlist", post(handlers::join_waitlist))
+            // === БАЙКИ: ОТКЛИК ЧИТАТЕЛЯ ===
+            .route(
+                "/tales/:id/comments",
+                get(handlers::get_tale_comments).post(handlers::submit_tale_comment),
+            )
+            .route("/tales/:id/vote", post(handlers::set_tale_vote))
+            .route("/tales/:id/view", post(handlers::record_tale_view))
+            .route("/tales/:id/stats", get(handlers::get_tale_stats))
             .route("/booking-rules", get(handlers::get_booking_rules))
             .route("/settings/contact", get(handlers::get_contact_settings))
             .route("/settings/programme", get(handlers::get_programme_settings))
@@ -473,6 +481,29 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                         config.clone(),
                         auth_middleware,
                     )),
+            )
+            // === БАЙКИ: ОТКЛИК (СТОЛ РАССКАЗОВ) ===
+            .route(
+                "/admin/tales/comments",
+                get(handlers::admin_list_tale_comments).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/tales/comments/:id",
+                patch(handlers::admin_moderate_tale_comment)
+                    .delete(handlers::admin_delete_tale_comment)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/tales/stats",
+                get(handlers::admin_tale_stats).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
             )
             // === IMPRESSIONS (ADMIN) ===
             .route(
@@ -1464,9 +1495,29 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 post(handlers::user_login_challenge),
             )
             .route("/auth/login/verify", post(handlers::user_login_verify))
+            .route("/auth/confirm", post(handlers::user_confirm_email))
+            .route("/auth/confirm/resend", post(handlers::user_resend_confirm))
+            .route("/auth/signs/letter", post(handlers::user_ask_for_signs))
+            .route("/auth/sessions", get(handlers::user_sessions))
+            .route(
+                "/auth/sessions/others",
+                delete(handlers::user_close_other_sessions),
+            )
             .route("/auth/logout", post(handlers::user_logout))
             .route("/auth/me", get(handlers::user_me))
             .route("/auth/link-bookings", post(handlers::user_link_bookings))
+            // Вход через Telegram: слово, опрос и webhook бота. Webhook живёт
+            // здесь же, среди публичных: Telegram не носит ни ключа админа,
+            // ни сессии — его доказательство это секрет в адресе и заголовке.
+            .route("/auth/telegram/config", get(handlers::telegram_login_config))
+            .route("/auth/telegram/code", post(handlers::telegram_login_code))
+            .route(
+                "/auth/telegram/code/:code",
+                get(handlers::telegram_login_status),
+            )
+            .route("/auth/telegram/link", delete(handlers::telegram_unlink))
+            .route("/auth/email", post(handlers::user_name_email))
+            .route("/telegram/webhook/:secret", post(handlers::telegram_webhook))
             .route(
                 "/certificates/:token",
                 get(handlers::get_public_certificate),

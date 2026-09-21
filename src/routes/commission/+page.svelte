@@ -1,32 +1,24 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { page } from '$app/state';
   import { api, resolveMediaUrl } from '$lib/api';
   import { t, lang , brandName } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { keepEmail } from '$lib/utils/nameEmail';
   import { isValidEmail } from '$lib/validation';
-  import { createSiteAnalytics } from '$lib/analytics';
+  import { roomCta } from '$lib/analytics';
   import type { AttachmentInput, Figurine, FigurineListItem } from '$lib/types/api';
 
   const STORE_KEY = 'gotiga_commissions';
   const PENDING_CLAIM_KEY = 'gotiga_pending_claim';
-
-  const siteAnalytics = createSiteAnalytics();
-  onDestroy(() => siteAnalytics.stop());
-
-  onMount(() => {
-    siteAnalytics.pageView();
-    siteAnalytics.start();
-  });
 
   // Fired from the step-1 title/description fields' own input handler — not a
   // reactive effect — so a programmatic value-set (e.g. the source-figurine
   // effect below prefilling `title`) never counts as "the visitor started
   // the form." cta() dedupes internally, so this is safe to call on every keystroke.
   function markFormStarted() {
-    siteAnalytics.cta('commission_form_start');
+    roomCta('commission_form_start');
   }
 
   let step = $state(1);
@@ -213,11 +205,22 @@
 
   async function submit() {
     submitError = '';
-    const effectiveEmail = authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim();
+    // У вошедшего через Telegram почты в имени нет — её называют здесь, и
+    // проверяется она так же, как гостевая.
+    const effectiveEmail = authStore.isLoggedIn
+      ? (authStore.user?.email ?? email.trim())
+      : email.trim();
     if (!effectiveEmail) { submitError = $t('formFillFields'); return; }
-    if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
+    if (!isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
     if (!description.trim()) { submitError = $t('commissionNeedIdea'); step = 1; return; }
     if (!ageConfirmed) { submitError = $t('formAgeConfirmRequired'); return; }
+
+    // Названную почту дом запоминает за именем — спросили один раз. Чужой
+    // адрес останавливает дело: в чужое имя его не записывают.
+    if (authStore.needsEmail && (await keepEmail(effectiveEmail)) === 'taken') {
+      submitError = $t('formEmailTaken');
+      return;
+    }
 
     // On the general form (no URL source) carry the checkbox selection: the first
     // ticked work becomes the linked source (thumbnail in admin/profile), and every
@@ -509,8 +512,19 @@
         {:else}
           <div class="step" in:fade={{ duration: 350 }}>
             {#if authStore.isLoggedIn}
-              <p class="as-user">{$t('commissionAsUser')} <strong>{authStore.user?.displayName}</strong> ({authStore.user?.email})</p>
-            {:else}
+              <p class="as-user">
+                {$t('commissionAsUser')} <strong>{authStore.user?.displayName}</strong>
+                {#if authStore.user?.email}({authStore.user.email}){/if}
+              </p>
+            {/if}
+            {#if authStore.needsEmail}
+              <p class="quiet">{$t('formEmailNeeded')}</p>
+              <label class="field">
+                <span class="field-label">{$t('commissionFieldEmail')} *</span>
+                <input class="input" type="email" bind:value={email} placeholder="you@example.com" />
+              </label>
+            {/if}
+            {#if !authStore.isLoggedIn}
               <label class="field">
                 <span class="field-label">{$t('commissionFieldName')}</span>
                 <input class="input" type="text" bind:value={name} placeholder={$t('commissionFieldNamePh')} />

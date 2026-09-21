@@ -7,7 +7,13 @@
 
   let avatarUrl = $derived(resolveMediaUrl(authStore.user?.avatarUrl));
 
-  let { figurineId }: { figurineId: string } = $props();
+  /**
+   * Одна форма на два места. Что именно комментируют, говорит `target`:
+   * у работы и у байки отклик хранится порознь (свои таблицы, своя очередь
+   * модерации), но выглядит и подаётся одинаково — иначе читатель встречал бы
+   * на одном сайте две разные формы с одним смыслом.
+   */
+  let { target }: { target: { kind: 'figurine' | 'tale'; id: string } } = $props();
 
   let comments = $state<CommentDto[]>([]);
   let loading = $state(true);
@@ -23,7 +29,10 @@
 
   async function loadComments() {
     loading = true;
-    comments = await api.getComments(figurineId, newestFirst);
+    comments =
+      target.kind === 'tale'
+        ? await api.getTaleComments(target.id, newestFirst)
+        : await api.getComments(target.id, newestFirst);
     loading = false;
   }
 
@@ -44,15 +53,16 @@
     }
     submitting = true;
     try {
-      await api.submitComment(
-        figurineId,
-        {
-          authorName: authStore.isLoggedIn ? undefined : authorName.trim() || undefined,
-          authorEmail: authorEmail.trim() || undefined,
-          body: bodyTrimmed,
-        },
-        authStore.token,
-      );
+      const req = {
+        authorName: authStore.isLoggedIn ? undefined : authorName.trim() || undefined,
+        authorEmail: authorEmail.trim() || undefined,
+        body: bodyTrimmed,
+      };
+      if (target.kind === 'tale') {
+        await api.submitTaleComment(target.id, req, authStore.token);
+      } else {
+        await api.submitComment(target.id, req, authStore.token);
+      }
       sent = true;
       body = '';
       authorName = '';

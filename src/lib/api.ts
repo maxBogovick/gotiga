@@ -23,6 +23,8 @@ import type {
     SaveShowingRequest,
     LoginChallengeResponse,
     LoginVerifyResponse,
+    RegisterResponse,
+    OwnSessionDto,
     UserDto,
     UserBookingDto,
     UserOrderDto,
@@ -513,7 +515,7 @@ function webBattleAsset<T extends { url: string }>(row: T): T {
     return { ...row, url: webPublicUrl(row.url) ?? row.url };
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
     status: number;
 
     constructor(status: number, body: string) {
@@ -1525,7 +1527,14 @@ export const api = {
 
     // === USER AUTH ===
 
-    async userRegister(email: string, displayName: string, selections: [string, string, string, string], pool: string[][], ageConfirmed: boolean): Promise<LoginVerifyResponse> {
+    /**
+     * Завести имя.
+     *
+     * `pending: true` — письмо ушло, сессия придёт по ссылке (`confirmEmail`);
+     * ответ на занятый адрес при этом неотличим от ответа на свободный.
+     * `pending: false` — у дома не настроена почта, и сессия приходит сразу.
+     */
+    async userRegister(email: string, displayName: string, selections: [string, string, string, string], pool: string[][], ageConfirmed: boolean): Promise<RegisterResponse> {
         return webFetch('/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1547,6 +1556,89 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ challengeId, tokens }),
         });
+    },
+
+    /** Перешли по ссылке из письма: адрес подтверждён, человек внутри. */
+    async confirmEmail(token: string): Promise<LoginVerifyResponse> {
+        return webFetch('/auth/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+        });
+    },
+
+    /** Выслать приглашение заново — своему же адресу. */
+    async resendConfirmEmail(sessionToken: string): Promise<void> {
+        await webFetch('/auth/confirm/resend', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /**
+     * Прислать себе ключ к знакам — в любой доказанный канал: на открытую
+     * почту, в привязанный Telegram или в оба сразу.
+     */
+    async askForSignsLetter(sessionToken: string): Promise<void> {
+        await webFetch('/auth/signs/letter', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Свои открытые двери. */
+    async userSessions(sessionToken: string): Promise<OwnSessionDto[]> {
+        return webFetch('/auth/sessions', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Закрыть все двери, кроме этой. */
+    async userCloseOtherSessions(sessionToken: string): Promise<{ closed: number }> {
+        return webFetch('/auth/sessions/others', {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    // === ВХОД ЧЕРЕЗ TELEGRAM ===
+
+    async telegramLoginConfig(): Promise<import('./types/api').TelegramLoginConfig> {
+        return webFetch('/auth/telegram/config');
+    },
+
+    /**
+     * Начать вход. С `sessionToken` это привязка Telegram к уже вошедшему
+     * аккаунту: ручка одна, потому что обряд один.
+     */
+    async telegramLoginCode(sessionToken?: string | null): Promise<import('./types/api').TelegramCodeResponse> {
+        const headers: Record<string, string> = {};
+        if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+        return webFetch('/auth/telegram/code', { method: 'POST', headers });
+    },
+
+    /**
+     * Назвать почту, когда её спросило дело. Только первая: замену почты
+     * сервер отклонит — она меняет личность и по дороге к заказу не делается.
+     */
+    async nameEmail(sessionToken: string, email: string): Promise<UserDto> {
+        return webFetch('/auth/email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify({ email }),
+        });
+    },
+
+    /** Снять вторую дверь. Сервер откажет, если она единственная. */
+    async telegramUnlink(sessionToken: string): Promise<UserDto> {
+        return webFetch('/auth/telegram/link', {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async telegramLoginStatus(code: string): Promise<import('./types/api').TelegramCodeStatus> {
+        return webFetch(`/auth/telegram/code/${encodeURIComponent(code)}`);
     },
 
     async userLogout(sessionToken: string): Promise<void> {
@@ -1907,6 +1999,107 @@ export const api = {
             headers: authHeaders(),
         });
         if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
+    // === БАЙКИ: ОТКЛИК ЧИТАТЕЛЯ ===
+
+    async getTaleComments(taleId: string, newestFirst = false): Promise<CommentDto[]> {
+        try {
+            const qs = newestFirst ? '?sort=newest' : '';
+            return await webFetch(`/tales/${taleId}/comments${qs}`);
+        } catch {
+            return [];
+        }
+    },
+
+    async submitTaleComment(taleId: string, req: SubmitCommentRequest, sessionToken?: string | null): Promise<void> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
+        await webFetch(`/tales/${taleId}/comments`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(req),
+        });
+    },
+
+    /**
+     * Назначить голос — 1, −1 или 0. Именно назначить, а не переключить:
+     * удвоенный запрос не должен снимать то, что сам же поставил.
+     */
+    async setTaleVote(
+        taleId: string,
+        visitorToken: string,
+        value: import('./types/api').TaleVote,
+        sessionToken?: string | null,
+    ): Promise<import('./types/api').TaleVoteResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
+        return webFetch(`/tales/${taleId}/vote`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ visitorToken, value }),
+        });
+    },
+
+    /** Просмотр. Один на читателя в сутки — повтор сервер отбрасывает сам. */
+    async recordTaleView(taleId: string, visitorToken: string): Promise<void> {
+        try {
+            await webFetch(`/tales/${taleId}/view`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ visitorToken }),
+            });
+        } catch {
+            // Счётчик — не содержимое страницы. Не сосчиталось — и ладно.
+        }
+    },
+
+    async getTaleStats(taleId: string, visitorToken?: string | null): Promise<import('./types/api').TaleStats | null> {
+        try {
+            const qs = visitorToken ? `?visitorToken=${encodeURIComponent(visitorToken)}` : '';
+            return await webFetch(`/tales/${taleId}/stats${qs}`);
+        } catch {
+            return null;
+        }
+    },
+
+    async adminListTaleComments(opts?: {
+        pending?: boolean;
+        taleId?: string;
+        sort?: 'newest' | 'oldest';
+        page?: number;
+        perPage?: number;
+    }): Promise<import('./types/api').AdminTaleCommentsPage> {
+        const p = new URLSearchParams();
+        if (opts?.pending) p.set('pending', 'true');
+        if (opts?.taleId) p.set('taleId', opts.taleId);
+        if (opts?.sort) p.set('sort', opts.sort);
+        if (opts?.page) p.set('page', String(opts.page));
+        if (opts?.perPage) p.set('perPage', String(opts.perPage));
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/tales/comments${qs}`, { headers: authHeaders() });
+    },
+
+    async adminModerateTaleComment(id: string, req: ModerateCommentRequest): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/tales/comments/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(req),
+        });
+        if (!res.ok) throw new Error(`Moderate failed: ${res.status}`);
+    },
+
+    async adminDeleteTaleComment(id: string): Promise<void> {
+        const res = await fetch(`${webApiBase()}/admin/tales/comments/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    },
+
+    /** Свод по всем байкам разом: просмотры, голоса, отклик. */
+    async adminTaleStats(): Promise<import('./types/api').AdminTaleStat[]> {
+        return webFetch('/admin/tales/stats', { headers: authHeaders() });
     },
 
     // === IMPRESSIONS ("Book of Impressions") ===

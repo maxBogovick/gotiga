@@ -5,6 +5,7 @@
   import { figurineHref } from '$lib/figurineHref';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { keepEmail } from '$lib/utils/nameEmail';
   import { isValidEmail } from '$lib/validation';
   import { focusTrap } from '$lib/actions/focusTrap';
   import type { FigurineSchedule, OrderMode } from '$lib/types/api';
@@ -66,15 +67,28 @@
 
   async function handleSubmit() {
     const effectiveName = authStore.isLoggedIn ? (authStore.user?.displayName ?? '') : name.trim();
-    const effectiveEmail = authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim();
+    // У вошедшего через Telegram почты в имени нет — её называют здесь, и
+    // проверяется она так же, как гостевая: дом отвечает письмом, и неверный
+    // адрес значит одно и то же, кем бы его ни назвали.
+    const effectiveEmail = authStore.isLoggedIn
+      ? (authStore.user?.email ?? email.trim())
+      : email.trim();
 
     submitError = '';
     if ((mode === 'request' || mode === 'reserve') && !effectiveName) { submitError = $t('formFillFields'); return; }
     if (!effectiveEmail) { submitError = $t('formFillFields'); return; }
-    if (!authStore.isLoggedIn && !isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
+    if (!isValidEmail(effectiveEmail)) { submitError = $t('formInvalidEmail'); return; }
     if (!ageConfirmed) { submitError = $t('formAgeConfirmRequired'); return; }
 
     isSubmitting = true;
+
+    // Названную почту дом запоминает за именем — спросили один раз. Чужой
+    // адрес останавливает дело: в чужое имя его не записывают.
+    if (authStore.needsEmail && (await keepEmail(effectiveEmail)) === 'taken') {
+      submitError = $t('formEmailTaken');
+      isSubmitting = false;
+      return;
+    }
 
     try {
       const res = await api.submitOrder({
@@ -200,7 +214,9 @@
                           {$t('formLoggedInAs')} <strong class="text-[#34251c] not-italic">{authStore.user?.displayName}</strong>
                         </p>
                       </div>
-                    {:else}
+                    {/if}
+
+                    {#if !authStore.isLoggedIn}
                     <div class="relative group">
                       <input
                               id="name"
@@ -215,6 +231,12 @@
                       </label>
                     </div>
 
+                    {/if}
+
+                    {#if !authStore.isLoggedIn || authStore.needsEmail}
+                    {#if authStore.needsEmail}
+                      <p class="text-sm text-[#5f4636] italic leading-snug">{$t('formEmailNeeded')}</p>
+                    {/if}
                     <div class="relative group">
                       <input
                               id="email"

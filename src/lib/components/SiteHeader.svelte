@@ -603,7 +603,7 @@
               {/if}
               <div class="user-panel-info">
                 <span class="user-panel-name">{authStore.user?.displayName}</span>
-                <span class="user-panel-email">{authStore.user?.email}</span>
+                <span class="user-panel-email">{authStore.handle}</span>
               </div>
             </div>
             <a href="/profile" class="user-panel-link" onclick={() => userMenuOpen = false}>

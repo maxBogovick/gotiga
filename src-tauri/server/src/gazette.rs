@@ -24,6 +24,8 @@ pub const LEAF_STATUSES: &[&str] = &["draft", "scheduled", "published", "archive
 pub const TITLE_MAX: usize = 200;
 pub const DEK_MAX: usize = 500;
 pub const BODY_MAX: usize = 12_000;
+/// Подпись под историей — имя, а не абзац.
+pub const AUTHOR_MAX: usize = 120;
 pub const EXCERPT_MAX: usize = 280;
 pub const HOME_LEAVES: i64 = 4;
 pub const HOME_CUTTINGS: i64 = 10;
@@ -150,6 +152,13 @@ pub fn clamp_title(s: &str) -> String {
 pub fn clamp_dek(s: Option<&str>) -> Option<String> {
     let t = s.map(str::trim).filter(|v| !v.is_empty())?;
     Some(clip_chars(t, DEK_MAX))
+}
+
+/// Кем написана история. Пустая подпись — это отсутствие подписи, а не пустая
+/// строка: тогда под историей не печатается ничего.
+pub fn clamp_author(s: Option<&str>) -> Option<String> {
+    let t = s.map(str::trim).filter(|v| !v.is_empty())?;
+    Some(clip_chars(t, AUTHOR_MAX))
 }
 
 pub fn clamp_body(s: Option<&str>) -> Option<String> {

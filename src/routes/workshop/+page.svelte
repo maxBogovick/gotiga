@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { t, brandName } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
   import AppImage from '$lib/components/AppImage.svelte';
-  import { createSiteAnalytics } from '$lib/analytics';
 
   // Data from the universal load (+page.ts): real items at prerender time so bots see
   // the workshop, fresh fetch on client-side navigation.
@@ -39,12 +38,7 @@
     expandedItem = expandedItem === id ? null : id;
   }
 
-  const siteAnalytics = createSiteAnalytics();
-  onDestroy(() => siteAnalytics.stop());
-
   onMount(() => {
-    siteAnalytics.pageView();
-    siteAnalytics.start();
     prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 </script>

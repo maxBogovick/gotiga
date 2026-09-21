@@ -23,6 +23,7 @@
   let { data } = $props();
   let copy = $derived(data.leaf ? leafCopy(data.leaf, $lang) : null);
   let work = $derived(data.leaf ? workHref(data.leaf, 'gazette_leaf') : null);
+  let byline = $derived(data.leaf?.author?.trim() ?? '');
   let expected = $derived(
     data.leaf
       ? expectedWhisper(
@@ -67,7 +68,9 @@
           datePublished: data.leaf.publishedAt ?? data.leaf.createdAt,
           inLanguage: $lang === 'ru' ? 'ru' : 'en',
           image: coverAbsolute ?? undefined,
-          author: { '@type': 'Organization', name: $brandName },
+          author: byline
+            ? { '@type': 'Person', name: byline }
+            : { '@type': 'Organization', name: $brandName },
           isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
         })
       : '',
@@ -129,6 +132,14 @@
         </p>
         <h1 class="title">{copy?.title}</h1>
         {#if copy?.dek}<p class="dek">{copy.dek}</p>{/if}
+        <!-- Подпись печатается только тогда, когда она есть: лист без автора —
+             лист дома. Та же строка, что на странице небылицы. -->
+        {#if byline}
+          <p class="byline">
+            <span class="byline-word">{$t('talesAuthor')}</span>
+            <span class="byline-name">{byline}</span>
+          </p>
+        {/if}
       </header>
 
       {#if data.leaf.kind === 'sketch'}
@@ -275,6 +286,25 @@
     line-height: 1.45;
     color: #5f4636;
     margin: 0;
+  }
+
+  .byline {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 14px 0 0;
+  }
+  .byline-word {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #5f4636;
+  }
+  .byline-name {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: clamp(16px, 1.6vw, 19px);
+    color: #34251c;
   }
 
   .watch { margin: 0 0 clamp(24px, 3vw, 36px); }

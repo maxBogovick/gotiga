@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
   import { t, lang, brandName } from '$lib/i18n';
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
-  import { createSiteAnalytics } from '$lib/analytics';
+  import { observeWork } from '$lib/analytics';
   import { api } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
@@ -268,13 +268,7 @@
   let orderFig = $state<FigurineListItem | null>(null);
   let shareCopiedId = $state('');
 
-  // `trackWorks` so each archive card that scrolls into view counts toward the
-  // visit's works_seen — how far down the catalogue the visitor actually got.
-  const siteAnalytics = createSiteAnalytics({ trackWorks: true });
-
   onMount(() => {
-    siteAnalytics.pageView();
-    siteAnalytics.start();
     savedFigurines.load();
     houseClock.start();
     showingRooms.load();
@@ -286,8 +280,6 @@
       viewedIds = new Set(viewed);
     } catch {}
   });
-
-  onDestroy(() => siteAnalytics.stop());
 
   let justSavedId = $state('');
   function toggleLike(e: MouseEvent, id: string) {
@@ -666,7 +658,7 @@
         <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-10">
           {#each visible as figurine, i (figurine.id)}
             <li class="group perspective-container fig-tile"
-                use:siteAnalytics.observeWork={figurine.id}>
+                use:observeWork={figurine.id}>
               <a
                 href={doorShut(figurine) ? undefined : figurineHref(figurine)}
                 class="block w-full text-left relative focus:outline-none"

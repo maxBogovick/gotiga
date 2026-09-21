@@ -1,10 +1,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { onMount, onDestroy } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { t, brandName, type TranslationKey } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
-  import { createSiteAnalytics } from '$lib/analytics';
 
   import RakingLight from '$lib/components/RakingLight.svelte';
   import DustParticles from '$lib/components/DustParticles.svelte';
@@ -102,13 +100,6 @@
     'cellarRule5'
   ];
 
-  const siteAnalytics = createSiteAnalytics();
-  onDestroy(() => siteAnalytics.stop());
-
-  onMount(() => {
-    siteAnalytics.pageView();
-    siteAnalytics.start();
-  });
 </script>
 
 <svelte:head>

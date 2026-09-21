@@ -1852,9 +1852,9 @@ pub async fn user_list_commissions(
     let user = service.get_user_from_session(token).await?;
     // Adopt orphan petitions sent from this account's email (guest petitions, or
     // ones whose claim token was lost when localStorage was cleared) before listing.
-    let _ = service
-        .adopt_commissions_by_email(user.id, &user.email)
-        .await;
+    if let Some(email) = user.email.as_deref() {
+        let _ = service.adopt_commissions_by_email(user.id, email).await;
+    }
     let commissions = service.get_user_commissions(user.id).await?;
     Ok(Json(serde_json::json!({ "commissions": commissions })))
 }
@@ -2754,11 +2754,13 @@ pub async fn update_booking_status(
 // USER AUTH HANDLERS
 // ============================================================
 
+/// Завести имя. Ответ один и тот же на свободный и на занятый адрес —
+/// «письмо ушло», — поэтому по нему нельзя перечислить жильцов дома.
 pub async fn user_register(
     State(service): State<AppService>,
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
-) -> Result<Json<LoginVerifyResponse>> {
+) -> Result<Json<crate::models::RegisterResponse>> {
     let ip = extract_ip(&headers);
     service.check_rate_limit("register", &ip, 5, 3600).await?;
     let response = service
@@ -2767,15 +2769,81 @@ pub async fn user_register(
     Ok(Json(response))
 }
 
+/// Перешли по ссылке из письма: адрес подтверждён, человек внутри.
+pub async fn user_confirm_email(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::ConfirmEmailRequest>,
+) -> Result<Json<LoginVerifyResponse>> {
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("confirm", &ip, 20, 3600).await?;
+    let response = service
+        .confirm_email(&body.token, client_ip(&ip), extract_user_agent(&headers))
+        .await?;
+    Ok(Json(response))
+}
+
+/// Выслать приглашение заново — своему же адресу.
+pub async fn user_resend_confirm(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<StatusCode> {
+    let ip = extract_ip(&headers);
+    // Своя корзина, а не общая с переходом по ссылке: у них разные пределы, а
+    // одна корзина на двоих означала бы, что меньший из них молча накрывает оба.
+    service.check_rate_limit("confirm_resend", &ip, 5, 3600).await?;
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    service.resend_confirm_email(&user).await?;
+    Ok(StatusCode::OK)
+}
+
+/// Прислать себе ключ к знакам — в любой доказанный канал.
+pub async fn user_ask_for_signs(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<StatusCode> {
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("signs", &ip, 5, 3600).await?;
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    service
+        .ask_for_signs(&user, client_ip(&ip), extract_user_agent(&headers))
+        .await?;
+    Ok(StatusCode::OK)
+}
+
+/// Свои открытые двери.
+pub async fn user_sessions(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<crate::models::OwnSessionDto>>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(service.own_sessions(&user, token).await?))
+}
+
+/// Закрыть все двери, кроме этой.
+pub async fn user_close_other_sessions(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    let closed = service.close_other_sessions(&user, token).await?;
+    Ok(Json(serde_json::json!({ "closed": closed })))
+}
+
 pub async fn user_login_challenge(
     State(service): State<AppService>,
     headers: HeaderMap,
     Json(body): Json<LoginChallengeRequest>,
 ) -> Result<Json<LoginChallengeResponse>> {
-    service
-        .check_rate_limit("login", &extract_ip(&headers), 20, 3600)
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("login", &ip, 20, 3600).await?;
+    let response = service
+        .login_challenge(&body.email, client_ip(&ip).as_deref())
         .await?;
-    let response = service.login_challenge(&body.email).await?;
     Ok(Json(response))
 }
 
@@ -2790,6 +2858,116 @@ pub async fn user_login_verify(
         .login_verify(&body, client_ip(&ip), extract_user_agent(&headers))
         .await?;
     Ok(Json(response))
+}
+
+// ── Вход через Telegram ──────────────────────────────────────
+
+pub async fn telegram_login_config(
+    State(service): State<AppService>,
+) -> Json<crate::models::TelegramLoginConfig> {
+    Json(service.telegram_login_config())
+}
+
+/// Начать вход. С `Authorization` — это привязка Telegram к уже вошедшему
+/// аккаунту: тот же обряд, но в конце не новый человек, а вторая дверь.
+/// Недействительный токен молча значит «вход», а не ошибку: страница входа и
+/// страница профиля зовут одну ручку.
+pub async fn telegram_login_code(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<crate::models::TelegramCodeResponse>> {
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("telegram", &ip, 20, 3600).await?;
+    // Заголовка нет — это вход. Заголовок есть, но не годится — это НЕ вход:
+    // так профиль с протухшей сессией нажимал «привязать Telegram» и молча
+    // заводил второе имя вместо второй двери у прежнего.
+    let bind_user = match bearer_token(&headers) {
+        Some(token) => Some(service.get_user_from_session(token).await?.id),
+        None => None,
+    };
+    let res = service
+        .telegram_start_login(bind_user, client_ip(&ip), extract_user_agent(&headers))
+        .await?;
+    Ok(Json(res))
+}
+
+/// Опрос: страница спрашивает раз в пару секунд, пока человек в Telegram.
+/// Предел высокий намеренно — одна попытка входа это десятки опросов.
+pub async fn telegram_login_status(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+) -> Result<Json<crate::models::TelegramCodeStatus>> {
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("telegram_poll", &ip, 600, 3600).await?;
+    Ok(Json(service.telegram_login_status(&code).await?))
+}
+
+/// Назвать почту, когда её спросило дело. Только первая — не замена.
+pub async fn user_name_email(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::NameEmailRequest>,
+) -> Result<Json<UserDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(service.name_email(&user, &body.email).await?))
+}
+
+/// Отвязать Telegram от своего аккаунта.
+pub async fn telegram_unlink(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<UserDto>> {
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(service.telegram_unlink(&user).await?))
+}
+
+/// Единственное место, где чужой запрос превращается во вход, — поэтому
+/// доказательств два: секрет в адресе и секрет в заголовке, который Telegram
+/// ставит сам. Не сошлось — 404: страница, которой нет, ничего не сообщает о
+/// том, что на ней бывает.
+///
+/// Ответ всегда 200, даже на непонятное тело: на неуспех Telegram повторяет
+/// обновление, а повтор нажатия «это я» не должен заводить вторую сессию.
+pub async fn telegram_webhook(
+    State(service): State<AppService>,
+    Path(secret): Path<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> StatusCode {
+    let expected = match service.telegram_webhook_secret() {
+        Some(s) => s,
+        None => return StatusCode::NOT_FOUND,
+    };
+    let header_secret = headers
+        .get("x-telegram-bot-api-secret-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if !same_secret(&secret, &expected) || !same_secret(header_secret, &expected) {
+        return StatusCode::NOT_FOUND;
+    }
+    match serde_json::from_slice::<crate::telegram::Update>(&body) {
+        Ok(update) => {
+            if let Err(e) = service.telegram_update(update).await {
+                tracing::warn!("telegram webhook: {e}");
+            }
+        }
+        // Обновления бывают и не наши (вступил в чат, отредактировал
+        // сообщение). Это не ошибка, и повторять их Telegram не должен.
+        Err(e) => tracing::debug!("telegram webhook: unparsed update: {e}"),
+    }
+    StatusCode::OK
+}
+
+/// Сравнение, не зависящее от того, где строки разошлись.
+fn same_secret(given: &str, expected: &str) -> bool {
+    let (a, b) = (given.as_bytes(), expected.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 pub async fn user_logout(
@@ -2839,7 +3017,9 @@ pub async fn user_profile_orders(
     let user = service.get_user_from_session(token).await?;
     // Adopt any orphan guest orders sent from this account's email (legacy rows or
     // ones submitted while logged out) before listing.
-    let _ = service.link_orders_to_user(user.id, &user.email).await;
+    if let Some(email) = user.email.as_deref() {
+        let _ = service.link_orders_to_user(user.id, email).await;
+    }
     let orders = service.get_user_orders(user.id).await?;
     Ok(Json(orders))
 }
@@ -3057,12 +3237,26 @@ pub async fn forgot_password(
 // COMMENTS
 // ============================================================
 
+/// Адрес, с которого пришли.
+///
+/// Берётся первое значение `X-Forwarded-For`, и это верно ровно потому, что
+/// край сети (nginx, `real_ip`) ставит туда РОВНО ОДИН адрес — тот, который
+/// увидел сам. Пока nginx дописывал к присланному (`$proxy_add_x_forwarded_for`),
+/// первым значением была строка из браузера: любой предел «столько-то в час»
+/// обходился одной подделанной строкой, а в журнал входов и в записку бота
+/// («Chrome, Москва») записывалось то, что назвал пришедший.
+///
+/// Значение проверяется на то, что это вообще адрес. Не проверять нельзя:
+/// по нему заводится ключ в таблице пределов, и строка произвольной длины
+/// была бы бесплатным способом растить её без конца.
 fn extract_ip(headers: &HeaderMap) -> String {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.split(',').next())
-        .map(|s| s.trim().to_string())
+        .map(str::trim)
+        .filter(|s| s.parse::<std::net::IpAddr>().is_ok())
+        .map(str::to_string)
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -3162,6 +3356,137 @@ pub async fn admin_delete_comment(
 ) -> Result<StatusCode> {
     service.admin_delete_comment(id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// === БАЙКИ: ОТКЛИК ЧИТАТЕЛЯ ===
+
+pub async fn get_tale_comments(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<CommentDto>>> {
+    let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(false);
+    Ok(Json(service.get_tale_comments(id, newest_first).await?))
+}
+
+pub async fn submit_tale_comment(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<SubmitCommentRequest>,
+) -> Result<StatusCode> {
+    let user = if let Some(token) = bearer_token(&headers) {
+        service.get_user_from_session(token).await.ok()
+    } else {
+        None
+    };
+    let ip = extract_ip(&headers);
+    service
+        .submit_tale_comment(id, user.as_ref(), &body, &ip)
+        .await?;
+    Ok(StatusCode::CREATED)
+}
+
+/// Голос читателя: +1, −1 или 0. Число минусов в публичном ответе есть, но
+/// страница его не печатает — печатает стол рассказов.
+pub async fn set_tale_vote(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::TaleVoteRequest>,
+) -> Result<Json<crate::models::TaleVoteResponse>> {
+    service
+        .check_rate_limit("tale_vote", &extract_ip(&headers), 60, 3600)
+        .await?;
+    let user_id = if let Some(token) = bearer_token(&headers) {
+        service
+            .get_user_from_session(token)
+            .await
+            .ok()
+            .map(|u| u.id)
+    } else {
+        None
+    };
+    let (value, likes, dislikes) = service
+        .set_tale_vote(id, &req.visitor_token, user_id, req.value)
+        .await?;
+    Ok(Json(crate::models::TaleVoteResponse {
+        value,
+        likes,
+        dislikes,
+    }))
+}
+
+pub async fn record_tale_view(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::TaleViewRequest>,
+) -> Result<StatusCode> {
+    service
+        .check_rate_limit("tale_view", &extract_ip(&headers), 120, 3600)
+        .await?;
+    service.record_tale_view(id, &req.visitor_token).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn get_tale_stats(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<crate::models::TaleStatsDto>> {
+    let token = params.get("visitorToken").map(String::as_str);
+    Ok(Json(service.get_tale_stats(id, token, false).await?))
+}
+
+pub async fn admin_list_tale_comments(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<crate::models::AdminTaleCommentsPage>> {
+    let only_pending = params.get("pending").map(|v| v == "true").unwrap_or(false);
+    let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(true);
+    let tale_filter = params.get("taleId").and_then(|v| Uuid::parse_str(v).ok());
+    let page = params
+        .get("page")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = params
+        .get("perPage")
+        .and_then(|p| p.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100);
+    Ok(Json(
+        service
+            .admin_list_tale_comments(only_pending, tale_filter, newest_first, page, per_page)
+            .await?,
+    ))
+}
+
+pub async fn admin_moderate_tale_comment(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ModerateCommentRequest>,
+) -> Result<StatusCode> {
+    service
+        .admin_moderate_tale_comment(id, body.is_approved, body.admin_reply.as_deref())
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_delete_tale_comment(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_tale_comment(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Свод по всем байкам: просмотры, голоса, отклик. Только для стола.
+pub async fn admin_tale_stats(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::AdminTaleStatRow>>> {
+    Ok(Json(service.admin_tale_stats().await?))
 }
 
 // === VISITOR IMPRESSIONS ("Book of Impressions") ===
@@ -4002,7 +4327,7 @@ pub async fn watch_gazette_leaf(
         .await?;
     let (user_id, email, name) = if let Some(token) = bearer_token(&headers) {
         match service.get_user_from_session(token).await {
-            Ok(u) => (Some(u.id), Some(u.email), Some(u.display_name)),
+            Ok(u) => (Some(u.id), u.email, Some(u.display_name)),
             Err(_) => (None, None, None),
         }
     } else {
@@ -4050,7 +4375,7 @@ pub async fn user_profile_gazette_watches(
     let user = service.get_user_from_session(token).await?;
     Ok(Json(
         service
-            .list_user_gazette_watches(user.id, &user.email)
+            .list_user_gazette_watches(user.id, user.email.as_deref())
             .await?,
     ))
 }

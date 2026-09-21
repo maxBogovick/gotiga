@@ -168,6 +168,15 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Саморегистрация webhook Telegram: сервер сам говорит, куда стучаться.
+    // Фоном — сеть не должна задерживать открытие сайта.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            svc.announce_telegram_webhook().await;
+        });
+    }
+
     // Background: prune login attempts past the retention window (runs now, then daily).
     {
         let svc = service.clone();
@@ -182,6 +191,13 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Login-attempt prune failed: {e}"),
+                }
+                // Отработавшие и остывшие слова для входа через Telegram —
+                // здесь же: тот же срок жизни у задачи, та же уборка за входом.
+                match svc.prune_telegram_login_codes().await {
+                    Ok(n) if n > 0 => tracing::info!("Pruned {n} spent Telegram login words"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Telegram login-word prune failed: {e}"),
                 }
             }
         });

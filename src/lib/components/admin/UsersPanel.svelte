@@ -192,7 +192,14 @@
             <span class="blocked-badge">{$t('adminUsersBlocked')}</span>
           {/if}
         </div>
-        <span class="detail-email">{detail.email}</span>
+        <span class="detail-email" class:detail-email--none={!detail.email}>
+          {detail.email ?? $t('adminUsersNoEmail')}
+        </span>
+        {#if detail.telegramLinked}
+          <span class="detail-tg">
+            Telegram: {detail.telegramUsername ? `@${detail.telegramUsername}` : $t('adminUsersTelegramLinked')}
+          </span>
+        {/if}
         <span class="detail-date">{$t('adminUsersRegistered')}: {new Date(detail.createdAt).toLocaleDateString()}</span>
         {#if detail.signupIp || detail.signupCity || detail.signupCountryCode}
           <span class="detail-origin">
@@ -417,7 +424,7 @@
         <tbody>
           {#each items as u}
             <tr class="user-row" class:blocked-row={u.isBlocked} onclick={() => openDetail(u.id)}>
-              <td class="email-cell">{u.email}</td>
+              <td class="email-cell" class:email-cell--none={!u.email}>{u.email ?? $t('adminUsersNoEmail')}</td>
               <td>{u.displayName}</td>
               <td class="num-col">{u.bookingCount}</td>
               <td class="num-col">{u.orderCount}</td>
@@ -500,6 +507,11 @@
   .num-col   { text-align: center; width: 64px; }
   .status-col { width: 80px; text-align: right; }
   .email-cell { font-weight: 500; color: #34251c; }
+  /* Почты нет — это состояние аккаунта, а не пустая ячейка: печатается
+     словами и приглушённо, чтобы не читалось как «здесь должно быть». */
+  .email-cell--none { font-weight: 400; color: #9a7c5c; font-style: italic; }
+  .detail-email--none { color: #9a7c5c; font-style: italic; }
+  .detail-tg { font-size: 0.8rem; color: #6f3b24; }
   .date-cell  { color: #888; font-size: .78rem; }
   .notes-dot  { color: #c65f3c; font-size: .9rem; cursor: default; }
   .list-blocked-badge {

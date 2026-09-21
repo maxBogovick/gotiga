@@ -9,6 +9,9 @@
   import { downloadKeyCard } from '$lib/utils/keyCard';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
   import ReminderCard from '$lib/components/auth/ReminderCard.svelte';
+  import TelegramDoor from '$lib/components/auth/TelegramDoor.svelte';
+  import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+  import type { UserDto } from '$lib/types/api';
 
   // Steps: 1 = email+name · 2–5 = pick a sign per category · 6 = seal in memory · 7 = success
   const SELECT_STEPS = 5; // numbered, pip-tracked data-entry steps (1 + 4 categories)
@@ -28,7 +31,11 @@
   const pool = generatePersonalPool();
 
   let selections = $state<string[]>(['', '', '', '']);
-  let registeredUser = $state<{ id: string; email: string; displayName: string } | null>(null);
+  // Адрес, на который ушло письмо. Он и есть весь ответ сервера: сессии на
+  // этом шаге больше нет — внутрь пускает ссылка из ящика, а не эта страница.
+  // Так занятый и свободный адрес отвечают одинаково, и перечислить жильцов
+  // дома по ответу нельзя.
+  let sentTo = $state<string | null>(null);
   let finalSelections = $state<string[]>([]);
 
   function categoryStepIndex() { return step - 2; }
@@ -46,6 +53,18 @@
       index: i,
       icon: selections[i] ? getIconById(cat.id, selections[i]) : null,
     }));
+  }
+
+  // Дорога назад по знакам — нажатием на сам знак в ленте ключа, а не
+  // четырьмя нажатиями «назад». Открыт тот знак, до которого дорога уже
+  // пройдена: все предыдущие выбраны.
+  function signReachable(i: number) {
+    return selections.slice(0, i).every(Boolean);
+  }
+  function goToSign(i: number) {
+    if (!signReachable(i)) return;
+    error = '';
+    step = i + 2;
   }
 
   function validateStep1(): string {
@@ -80,6 +99,17 @@
     if (step > 1) step--;
   }
 
+  /**
+   * Вошедшему через Telegram заводить ничего не нужно: первый приход и есть
+   * заведение. Значков у него нет, карточки-ключа тоже — и памятки о них ему
+   * показывать нечего, поэтому отсюда человек уходит прямо в дом.
+   */
+  async function throughTelegram(sessionToken: string, user: UserDto | null) {
+    authStore.setSession(sessionToken, user ?? (await api.userMe(sessionToken)));
+    await savedFigurines.syncWithServer({ importLocal: true }).catch(() => {});
+    goto('/');
+  }
+
   async function downloadKey() {
     downloading = true;
     try {
@@ -99,21 +129,30 @@
         pool,
         ageConfirmed
       );
-      registeredUser = result.user;
-      authStore.setSession(result.sessionToken, result.user); // auto-login the freshly created account
-      finalSelections = [...selections]; // selections stay local — never returned by server
+      // Знаки остаются здесь, в памяти страницы, и нигде больше. Прежде они
+      // ложились в localStorage «памяткой» — то есть пароль лежал в браузере
+      // открытым текстом до самого выхода, и достать его можно было, не имея
+      // никакой сессии. Памятка осталась: её печатают на карточке-ключе,
+      // которую человек скачивает СОЗНАТЕЛЬНО.
+      finalSelections = [...selections];
 
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('gotiga_visual_reminder', JSON.stringify(finalSelections));
+      // Открытый порядок: у дома не настроена почта, подтверждать нечем — и
+      // сессия пришла сразу. Тогда это прежний экран с памяткой, без письма.
+      if (result.sessionToken && result.user) {
+        authStore.setSession(result.sessionToken, result.user);
+        await savedFigurines.syncWithServer({ importLocal: true }).catch(() => {});
+      } else {
+        sentTo = result.email;
       }
       step = 7;
     } catch (e: unknown) {
+      // В строгом порядке занятый адрес сюда не попадает: он отвечает тем же
+      // «письмо ушло», что и свободный. В открытом — попадает, и это названная
+      // цена открытого порядка.
       const msg = e instanceof Error ? e.message : '';
-      if (msg.includes('409') || msg.toLowerCase().includes('conflict')) {
-        error = $t('authErrorConflict');
-      } else {
-        error = $t('authErrorServer');
-      }
+      error = msg.includes('409') || msg.toLowerCase().includes('conflict')
+        ? $t('authErrorConflict')
+        : $t('authErrorServer');
     } finally {
       loading = false;
     }
@@ -152,11 +191,14 @@
       <input id="auth-age" name="age-confirm" type="checkbox" bind:checked={ageConfirmed} />
       <span>{$t('formAgeConfirm')}</span>
     </label>
+    <TelegramDoor ondone={(token, user) => { void throughTelegram(token, user); }} />
   {/if}
 
   {#if step >= 2 && step <= 5}
     {@const cat = currentCategory()}
-    <p class="auth-hint">{$t('authStep')} {step} {$t('authOf')} 5 — {$t(`authCategory${cat.id.charAt(0).toUpperCase()}${cat.id.slice(1)}` as any)}</p>
+    <!-- Считается знаками, а не шагами: под гридом стоит лента из четырёх
+         клеток, и два разных счёта на одном экране не сходятся. -->
+    <p class="auth-hint">{$t(`authCategory${cat.id.charAt(0).toUpperCase()}${cat.id.slice(1)}` as any)} — {categoryStepIndex() + 1} {$t('authOf')} 4</p>
 
     <div class="memorize-banner">
       <span class="memorize-seal" aria-hidden="true">⚠</span>
@@ -179,21 +221,39 @@
       {/each}
     </div>
 
-    <!-- Running "your key so far" — reinforces memory as it builds -->
-    <div class="key-strip" aria-label={$t('authKeyProgress')}>
+    <!-- Running "your key so far" — reinforces memory as it builds and is
+         itself the way back: нажатие на клетку открывает тот знак. -->
+    <div class="key-strip">
       <span class="key-strip-label">{$t('authKeyProgress')}</span>
       <div class="key-strip-slots">
         {#each keySlots() as slot}
-          <div class="key-slot" class:filled={!!slot.icon} class:current={slot.index === categoryStepIndex()}>
-            {#if slot.icon}
-              {@html slot.icon.svg}
-            {:else}
-              <span class="key-slot-dot">·</span>
-            {/if}
-          </div>
+          <button
+            type="button"
+            class="key-slot"
+            class:filled={!!slot.icon}
+            class:current={slot.index === categoryStepIndex()}
+            disabled={!signReachable(slot.index)}
+            onclick={() => goToSign(slot.index)}
+            aria-current={slot.index === categoryStepIndex() ? 'step' : undefined}
+            aria-label={`${$t('authKeyGoTo')} ${slot.index + 1}`}
+            title={`${$t('authKeyGoTo')} ${slot.index + 1}`}
+          >
+            <span class="key-slot-face">
+              {#if slot.icon}
+                {@html slot.icon.svg}
+              {:else}
+                <span class="key-slot-dot">·</span>
+              {/if}
+            </span>
+            <span class="key-slot-num">{slot.index + 1}</span>
+          </button>
         {/each}
       </div>
     </div>
+
+    <!-- Кнопка ведёт к следующему знаку, а не к следующему этапу; сказано
+         словами, потому что прежде это было видно только по номеру шага. -->
+    <p class="step-note">{step === 5 ? $t('authSignsLast') : $t('authSignsAhead')}</p>
   {/if}
 
   {#if step === 6}
@@ -228,8 +288,13 @@
     </label>
   {/if}
 
-  {#if step === 7 && registeredUser}
-    <ReminderCard {finalSelections} userName={registeredUser.displayName} onContinue={() => goto('/')} />
+  {#if step === 7}
+    <ReminderCard
+      {finalSelections}
+      {sentTo}
+      userName={displayName.trim() || $brandName}
+      onContinue={() => goto(sentTo ? '/login' : '/')}
+    />
   {/if}
 
   {#if error}
@@ -242,7 +307,11 @@
         <button class="auth-btn-ghost" onclick={back}>{$t('authBack')}</button>
       {/if}
       <button class="auth-btn-primary" onclick={advance} disabled={loading || (step === 6 && !memorized)}>
-        {loading ? '…' : step === 6 ? $t('authCreateAccount') : $t('authNext')}
+        {#if loading}…
+        {:else if step === 6}{$t('authCreateAccount')}
+        {:else if step === 5}{$t('authToSeal')} →
+        {:else if step >= 2}{$t('authNextSign')} →
+        {:else}{$t('authNext')}{/if}
       </button>
     </div>
     <p class="auth-switch">
@@ -295,6 +364,20 @@
   }
   .key-strip-slots { display: flex; gap: 0.4rem; }
   .key-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    /* Клетка сама по себе 30 px — под палец мало, поэтому отбивка входит в
+       кнопку, а не стоит вокруг неё. */
+    padding: 5px 4px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font: inherit;
+  }
+  .key-slot:disabled { cursor: default; }
+  .key-slot-face {
     width: 30px;
     height: 30px;
     display: flex;
@@ -304,11 +387,31 @@
     border-radius: 3px;
     color: #6f3b24;
     background: #fdf8f2;
+    transition: border-color 0.2s, background 0.2s;
   }
-  .key-slot.filled { border-color: #c0a384; }
-  .key-slot.current { border-color: #c65f3c; box-shadow: 0 0 0 1px #c65f3c33; }
+  .key-slot.filled .key-slot-face { border-color: #c0a384; }
+  .key-slot.current .key-slot-face { border-color: #c65f3c; box-shadow: 0 0 0 1px #c65f3c33; }
+  .key-slot:not(:disabled):hover .key-slot-face { background: #f0e6d6; border-color: #c65f3c; }
+  .key-slot:focus-visible .key-slot-face { outline: 2px solid #c65f3c; outline-offset: 1px; }
   .key-slot :global(svg) { width: 20px; height: 20px; }
   .key-slot-dot { color: #cbb79c; font-weight: 700; }
+  .key-slot-num {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 0.55rem;
+    letter-spacing: 0.06em;
+    color: #cbb79c;
+  }
+  .key-slot.current .key-slot-num { color: #c65f3c; }
+  .key-slot.filled:not(.current) .key-slot-num { color: #9a7c5c; }
+
+  .step-note {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    color: #9a7c5c;
+    text-align: center;
+    margin: 0.7rem 0 0;
+  }
 
   /* Sealing step */
   .seal-title { margin-bottom: 0.25rem; }

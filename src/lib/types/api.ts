@@ -639,7 +639,9 @@ export interface AnalyticsEventPayload {
     internalSource?: string | null;
 }
 
-/** One generic page's engagement (home/archive/author/workshop/commission).
+/** One room's engagement — every public page except the figurine one, which
+ * reports itself as `figurine_view`. The room is named server-side by
+ * `PATH_GROUP_SQL`; `PAGE_ROOMS` in AnalyticsPanel holds the labels.
  * `views`/`uniqueVisitors` cover the full range; everything from `engagedEvents`
  * on is derived from raw `page_engaged` events and so only covers retention.
  * Medians are null when no events qualify; `medianWorksSeen`/`reachedWorksEvents`
@@ -987,10 +989,47 @@ export interface SaveShowingRequest {
 
 export interface UserDto {
     id: string;
-    email: string;
+    /** Пусто у вошедшего через Telegram: почту спрашивает дело, а не дверь. */
+    email: string | null;
     displayName: string;
     avatarUrl?: string | null;
     createdAt?: string;
+    /** `@имя` в Telegram — строка в профиле, а не ключ. */
+    telegramUsername?: string | null;
+    /** Привязан ли Telegram: у человека может не быть `@имени` вовсе. */
+    telegramLinked?: boolean;
+    /** Заданы ли знаки. Вместе с почтой это первая дверь. */
+    hasSigns?: boolean;
+    /**
+     * Открыт ли ящик изнутри. Названный, но не подтверждённый адрес дверью не
+     * является: по нему не сбрасывают знаки и не привязывают гостевые расписки.
+     */
+    emailConfirmed?: boolean;
+}
+
+/** Есть ли на этом сервере вход через Telegram и каким ботом. */
+export interface TelegramLoginConfig {
+    enabled: boolean;
+    botUsername: string | null;
+}
+
+/** Слово для сверки и ссылка на бота. */
+export interface TelegramCodeResponse {
+    code: string;
+    word: string;
+    link: string;
+    expiresAt: string;
+}
+
+/**
+ * Ответ на опрос. `waiting` — бота ещё не открывали, `asked` — записка
+ * показана, ждём кнопку, `ready` — сессия (отдаётся один раз), `refused` —
+ * нажали «не я», `expired` — слово остыло либо его никогда не было.
+ */
+export interface TelegramCodeStatus {
+    state: 'waiting' | 'asked' | 'ready' | 'refused' | 'expired';
+    sessionToken: string | null;
+    user: UserDto | null;
 }
 
 export interface ChallengeIconDto {
@@ -1011,6 +1050,33 @@ export interface LoginChallengeResponse {
 export interface LoginVerifyResponse {
     sessionToken: string;
     user: UserDto;
+}
+
+/**
+ * Что отвечает заведение имени. Вид ответа выбирает не запрос, а то, есть ли у
+ * дома чем отправить письмо.
+ *
+ * `pending: true` — строгий порядок: письмо ушло, сессии нет, и ответ на
+ * занятый адрес не отличается от ответа на свободный.
+ * `pending: false` — открытый порядок (почта у дома не настроена): приходит
+ * сессия, и человек внутри сразу.
+ */
+export interface RegisterResponse {
+    pending: boolean;
+    email: string;
+    sessionToken?: string;
+    user?: UserDto;
+}
+
+/** Открытая дверь, как её видит хозяин имени. */
+export interface OwnSessionDto {
+    id: string;
+    createdAt: string;
+    expiresAt: string;
+    /** Та, из которой смотрят. */
+    current: boolean;
+    browser: string | null;
+    place: string | null;
 }
 
 export interface UserBookingDto {
@@ -1065,7 +1131,7 @@ export interface PublicCertificateDto {
 
 export interface AdminUserListItem {
     id: string;
-    email: string;
+    email: string | null;
     displayName: string;
     adminNotes: string | null;
     isBlocked: boolean;
@@ -1121,13 +1187,15 @@ export interface ThreadMessageDto {
 export interface ThreadDetailDto {
     thread: MessageThreadDto;
     messages: ThreadMessageDto[];
-    user: { id: string; displayName: string; email: string } | null;
+    user: { id: string; displayName: string; email: string | null } | null;
 }
 
 export interface AdminUserDetail {
     id: string;
-    email: string;
+    email: string | null;
     displayName: string;
+    telegramUsername?: string | null;
+    telegramLinked?: boolean;
     adminNotes: string | null;
     isBlocked: boolean;
     createdAt: string;
@@ -1197,6 +1265,59 @@ export interface SubmitCommentRequest {
     authorName?: string;
     authorEmail?: string;
     body: string;
+}
+
+// === БАЙКИ: ОТКЛИК ЧИТАТЕЛЯ ===
+
+export interface AdminTaleCommentDto {
+    id: string;
+    taleId: string;
+    taleTitleEn: string;
+    taleTitleRu: string;
+    taleSlug: string;
+    authorName: string;
+    authorEmail: string | null;
+    body: string;
+    isApproved: boolean;
+    adminReply: string | null;
+    createdAt: string;
+    userId: string | null;
+}
+
+export interface AdminTaleCommentsPage {
+    items: AdminTaleCommentDto[];
+    total: number;
+    pendingCount: number;
+    page: number;
+    perPage: number;
+}
+
+/** Голос читателя: 1 — лайк, −1 — дизлайк, 0 — голоса нет. */
+export type TaleVote = 1 | -1 | 0;
+
+export interface TaleVoteResponse {
+    value: TaleVote;
+    likes: number;
+    /** Число минусов. Приходит всегда, печатает его только стол рассказов. */
+    dislikes: number;
+}
+
+export interface TaleStats {
+    views: number;
+    likes: number;
+    dislikes?: number;
+    comments: number;
+    myVote?: TaleVote;
+}
+
+/** Строка свода стола рассказов. */
+export interface AdminTaleStat {
+    taleId: string;
+    views: number;
+    likes: number;
+    dislikes: number;
+    comments: number;
+    pendingComments: number;
 }
 
 export interface ModerateCommentRequest {
@@ -1695,6 +1816,8 @@ export interface GazetteLeaf {
     href: string | null;
     sourceName: string | null;
     sourceUrl: string | null;
+    /** Кем написана история. Пусто — подпись не печатается. */
+    author: string | null;
     imageUrl: string | null;
     imageUrls?: string[];
     pinned: boolean;
@@ -1732,6 +1855,7 @@ export interface SaveGazetteLeafRequest {
     href?: string | null;
     sourceName?: string | null;
     sourceUrl?: string | null;
+    author?: string | null;
     imageUrl?: string | null;
     imageUrls?: string[] | null;
     pinned?: boolean;

@@ -28,6 +28,9 @@ fn test_config() -> Config {
         admin_password: "pw".into(),
         cors_allowed_origins: vec![],
         telegram_bot_token: None,
+        telegram_login_bot_token: None,
+        telegram_login_bot_username: None,
+        telegram_webhook_secret: None,
         telegram_chat_id: None,
         smtp_host: None,
         smtp_port: None,
@@ -37,6 +40,8 @@ fn test_config() -> Config {
         geoip_db_path: None,
         admin_log_db_path: "/tmp/gotiga-test-admin-logs.sqlite".into(),
         analytics_hash_secret: "analytics-secret-for-tests".into(),
+        auth_pepper: "pepper-for-tests-0123456789".into(),
+        auth_pepper_old: None,
     }
 }
 
@@ -387,30 +392,143 @@ fn build_hash_input_distinguishes_same_icons_in_different_categories() {
     assert_ne!(build_hash_input(&a), build_hash_input(&b));
 }
 
+const PEPPER: &str = "pepper-for-tests-0123456789";
+
 #[test]
 fn hash_password_verifies_and_rejects_wrong_input() {
-    let hash = hash_password("animals:wolf|dishes:apple|seasons:sun|symbols:key").unwrap();
-    assert!(verify_password(
-        "animals:wolf|dishes:apple|seasons:sun|symbols:key",
-        &hash
-    ));
-    assert!(!verify_password(
-        "animals:fox|dishes:apple|seasons:sun|symbols:key",
-        &hash
-    ));
+    let hash = hash_password("animals:wolf|dishes:apple|seasons:sun|symbols:key", PEPPER).unwrap();
+    assert_eq!(
+        verify_password(
+            "animals:wolf|dishes:apple|seasons:sun|symbols:key",
+            &hash,
+            PEPPER,
+            None
+        ),
+        SignsMatch::Now
+    );
+    assert_eq!(
+        verify_password(
+            "animals:fox|dishes:apple|seasons:sun|symbols:key",
+            &hash,
+            PEPPER,
+            None
+        ),
+        SignsMatch::No
+    );
 }
 
 #[test]
 fn hash_password_is_salted_so_two_hashes_differ() {
-    let a = hash_password("same-input").unwrap();
-    let b = hash_password("same-input").unwrap();
+    let a = hash_password("same-input", PEPPER).unwrap();
+    let b = hash_password("same-input", PEPPER).unwrap();
     assert_ne!(a, b, "argon2 salt must randomise the stored hash");
-    assert!(verify_password("same-input", &a) && verify_password("same-input", &b));
+    assert_eq!(verify_password("same-input", &a, PEPPER, None), SignsMatch::Now);
+    assert_eq!(verify_password("same-input", &b, PEPPER, None), SignsMatch::Now);
 }
 
 #[test]
 fn verify_password_returns_false_on_malformed_hash() {
-    assert!(!verify_password("anything", "not-a-phc-hash"));
+    assert_eq!(
+        verify_password("anything", "not-a-phc-hash", PEPPER, None),
+        SignsMatch::No
+    );
+}
+
+/// Перец — это и есть защита от перебора по утёкшей базе: чужой перец не
+/// открывает даже верные знаки.
+#[test]
+fn another_pepper_does_not_open_the_same_signs() {
+    let hash = hash_password("animals:wolf", PEPPER).unwrap();
+    assert_eq!(
+        verify_password("animals:wolf", &hash, "some-other-pepper-entirely", None),
+        SignsMatch::No
+    );
+}
+
+/// Смена перца проходит незаметно: знаки, записанные прежним, открывают дверь и
+/// называют себя прежними — то есть вход их перепишет. Без этой ступени перец
+/// был бы несменяем вовсе.
+#[test]
+fn signs_written_with_the_previous_pepper_still_open() {
+    const WAS: &str = "the-pepper-we-are-leaving-behind";
+    let hash = hash_password("animals:wolf", WAS).unwrap();
+    assert_eq!(
+        verify_password("animals:wolf", &hash, PEPPER, Some(WAS)),
+        SignsMatch::Legacy,
+        "прежний перец перестал открывать — смена перца заперла бы всех"
+    );
+    // Тот же хеш без объявленного прежнего перца не открывается: ступень
+    // работает только пока о ней сказали.
+    assert_eq!(
+        verify_password("animals:wolf", &hash, PEPPER, None),
+        SignsMatch::No
+    );
+    // И третий, посторонний перец не открывает ничего.
+    assert_eq!(
+        verify_password("animals:wolf", &hash, PEPPER, Some("some-third-pepper-entirely")),
+        SignsMatch::No
+    );
+}
+
+/// Знаки, записанные прежним способом (без перца), сходятся — и называют себя
+/// прежними, чтобы вход мог переписать их на нынешний лад.
+#[test]
+fn signs_written_the_old_way_still_open_and_ask_to_be_rewritten() {
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+    let salt = SaltString::generate(&mut OsRng);
+    let legacy = Argon2::default()
+        .hash_password(b"animals:wolf", &salt)
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        verify_password("animals:wolf", &legacy, PEPPER, None),
+        SignsMatch::Legacy
+    );
+    assert_eq!(
+        verify_password("animals:fox", &legacy, PEPPER, None),
+        SignsMatch::No
+    );
+}
+
+/// Набор старого размера дорастает вокруг сделанного выбора, а сам выбор
+/// остаётся в нём.
+#[test]
+fn grown_pool_keeps_the_choice_and_reaches_the_current_size() {
+    let previous = vec![
+        vec!["wolf".to_string(), "raven".to_string()],
+        vec!["apple".to_string()],
+        vec![],
+        vec![],
+    ];
+    let selections = [
+        "fox".to_string(),
+        "apple".to_string(),
+        "sun".to_string(),
+        "key".to_string(),
+    ];
+    let grown = grown_pool(&previous, &selections);
+    let parsed = parse_stored_pool(&grown).expect("pool must be readable back");
+    for (i, ids) in parsed.iter().enumerate() {
+        assert_eq!(ids.len(), POOL_PER_CATEGORY, "category {i}");
+        assert!(ids.contains(&selections[i]), "choice must stay in the pool");
+        let mut seen = ids.clone();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), ids.len(), "no icon twice in one category");
+    }
+    assert!(parsed[0].contains(&"wolf".to_string()), "old neighbours stay");
+}
+
+/// Одна проверка адреса на все три двери.
+#[test]
+fn normalize_email_trims_lowercases_and_refuses_nonsense() {
+    assert_eq!(
+        normalize_email("  Masha@Example.COM ").unwrap(),
+        "masha@example.com"
+    );
+    for bad in ["@", "no-at-sign", "a@b", "two@at@signs.com", "a b@c.com", ""] {
+        assert!(normalize_email(bad).is_err(), "{bad} must be refused");
+    }
 }
 
 // ── validate_booking_rules ──────────────────────────────────────────────────

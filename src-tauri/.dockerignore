@@ -1,0 +1,17 @@
+# Keep secrets, local state and build artefacts out of the build context/image.
+# This file sits at the context root (src-tauri/) because the server image is
+# built with the context one level above the server: the engine crate
+# (battle-core) is a path dependency and has to be inside the context.
+**/.env
+**/.env.*
+!**/.env.example
+**/.idea
+**/.vscode
+**/.DS_Store
+**/target
+**/uploads
+**/test_uploads_*
+**/*.db
+**/.git
+**/.gitignore
+server/SECURITY_FIXES_PROGRESS.md

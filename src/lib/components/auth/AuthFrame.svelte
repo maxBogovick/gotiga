@@ -102,20 +102,25 @@
     width: 100%;
   }
   :global(.auth-field input:focus) { border-bottom-color: #c65f3c; }
+  /* Четыре на четыре: набор вырос с восьми значков до шестнадцати (по нему
+     считается весь пароль — `POOL_PER_CATEGORY⁴`), и четыре столбца держат его
+     квадратом, который окидывают одним взглядом. Отбивка и кегль при этом
+     поджаты: две строки превратились в четыре, и прежними они не помещались
+     на экране телефона целиком. */
   :global(.auth-grid) {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
   }
   :global(.auth-icon-btn) {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.3rem;
     background: transparent;
     border: 1px solid #d8c6b1;
-    padding: 0.75rem 0.4rem;
+    padding: 0.5rem 0.3rem;
     cursor: pointer;
     color: #6f3b24;
     transition: all 0.2s;
@@ -130,9 +135,9 @@
     border-color: #6f3b24;
     color: #f8f1e7;
   }
-  :global(.auth-icon-btn svg) { width: 32px; height: 32px; }
+  :global(.auth-icon-btn svg) { width: 28px; height: 28px; }
   :global(.auth-icon-label) {
-    font-size: 0.6rem;
+    font-size: 0.55rem;
     font-family: 'Instrument Sans', sans-serif;
     letter-spacing: 0.04em;
     text-align: center;

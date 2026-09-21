@@ -5,6 +5,7 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import { t, lang } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { keepEmail } from '$lib/utils/nameEmail';
   import { isValidEmail } from '$lib/validation';
   import { focusTrap } from '$lib/actions/focusTrap';
   import { lockBodyScroll } from '$lib/actions/lockBodyScroll';
@@ -136,22 +137,31 @@
   function effectiveContact() {
     return {
       requesterName: authStore.isLoggedIn ? (authStore.user?.displayName ?? '') : name.trim(),
-      requesterEmail: authStore.isLoggedIn ? (authStore.user?.email ?? '') : email.trim(),
+      // У вошедшего через Telegram почты в имени нет — её называют здесь.
+      requesterEmail: authStore.isLoggedIn ? (authStore.user?.email ?? email.trim()) : email.trim(),
     };
   }
 
-  function validateContact() {
+  async function validateContact() {
     const contact = effectiveContact();
     if (!contact.requesterName || !contact.requesterEmail) {
       submitError = $t('formFillFields');
       return null;
     }
-    if (!authStore.isLoggedIn && !isValidEmail(contact.requesterEmail)) {
+    // Проверяется одинаково, кем бы почта ни была названа: дом отвечает
+    // письмом, и неверный адрес значит одно и то же.
+    if (!isValidEmail(contact.requesterEmail)) {
       submitError = $t('formInvalidEmail');
       return null;
     }
     if (!ageConfirmed) {
       submitError = $t('formAgeConfirmRequired');
+      return null;
+    }
+    // Названную почту дом запоминает за именем — спросили один раз. Чужой
+    // адрес останавливает дело: в чужое имя его не записывают.
+    if (authStore.needsEmail && (await keepEmail(contact.requesterEmail)) === 'taken') {
+      submitError = $t('formEmailTaken');
       return null;
     }
     return contact;
@@ -165,7 +175,7 @@
   async function handleSubmit(e: Event) {
     e.preventDefault();
     submitError = '';
-    const contact = validateContact();
+    const contact = await validateContact();
     if (!contact) return;
 
     if (intent === 'viewing') {
@@ -384,12 +394,19 @@
               {/if}
               <p>{$t('formLoggedInAs')} <strong>{authStore.user?.displayName}</strong></p>
             </div>
-          {:else}
+          {/if}
+
+          {#if !authStore.isLoggedIn || authStore.needsEmail}
+            {#if authStore.needsEmail}
+              <p class="unified-email-why">{$t('formEmailNeeded')}</p>
+            {/if}
             <div class="unified-fields">
-              <label>
-                <span>{$t('orderNameLabel')}</span>
-                <input id="unified-name" name="name" type="text" bind:value={name} required autocomplete="name" />
-              </label>
+              {#if !authStore.isLoggedIn}
+                <label>
+                  <span>{$t('orderNameLabel')}</span>
+                  <input id="unified-name" name="name" type="text" bind:value={name} required autocomplete="name" />
+                </label>
+              {/if}
               <label>
                 <span>{$t('orderEmailLabel')}</span>
                 <input id="unified-email" name="email" type="email" bind:value={email} required autocomplete="email" />
@@ -545,6 +562,17 @@
   .unified-fields {
     display: grid;
     gap: 0.75rem;
+  }
+
+  /* Почему вдруг спрашивают почту у вошедшего: одна строка над полем, иначе
+     вопрос выглядит придиркой. */
+  .unified-email-why {
+    margin: 0;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 0.86rem;
+    font-style: italic;
+    line-height: 1.45;
+    color: rgba(95, 70, 54, 0.75);
   }
 
   .unified-user {

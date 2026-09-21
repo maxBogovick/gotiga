@@ -3845,7 +3845,22 @@ fn escape_markdown(s: &str) -> String {
 const CATEGORIES: [&str; 4] = ["animals", "dishes", "seasons", "symbols"];
 
 /// How many icons each user is shown per category (their personal subset).
-const POOL_PER_CATEGORY: usize = 8;
+///
+/// Шестнадцать, а не восемь. Знаков в пароле четыре, и весь пароль — это
+/// `POOL_PER_CATEGORY⁴`: восемь давали 4096 сочетаний, то есть двенадцать бит.
+/// Пять попыток в четверть часа — это 480 попыток в сутки, и полный перебор
+/// одного имени занимал неделю; по утёкшей базе он занимал минуты, потому что
+/// рядом с хешем лежит и набор, из которого выбирали. Шестнадцать дают 65 536,
+/// то есть в шестнадцать раз дольше и то и другое, а набор при этом остаётся
+/// подмножеством мастер-набора из двадцати четырёх — декой-набор неизвестного
+/// адреса по-прежнему от настоящего не отличить.
+///
+/// Дальше этого размер набора не растёт: шестнадцать значков — предел того,
+/// что человек окидывает взглядом и по чему находит свой. Оставшееся расстояние
+/// закрывает не размер набора, а перец (`hash_password`): пространство в 65 536
+/// перебирается по дампу за часы при любой стоимости Argon2, а без перца не
+/// перебирается вовсе.
+const POOL_PER_CATEGORY: usize = 16;
 
 /// Master icon pool. Each user is shown a random subset of POOL_PER_CATEGORY of
 /// these per category (chosen at registration, persisted, replayed at login).
@@ -3959,6 +3974,29 @@ fn valid_icon_ids(category: &str) -> Option<&'static [&'static str]> {
 /// account, so the login grid is stable and statistically indistinguishable
 /// from a real stored pool (prevents account enumeration via the icon set).
 /// Keyed by the admin secret so the subset can't be recomputed by an attacker.
+/// Половина HMAC-SHA-256: ключ, дополненный до блока и сложенный с прокладкой
+/// (`0x36` внутри, `0x5c` снаружи). Отдельного крейта ради двух строк не
+/// заводится, а сама конструкция записана здесь целиком, чтобы её было видно.
+fn hmac_block(secret: &str, pad: u8) -> [u8; 64] {
+    use sha2::{Digest, Sha256};
+    let mut key = [0u8; 64];
+    let bytes = secret.as_bytes();
+    if bytes.len() > 64 {
+        let digest = Sha256::digest(bytes);
+        key[..32].copy_from_slice(&digest);
+    } else {
+        key[..bytes.len()].copy_from_slice(bytes);
+    }
+    for b in key.iter_mut() {
+        *b ^= pad;
+    }
+    key
+}
+
+/// Ключом здесь стоит перец знаков, а не `ADMIN_API_KEY`: ключ админа меняют,
+/// и в день замены все декой-наборы поменялись бы вместе с ним — то есть
+/// адрес, который вчера отвечал одной сеткой, сегодня ответил бы другой, и
+/// этим отличался бы от настоящего имени, чья сетка не меняется никогда.
 fn decoy_pool(secret: &str, email: &str) -> Vec<Vec<String>> {
     use rand::SeedableRng;
     use rand::seq::SliceRandom;
@@ -3967,12 +4005,20 @@ fn decoy_pool(secret: &str, email: &str) -> Vec<Vec<String>> {
     CATEGORIES
         .iter()
         .map(|category| {
+            // HMAC, а не `SHA256(секрет‖…)`: у второй записи есть известное
+            // слабое место (дополнение длины), и хотя здесь оно не достаёт до
+            // вывода, ключевой хеш пишут одним способом, чтобы не выяснять
+            // этого заново на каждой правке.
             let mut hasher = Sha256::new();
-            hasher.update(secret.as_bytes());
-            hasher.update(b"\x00");
-            hasher.update(email.as_bytes());
-            hasher.update(b"\x00");
-            hasher.update(category.as_bytes());
+            hasher.update(hmac_block(secret, 0x5c));
+            hasher.update({
+                let mut inner = Sha256::new();
+                inner.update(hmac_block(secret, 0x36));
+                inner.update(email.as_bytes());
+                inner.update(b"\x00");
+                inner.update(category.as_bytes());
+                inner.finalize()
+            });
             let seed: [u8; 32] = hasher.finalize().into();
             let mut rng = rand::rngs::StdRng::from_seed(seed);
 
@@ -4025,6 +4071,55 @@ fn validate_pool(pool: &[Vec<String>; 4], selections: &[String; 4]) -> Result<se
     Ok(serde_json::Value::Object(pool_obj))
 }
 
+/// Собрать набор нынешнего размера вокруг уже сделанного выбора.
+///
+/// Нужно там, где набор у имени старого размера (восемь знаков вместо
+/// шестнадцати), а выбор человека только что стал известен — то есть сразу
+/// после удачного входа. Выбранный знак остаётся на месте, прежние соседи
+/// остаются соседями, недостающее добирается из мастер-набора.
+///
+/// Растить набор молча можно именно потому, что он не секрет: секрет — это
+/// какой из знаков выбран, а набор рисуется на экране всякому, кто назовёт
+/// адрес.
+fn grown_pool(previous: &[Vec<String>], selections: &[String; 4]) -> serde_json::Value {
+    use rand::seq::SliceRandom;
+    let mut rng = rand::thread_rng();
+    let mut pool_obj = serde_json::Map::new();
+
+    for (i, category) in CATEGORIES.iter().enumerate() {
+        let master = valid_icon_ids(category).unwrap_or(&[]);
+        let mut kept: Vec<String> = previous
+            .get(i)
+            .map(|ids| {
+                ids.iter()
+                    .filter(|id| master.contains(&id.as_str()))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !kept.contains(&selections[i]) {
+            kept.push(selections[i].clone());
+        }
+        kept.truncate(POOL_PER_CATEGORY);
+
+        let mut spare: Vec<&str> = master
+            .iter()
+            .copied()
+            .filter(|id| !kept.iter().any(|k| k == id))
+            .collect();
+        spare.shuffle(&mut rng);
+        for id in spare {
+            if kept.len() >= POOL_PER_CATEGORY {
+                break;
+            }
+            kept.push(id.to_string());
+        }
+        kept.shuffle(&mut rng);
+        pool_obj.insert(category.to_string(), serde_json::json!(kept));
+    }
+    serde_json::Value::Object(pool_obj)
+}
+
 /// Parse a stored `visual_pool` JSON value ({category: [icon_id]}) into the
 /// fixed category order. Returns None if the shape is unusable.
 fn parse_stored_pool(value: &serde_json::Value) -> Option<Vec<Vec<String>>> {
@@ -4053,21 +4148,234 @@ fn build_hash_input(selections: &[String; 4]) -> String {
         .join("|")
 }
 
-fn hash_password(input: &str) -> std::result::Result<String, argon2::password_hash::Error> {
+/// Argon2id с перцем и с большей стоимостью, чем значение по умолчанию.
+///
+/// Перец (`AUTH_PEPPER`) лежит вне базы, и в этом весь смысл: знаков всего
+/// четыре из шестнадцати, то есть 65 536 сочетаний, а столько перебирается по
+/// дампу за часы при любой стоимости — пространство слишком мало, чтобы его
+/// спасла цена одной попытки. Дамп без перца не перебирается вовсе.
+///
+/// Стоимость при этом всё равно поднята (64 МиБ, три прохода против 19 МиБ и
+/// двух): перец защищает от чтения базы, но не от того, кто прочёл и базу, и
+/// окружение, — а против него работает только цена.
+fn argon(pepper: &str) -> std::result::Result<Argon2<'_>, argon2::password_hash::Error> {
+    use argon2::{Algorithm, Params, Version};
+    let params = Params::new(64 * 1024, 3, 1, None)?;
+    Argon2::new_with_secret(pepper.as_bytes(), Algorithm::Argon2id, Version::V0x13, params)
+        .map_err(|_| argon2::password_hash::Error::Crypto)
+}
+
+fn hash_password(
+    input: &str,
+    pepper: &str,
+) -> std::result::Result<String, argon2::password_hash::Error> {
     let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let hash = argon2.hash_password(input.as_bytes(), &salt)?;
+    let hash = argon(pepper)?.hash_password(input.as_bytes(), &salt)?;
     Ok(hash.to_string())
 }
 
-fn verify_password(input: &str, hash: &str) -> bool {
-    let parsed = match PasswordHash::new(hash) {
-        Ok(h) => h,
-        Err(_) => return false,
+/// Чем знаки сошлись: нынешним способом или каким-то из прежних.
+///
+/// Перец нельзя досыпать в уже лежащий хеш — пересобрать его можно только в тот
+/// единственный миг, когда выбор человека известен в открытую, то есть сразу
+/// после удачного входа. Поэтому проверка знает про все записи, какие бывают, и
+/// говорит, какая сработала: `Legacy` — это поручение пересобрать.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignsMatch {
+    No,
+    Now,
+    Legacy,
+}
+
+/// Лестница из трёх ступеней, и у каждой своя причина:
+///
+/// 1. нынешний перец — обычный случай;
+/// 2. прежний перец (`AUTH_PEPPER_OLD`) — идёт смена перца. Без этой ступени
+///    перец был бы несменяем вовсе: утечка означала бы «поменять нельзя, не
+///    заперев всех»;
+/// 3. вовсе без перца — записи, сделанные до того, как перец появился.
+///
+/// Вторая и третья отвечают `Legacy`, то есть «сошлось, но перепиши»: разницы
+/// между ними для входа нет, а работа после них одна и та же.
+fn verify_password(input: &str, hash: &str, pepper: &str, was: Option<&str>) -> SignsMatch {
+    let Ok(parsed) = PasswordHash::new(hash) else {
+        return SignsMatch::No;
     };
-    Argon2::default()
+    let opens = |pepper: &str| {
+        argon(pepper).is_ok_and(|a| a.verify_password(input.as_bytes(), &parsed).is_ok())
+    };
+    if opens(pepper) {
+        return SignsMatch::Now;
+    }
+    if was.is_some_and(opens) {
+        return SignsMatch::Legacy;
+    }
+    // Стоимость записана в самом хеше, поэтому `Argon2::default()` разбирает и
+    // прежнюю, более дешёвую.
+    if Argon2::default()
         .verify_password(input.as_bytes(), &parsed)
         .is_ok()
+    {
+        return SignsMatch::Legacy;
+    }
+    SignsMatch::No
+}
+
+/// Знаки слова для сверки: без 0/O, 1/I/L и прочих пар, которые глаз путает.
+/// Слово сравнивают взглядом, и «кажется, то же самое» защитой не является.
+const WORD_ALPHABET: &[u8] = b"ACDEFGHJKMNPQRTUVWXY34679";
+
+/// Слово, которое человек сверяет на экране и в боте. Шесть знаков через
+/// дефис: короче — подбирается за пять минут перебором записок, длиннее —
+/// не сверяется взглядом.
+fn login_word() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let pick = |rng: &mut rand::rngs::ThreadRng| {
+        WORD_ALPHABET[rng.gen_range(0..WORD_ALPHABET.len())] as char
+    };
+    let left: String = (0..3).map(|_| pick(&mut rng)).collect();
+    let right: String = (0..3).map(|_| pick(&mut rng)).collect();
+    format!("{left}-{right}")
+}
+
+/// Секрет в ссылке. Его не сверяют глазами, поэтому длинный: по нему находят
+/// строку, и подобрать его должно быть нельзя.
+fn login_code() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let bytes: [u8; 16] = rng.r#gen();
+    hex::encode(bytes)
+}
+
+/// Чем человек смотрит — одним словом, для записки бота. Полная строка
+/// `User-Agent` в переписке нечитаема, а «Chrome» отвечает на тот вопрос,
+/// который человек себе задаёт.
+fn browser_name(ua: &str) -> String {
+    let lower = ua.to_ascii_lowercase();
+    // Порядок важен: Edge и Opera называют себя Chrome, Chrome называет себя
+    // Safari. Спрашиваем от частного к общему.
+    for (needle, name) in [
+        ("edg/", "Edge"),
+        ("opr/", "Opera"),
+        ("yabrowser", "Yandex"),
+        ("firefox", "Firefox"),
+        ("chrome", "Chrome"),
+        ("safari", "Safari"),
+    ] {
+        if lower.contains(needle) {
+            return name.to_string();
+        }
+    }
+    String::new()
+}
+
+/// Чем дом может дозвониться до хозяина имени, доказанно.
+struct Channels {
+    email: Option<String>,
+    telegram: Option<i64>,
+}
+
+impl Channels {
+    fn any(&self) -> bool {
+        self.email.is_some() || self.telegram.is_some()
+    }
+}
+
+/// Соединение с почтовым сервером — одно место на все письма дома.
+///
+/// **Способ шифрования выбирает порт, и это не украшение.** У почтовых серверов
+/// их два, и они несовместимы:
+///
+/// * **465** — шифрование с первого байта (SMTPS). Это `relay()`.
+/// * **587** — сначала открытый разговор, потом команда `STARTTLS`. Это
+///   `starttls_relay()`.
+///
+/// Прежде здесь стоял `relay()` с любым портом из настроек, а по умолчанию
+/// порт был 587. То есть в настройках по умолчанию дом стучался шифрованием в
+/// дверь, которая ждёт открытого приветствия, — и письмо не уходило никуда.
+/// Увидеть это было можно только по строке в журнале, а с тех пор как письмо
+/// стало частью входа, это означало бы «никто не может завести имя».
+fn smtp_transport(
+    host: &str,
+    port: u16,
+    user: &str,
+    pass: &str,
+) -> Result<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>> {
+    use lettre::transport::smtp::authentication::Credentials;
+    use lettre::{AsyncSmtpTransport, Tokio1Executor};
+
+    let builder = if port == 587 {
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
+    } else {
+        AsyncSmtpTransport::<Tokio1Executor>::relay(host)
+    }
+    .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?;
+
+    Ok(builder
+        .port(port)
+        .credentials(Credentials::new(user.to_string(), pass.to_string()))
+        .build())
+}
+
+/// Отпечаток выданного ключа: в базе лежит он, ключ уезжает человеку.
+///
+/// Один на все три ключа — сессию, сброс знаков и письмо-приглашение. Простой
+/// SHA-256, без соли и без стоимости, и это правильно: ключ здесь не пароль, а
+/// сто двадцать два случайных бита, перебирать которые нечем и незачем. Соль
+/// же сделала бы поиск по отпечатку невозможным.
+fn fingerprint(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+/// Ключ, который уезжает в письмо или в браузер.
+fn secret_key() -> String {
+    Uuid::new_v4().to_string()
+}
+
+/// Сколько живёт письмо-приглашение. Двое суток: человек заводит имя вечером,
+/// а до ящика добирается на следующий день.
+const CONFIRM_HOURS: i64 = 48;
+
+/// Сколько живёт ключ сброса. Два часа, а не двое суток: письмо о сбросе
+/// читают сразу — его для того и просят, — а лежит эта ссылка в ящике, в
+/// истории браузера и в журналах прокси, и каждый лишний час она там лежит
+/// зря.
+const RESET_HOURS: i64 = 2;
+
+/// Одна проверка адреса на все три двери: заведение имени, названная почта и
+/// сброс. Прежде их было столько же, сколько мест, и они расходились: одна
+/// требовала `@` и ничего больше (то есть пропускала адрес из одного знака
+/// `@`), другая ещё и обрезала пробелы. Разошедшиеся проверки значат, что
+/// адрес, которым завели имя, может не совпасть с адресом, которым в него
+/// входят.
+fn normalize_email(raw: &str) -> Result<String> {
+    let email = raw.trim().to_lowercase();
+    let bad = || AppError::BadRequest("Invalid email".into());
+    if email.len() < 6 || email.len() > 200 {
+        return Err(bad());
+    }
+    let mut halves = email.split('@');
+    let (local, domain) = (halves.next().unwrap_or(""), halves.next().unwrap_or(""));
+    if halves.next().is_some() || local.is_empty() {
+        return Err(bad());
+    }
+    let dotted = domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.');
+    if !dotted || domain.len() < 4 || email.contains(char::is_whitespace) {
+        return Err(bad());
+    }
+    Ok(email)
+}
+
+/// Имя, как его печатают. Потолок есть, потому что колонка `TEXT` его не
+/// имеет, а поле формы — тем более.
+fn normalize_display_name(raw: &str) -> Result<String> {
+    let name: String = raw.trim().chars().take(80).collect();
+    if name.is_empty() {
+        return Err(AppError::BadRequest("Display name required".into()));
+    }
+    Ok(name)
 }
 
 // ============================================================
@@ -4075,61 +4383,283 @@ fn verify_password(input: &str, hash: &str) -> bool {
 // ============================================================
 
 impl AppService {
+    /// Есть ли у дома чем отправить письмо.
+    ///
+    /// Спрашивается там же, откуда берёт настройки `send_mail`: у базы, а чего
+    /// нет в базе — у окружения. По этому ответу дверь выбирает порядок, и
+    /// поэтому он не может разойтись с тем, дойдёт письмо или нет.
+    pub async fn mail_works(&self) -> bool {
+        let db = self.get_smtp_settings().await.unwrap_or_default();
+        let named = |from_db: Option<&str>, from_env: Option<&str>| {
+            from_db
+                .or(from_env)
+                .is_some_and(|v| !v.trim().is_empty())
+        };
+        named(db.host.as_deref(), self.config.smtp_host.as_deref())
+            && named(db.user.as_deref(), self.config.smtp_user.as_deref())
+            && named(db.pass.as_deref(), self.config.smtp_pass.as_deref())
+            && named(db.from.as_deref(), self.config.smtp_from.as_deref())
+    }
+
+    /// Завести имя. Ответ — «письмо ушло», и ничего кроме.
+    ///
+    /// Сессии здесь больше нет, и это не строгость, а единственный способ
+    /// закрыть перечисление жильцов. Пока имя заводилось сразу, занятый адрес
+    /// отвечал «такой уже есть», а свободный — сессией, и узнать, кто живёт в
+    /// доме, можно было одним запросом на адрес — мимо всей работы,
+    /// проделанной на входе ради того, чтобы этого нельзя было узнать
+    /// (декой-наборы, общий `Unauthorized`, молчание «забытых знаков»).
+    ///
+    /// Теперь оба случая отвечают одинаково, а разницу узнаёт только тот, у
+    /// кого ключ от ящика: на свободный адрес уходит приглашение, на занятый —
+    /// записка «имя у вас уже есть, вот вход».
+    ///
+    /// Заодно это и есть подтверждение почты: дом проверяет, что до ящика
+    /// можно дозвониться, ровно один раз — и именно тогда, когда это ещё
+    /// ничего не стоит человеку.
     pub async fn register_user(
         &self,
         req: &RegisterRequest,
         ip: Option<String>,
         user_agent: Option<String>,
-    ) -> Result<LoginVerifyResponse> {
+    ) -> Result<crate::models::RegisterResponse> {
         if !req.age_confirmed {
             return Err(AppError::BadRequest(
                 "Please confirm you are 16 or older".into(),
             ));
         }
-        if !req.email.contains('@') {
-            return Err(AppError::BadRequest("Invalid email".into()));
-        }
-        if req.display_name.trim().is_empty() {
-            return Err(AppError::BadRequest("Display name required".into()));
-        }
+        let email = normalize_email(&req.email)?;
+        let display_name = normalize_display_name(&req.display_name)?;
 
         // Validate the personal pool (alphabet shown at login) and that each
         // selection is drawn from it.
         let pool_json = validate_pool(&req.pool, &req.selections)?;
 
         let hash_input = build_hash_input(&req.selections);
-        let hash = hash_password(&hash_input)
+        let hash = hash_password(&hash_input, &self.config.auth_pepper)
             .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
 
-        let ctx = self.client_context(ip.clone(), user_agent.clone());
-        let user = self
+        let ctx = self.client_context(ip, user_agent);
+        let key = secret_key();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(CONFIRM_HOURS);
+
+        // Открытый порядок: отправить письмо нечем, значит подтверждать нечем,
+        // и держать человека у двери ради письма, которое никогда не придёт, —
+        // это просто закрытый дом. Отметка о письме всё равно заводится: появится
+        // почта — приглашение уйдёт по «выслать заново», ничего не переделывая.
+        //
+        // Перезахват неоткрытого имени здесь НЕ делается, хотя неподтверждёнными
+        // тут будут все: он безопасен ровно потому, что письмо доказывает ящик.
+        // Без письма он означал бы «набери чужой адрес — и имя твоё».
+        if !self.mail_works().await {
+            let user = self
+                .repo
+                .create_user(
+                    &email,
+                    &display_name,
+                    &hash,
+                    &pool_json,
+                    &fingerprint(&key),
+                    expires_at,
+                    &ctx,
+                )
+                .await?;
+            let session_token = self.open_session(user.id, &ctx).await?;
+            Self::log_domain_event("user_registered", "user", user.id, "open");
+            return Ok(crate::models::RegisterResponse {
+                pending: false,
+                email,
+                session_token: Some(session_token),
+                user: Some(UserDto::from(&user)),
+            });
+        }
+
+        let made = self
             .repo
             .create_user(
-                &req.email.to_lowercase(),
-                &req.display_name,
+                &email,
+                &display_name,
                 &hash,
                 &pool_json,
+                &fingerprint(&key),
+                expires_at,
                 &ctx,
             )
-            .await?;
+            .await;
 
-        let session_token = Uuid::new_v4().to_string();
-        let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
-        let session_ctx = self.client_context(ip, user_agent);
-        self.repo
-            .create_session(user.id, &session_token, expires_at, &session_ctx)
-            .await?;
+        let invited = match made {
+            Ok(user) => {
+                Self::log_domain_event("user_registered", "user", user.id, "pending");
+                true
+            }
+            // Адрес занят. Имя, до которого так и не дозвонились, принадлежит
+            // тому, кто докажет ящик, — иначе занять чужой адрес можно было бы,
+            // просто набрав его, и настоящий хозяин упёрся бы в уникальный
+            // индекс навсегда. Захвата тут нет: письмо в обоих случаях уходит
+            // владельцу ящика.
+            Err(AppError::Conflict(_)) => {
+                let reclaimed = self
+                    .repo
+                    .reclaim_unconfirmed_user(
+                        &email,
+                        &display_name,
+                        &hash,
+                        &pool_json,
+                        &fingerprint(&key),
+                        expires_at,
+                        &ctx,
+                    )
+                    .await?;
+                match reclaimed {
+                    Some(user) => {
+                        Self::log_domain_event("user_reclaimed", "user", user.id, "pending");
+                        true
+                    }
+                    None => false,
+                }
+            }
+            Err(e) => return Err(e),
+        };
 
-        Self::log_domain_event("user_registered", "user", user.id, "ok");
+        // Письмо уходит вдогонку: медленный SMTP не должен держать ответ, а по
+        // времени ответа не должно быть видно, какая из двух веток сработала.
+        let svc = self.clone();
+        let to = email.clone();
+        tokio::spawn(async move {
+            let sent = if invited {
+                svc.send_confirm_email(&to, &key).await
+            } else {
+                svc.send_already_have_name_email(&to).await
+            };
+            if let Err(e) = sent {
+                tracing::error!("Sign-up letter to {to} failed: {e}");
+            }
+        });
+
+        Ok(crate::models::RegisterResponse {
+            pending: true,
+            email,
+            session_token: None,
+            user: None,
+        })
+    }
+
+    /// Перешли по ссылке из письма. Дверь открыта, и человек сразу внутри:
+    /// заставлять его после этого набирать знаки заново значило бы спросить
+    /// дважды одно и то же.
+    pub async fn confirm_email(
+        &self,
+        token: &str,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<LoginVerifyResponse> {
+        let user = self
+            .repo
+            .confirm_email(&fingerprint(token))
+            .await?
+            .ok_or_else(|| {
+                AppError::BadRequest("This letter has gone cold — ask for a new one.".into())
+            })?;
+        if user.is_blocked {
+            return Err(AppError::Unauthorized);
+        }
+
+        let ctx = self.client_context(ip, user_agent);
+        let session_token = self.open_session(user.id, &ctx).await?;
+        Self::log_domain_event("email_confirmed", "user", user.id, "ok");
         Ok(LoginVerifyResponse {
             session_token,
             user: UserDto::from(&user),
         })
     }
 
-    pub async fn login_challenge(&self, email: &str) -> Result<LoginChallengeResponse> {
+    /// Выслать приглашение заново — тому, кто не дождался первого, и тому, кто
+    /// назвал адрес в ответ на дело. Подтверждённому имени отвечает молчанием:
+    /// просить подтвердить дважды не о чем.
+    pub async fn resend_confirm_email(&self, user: &User) -> Result<()> {
+        let Some(to) = user.email.clone() else {
+            return Err(AppError::BadRequest("No email on this account".into()));
+        };
+        if user.email_confirmed_at.is_some() {
+            return Ok(());
+        }
+        let key = secret_key();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(CONFIRM_HOURS);
+        self.repo
+            .set_email_confirm(user.id, &fingerprint(&key), expires_at)
+            .await?;
+        let svc = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = svc.send_confirm_email(&to, &key).await {
+                tracing::error!("Confirmation letter to {to} failed: {e}");
+            }
+        });
+        Ok(())
+    }
+
+    /// Завести сессию: человеку — ключ, базе — отпечаток.
+    ///
+    /// Одно место на все четыре двери (знаки, письмо, Telegram, сброс): пока
+    /// ключ клали в базу как есть, чтение базы было входом в каждое имя на
+    /// месяц вперёд, и четыре записи этого «клали» разошлись бы на первой же
+    /// правке.
+    async fn open_session(
+        &self,
+        user_id: Uuid,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<String> {
+        let token = secret_key();
+        let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
+        self.repo
+            .create_session(user_id, &fingerprint(&token), expires_at, ctx)
+            .await?;
+        self.repo.prune_expired_sessions(user_id).await.ok();
+        Ok(token)
+    }
+
+    /// Сколько неудач терпит дом.
+    ///
+    /// `PAIR` — тесный счёт по паре «этот адрес из этой сети». Он и ловит
+    /// подбирающего, и НЕ запирает хозяина: пять ошибок постороннего гасят
+    /// посторонего, а не человека, который сейчас войдёт из дома.
+    ///
+    /// `WIDE_EMAIL` — потолок на само имя, широкий: он не про опечатку, а про
+    /// того, кто перебирает с десяти адресов сразу, и без него тесный счёт
+    /// обходится сменой сети. Тридцать в час — это девяносто дней на полный
+    /// перебор нынешних 65 536 сочетаний.
+    ///
+    /// `WIDE_IP` — чтобы один адрес не веерил по многим именам.
+    const LOCK_PAIR: i64 = 5;
+    const LOCK_PAIR_MINUTES: i64 = 15;
+    const LOCK_WIDE: i64 = 30;
+    const LOCK_WIDE_MINUTES: i64 = 60;
+
+    async fn check_lockout(&self, email: &str, ip: Option<&str>) -> Result<()> {
+        let tally = self
+            .repo
+            .recent_failures(email, ip, Self::LOCK_PAIR_MINUTES, Self::LOCK_WIDE_MINUTES)
+            .await?;
+        // Все три преграды отвечают одним и тем же: который из счётов
+        // сработал, знать снаружи незачем, а разные ответы сообщали бы
+        // перебирающему, в какую сторону двигаться.
+        if tally.pair >= Self::LOCK_PAIR
+            || tally.by_email >= Self::LOCK_WIDE
+            || tally.by_ip >= Self::LOCK_WIDE
+        {
+            return Err(AppError::BadRequest(
+                "Too many failed attempts. Try again later.".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn login_challenge(
+        &self,
+        email: &str,
+        ip: Option<&str>,
+    ) -> Result<LoginChallengeResponse> {
         use rand::seq::SliceRandom;
-        let email_lower = email.to_lowercase();
+        let email_lower = normalize_email(email)?;
 
         // A challenge is always issued — for unknown, valid, AND blocked emails —
         // so the response never reveals whether an account exists. The actual
@@ -4137,12 +4667,7 @@ impl AppService {
         // same generic Unauthorized for every failure. (Avoids account enumeration.)
 
         // Check lockout before issuing challenge
-        let failures = self.repo.count_recent_failures(&email_lower, 15).await?;
-        if failures >= 5 {
-            return Err(AppError::BadRequest(
-                "Too many failed attempts. Try again in 15 minutes.".into(),
-            ));
-        }
+        self.check_lockout(&email_lower, ip).await?;
 
         // Determine the icon set to show. For a real account it's the personal
         // pool stored at registration; for an unknown email (or a legacy account
@@ -4154,7 +4679,7 @@ impl AppService {
             .as_ref()
             .and_then(|u| u.visual_pool.as_ref())
             .and_then(parse_stored_pool)
-            .unwrap_or_else(|| decoy_pool(&self.config.admin_api_key, &email_lower));
+            .unwrap_or_else(|| decoy_pool(&self.config.auth_pepper, &email_lower));
 
         // Build tokens synchronously in a block so ThreadRng (!Send) is dropped before any .await
         let (all_tokens, steps) = {
@@ -4217,13 +4742,7 @@ impl AppService {
             .await?
             .ok_or_else(|| AppError::BadRequest("Challenge expired or not found".into()))?;
 
-        // Check lockout
-        let failures = self.repo.count_recent_failures(&email, 15).await?;
-        if failures >= 5 {
-            return Err(AppError::BadRequest(
-                "Too many failed attempts. Try again in 15 minutes.".into(),
-            ));
-        }
+        self.check_lockout(&email, ctx.ip.as_deref()).await?;
 
         let token_map: Vec<ChallengeToken> = serde_json::from_value(tokens_json)
             .map_err(|e| AppError::Internal(format!("Deserialize error: {e}")))?;
@@ -4250,8 +4769,22 @@ impl AppService {
             }
         };
 
+        // Аккаунт без визуального пароля (вошедший через Telegram) этой дверью
+        // не входит — и отвечает ему тот же общий Unauthorized, что и неизвестной
+        // почте: по ответу нельзя узнать, есть ли такой аккаунт и какие у него
+        // двери.
+        let Some(stored_hash) = user.visual_password_hash.as_deref() else {
+            self.repo.record_attempt(&email, false, &ctx).await?;
+            return Err(AppError::Unauthorized);
+        };
         let hash_input = build_hash_input(&resolved_selections);
-        if !verify_password(&hash_input, &user.visual_password_hash) {
+        let matched = verify_password(
+            &hash_input,
+            stored_hash,
+            &self.config.auth_pepper,
+            self.config.auth_pepper_old.as_deref(),
+        );
+        if matched == SignsMatch::No {
             self.repo.record_attempt(&email, false, &ctx).await?;
             return Err(AppError::Unauthorized);
         }
@@ -4265,30 +4798,564 @@ impl AppService {
         // record_attempt failure must not abort a successful login — use .ok()
         self.repo.record_attempt(&email, true, &ctx).await.ok();
 
-        // Create 30-day session; prune expired sessions for this user at the same time
-        let session_token = Uuid::new_v4().to_string();
-        let expires_at = chrono::Utc::now() + chrono::Duration::days(30);
-        self.repo
-            .create_session(user.id, &session_token, expires_at, &ctx)
-            .await?;
-        self.repo.prune_expired_sessions(user.id).await.ok();
+        // Единственный миг, когда выбор человека известен в открытую. Здесь и
+        // только здесь его можно переложить на нынешний перец и нынешний
+        // размер набора — не спросив ни о чём и ничего не сломав. Человек
+        // входит теми же знаками; меняется то, как они записаны.
+        let pool = user.visual_pool.as_ref().and_then(parse_stored_pool);
+        let old_size = pool
+            .as_ref()
+            .map(|p| p.iter().any(|ids| ids.len() != POOL_PER_CATEGORY))
+            .unwrap_or(true);
+        if matched == SignsMatch::Legacy || old_size {
+            self.refresh_signs(&user, &resolved_selections, pool.as_deref().unwrap_or(&[]))
+                .await;
+        }
+
+        let session_token = self.open_session(user.id, &ctx).await?;
 
         Self::log_domain_event("user_login", "user", user.id, "ok");
+        self.tell_of_new_door(&user, &ctx);
         Ok(LoginVerifyResponse {
             session_token,
             user: UserDto::from(&user),
         })
     }
 
+    /// Переписать знаки на нынешний лад. Неудача здесь ничего не отменяет:
+    /// человек уже вошёл, а запись подтянется при следующем входе.
+    async fn refresh_signs(&self, user: &User, selections: &[String; 4], previous: &[Vec<String>]) {
+        let Ok(hash) = hash_password(&build_hash_input(selections), &self.config.auth_pepper) else {
+            return;
+        };
+        let pool = grown_pool(previous, selections);
+        if let Err(e) = self
+            .repo
+            .refresh_visual_credentials(user.id, &hash, &pool)
+            .await
+        {
+            tracing::warn!("Could not refresh signs for {}: {e}", user.id);
+        }
+    }
+
+    // ========================================================
+    // ВХОД ЧЕРЕЗ TELEGRAM: одноразовое слово
+    // ========================================================
+
+    /// Есть ли эта дверь на этом сервере. Клиент спрашивает, чтобы не рисовать
+    /// кнопку, ведущую в никуда, а имя бота приходит отсюда, чтобы сменить
+    /// бота можно было без пересборки фронта.
+    pub fn telegram_login_config(&self) -> crate::models::TelegramLoginConfig {
+        crate::models::TelegramLoginConfig {
+            enabled: self.config.telegram_login_bot_token.is_some(),
+            bot_username: self.config.telegram_login_bot_username.clone(),
+        }
+    }
+
+    /// Назвать почту — тогда, когда её впервые спросило дело.
+    ///
+    /// Вход через Telegram почты не даёт, и спрашивать её у двери значит терять
+    /// человека там, ради чего вход и облегчали. Спрашивает бронь, заказ или
+    /// заявка — то есть ровно там, где без обратного адреса дом не сможет
+    /// ответить, — и спрашивает ОДИН раз: дальше она лежит в имени.
+    ///
+    /// Замена почты сюда не входит. Она меняет личность, и делаться молча, по
+    /// дороге к заказу, не должна.
+    pub async fn name_email(&self, user: &User, email: &str) -> Result<UserDto> {
+        let email = normalize_email(email)?;
+        if let Some(existing) = user.email.as_deref() {
+            // Та же самая — спрашивать было не о чем, и отказывать не за что.
+            // Приглашение при этом уходит заново: человек, назвавший адрес
+            // второй раз, обычно ищет именно то письмо.
+            if existing == email {
+                if user.email_confirmed_at.is_none() {
+                    self.resend_confirm_email(user).await?;
+                }
+                return Ok(UserDto::from(user));
+            }
+            return Err(AppError::BadRequest("This account already has an email".into()));
+        }
+        let key = secret_key();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(CONFIRM_HOURS);
+        let fresh = self
+            .repo
+            .set_user_email(user.id, &email, &fingerprint(&key), expires_at)
+            .await?
+            .ok_or_else(|| AppError::BadRequest("This account already has an email".into()))?;
+        Self::log_domain_event("user_named_email", "user", fresh.id, "ok");
+
+        // Названный адрес — ещё не дверь. Дом им ОТВЕТИТ на заказ (для этого
+        // его и спросили), но ВПУСТИТ по нему только после письма: иначе
+        // опечатка в адресе отдавала бы имя постороннему, а «забыли знаки»
+        // делает почту каналом полного восстановления.
+        let to = email.clone();
+        let svc = self.clone();
+        tokio::spawn(async move {
+            if let Err(e) = svc.send_confirm_email(&to, &key).await {
+                tracing::error!("Confirmation letter to {to} failed: {e}");
+            }
+        });
+        Ok(UserDto::from(&fresh))
+    }
+
+    /// Отвязать Telegram.
+    ///
+    /// Отказ, когда другой двери нет: первая дверь — это почта И знаки вместе
+    /// (вход по знакам начинается с почты), и без любой из половин человек,
+    /// отвязавший Telegram, запер бы себя снаружи собственной дверью. Проверка
+    /// стоит здесь, а не в базе: там она молча зависела бы от того, кто позвал.
+    pub async fn telegram_unlink(&self, user: &User) -> Result<UserDto> {
+        if user.telegram_id.is_none() {
+            return Ok(UserDto::from(user));
+        }
+        // Дверью считается ПОДТВЕРЖДЁННАЯ почта со знаками: по названному, но
+        // не открытому адресу войти нельзя, и считать его дверью значило бы
+        // выпустить человека наружу через ту, которой нет.
+        if !user.email_confirmed() || user.visual_password_hash.is_none() {
+            return Err(AppError::BadRequest(
+                "Telegram is the only way in — add an email and signs first".into(),
+            ));
+        }
+        self.repo.unlink_telegram(user.id).await?;
+        Self::log_domain_event("telegram_unlinked", "user", user.id, "ok");
+        let fresh = self
+            .repo
+            .find_user_by_id(user.id)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        Ok(UserDto::from(&fresh))
+    }
+
+    /// Уборка за входом: отработавшие и остывшие слова.
+    pub async fn prune_telegram_login_codes(&self) -> Result<u64> {
+        self.repo.prune_telegram_login_codes().await
+    }
+
+    /// Адрес, по которому этот дом принимает обновления Telegram.
+    ///
+    /// Считается в одном месте: тот же адрес называют и саморегистрация при
+    /// запуске, и подпись в панели выкладки. Два способа собрать один адрес
+    /// однажды разошлись бы на косой черте.
+    pub fn telegram_webhook_url(&self) -> Option<String> {
+        let secret = self.config.telegram_webhook_secret.as_deref()?;
+        Some(crate::telegram::webhook_url(&self.config.public_url, secret))
+    }
+
+    /// Сказать Telegram, куда стучаться. Вызывается при каждом запуске.
+    ///
+    /// Руками это делалось один раз и забывалось навсегда — ровно до переезда
+    /// на другой домен, после которого вход молча переставал работать, а
+    /// ошибка лежала не у нас, а в `getWebhookInfo`, куда никто не смотрит.
+    /// Сервер знает и домен, и токен, и секрет, поэтому говорит сам.
+    ///
+    /// Ошибка не роняет запуск: не дозвонились до Telegram — сайт всё равно
+    /// должен открыться, а вход подождёт следующего запуска.
+    pub async fn announce_telegram_webhook(&self) {
+        let (Some(bot), Some(url)) = (self.login_bot(), self.telegram_webhook_url()) else {
+            return; // двери нет — и объявлять нечего
+        };
+        let secret = match self.config.telegram_webhook_secret.as_deref() {
+            Some(s) => s,
+            None => return,
+        };
+        if self.config.public_url_is_local() {
+            tracing::info!(
+                "Telegram login is on, but PUBLIC_URL is local ({}): Telegram cannot reach {}. \
+                 The webhook is NOT registered — use a tunnel, or play the bot by hand locally.",
+                self.config.public_url,
+                url
+            );
+            return;
+        }
+        match bot.announce(&url, secret).await {
+            Ok(()) => tracing::info!("Telegram webhook registered at {url}"),
+            // Уровень warn, а не info: вход не работает, и это должно быть
+            // видно в журнале запуска, а не найдено потом по жалобе.
+            Err(e) => tracing::warn!("Telegram webhook NOT registered ({url}): {e}"),
+        }
+    }
+
+    /// Секрет webhook — читает только обработчик, сверяя два доказательства.
+    pub fn telegram_webhook_secret(&self) -> Option<String> {
+        self.config.telegram_webhook_secret.clone()
+    }
+
+    fn login_bot(&self) -> Option<crate::telegram::Bot> {
+        let token = self.config.telegram_login_bot_token.clone()?;
+        Some(crate::telegram::Bot::new(token, self.http_client.clone()))
+    }
+
+    /// Начать вход: завести слово и отдать странице ссылку на бота.
+    ///
+    /// `bind_user` — привязка Telegram к уже вошедшему аккаунту из профиля:
+    /// тот же обряд, но в конце не новый человек, а вторая дверь у прежнего.
+    pub async fn telegram_start_login(
+        &self,
+        bind_user: Option<Uuid>,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<crate::models::TelegramCodeResponse> {
+        let bot_name = match (
+            self.config.telegram_login_bot_token.as_deref(),
+            self.config.telegram_login_bot_username.as_deref(),
+        ) {
+            (Some(_), Some(name)) => name.to_string(),
+            _ => return Err(AppError::BadRequest("Telegram login is not set up".into())),
+        };
+
+        let code = login_code();
+        let word = login_word();
+        let ctx = self.client_context(ip, user_agent.clone());
+        let row = self
+            .repo
+            .create_telegram_login_code(&code, &word, bind_user, user_agent.as_deref(), &ctx)
+            .await?;
+
+        Ok(crate::models::TelegramCodeResponse {
+            link: format!("https://t.me/{bot_name}?start={code}"),
+            code,
+            word,
+            expires_at: row.expires_at.to_rfc3339(),
+        })
+    }
+
+    /// Опрос со страницы. Сессия отдаётся ОДИН раз — дальше слово ничего не
+    /// значит. Неизвестное и остывшее слово отвечают одинаково: разница между
+    /// «такого не было» и «уже не годится» странице не нужна, а гадающему по
+    /// ответу — тем более.
+    pub async fn telegram_login_status(&self, code: &str) -> Result<crate::models::TelegramCodeStatus> {
+        let cold = || crate::models::TelegramCodeStatus {
+            state: "expired".into(),
+            session_token: None,
+            user: None,
+        };
+        let Some(row) = self.repo.find_telegram_login_code(code).await? else {
+            return Ok(cold());
+        };
+        if row.expires_at < chrono::Utc::now() {
+            return Ok(cold());
+        }
+        match row.state.as_str() {
+            "waiting" | "asked" => Ok(crate::models::TelegramCodeStatus {
+                state: row.state,
+                session_token: None,
+                user: None,
+            }),
+            "refused" => Ok(crate::models::TelegramCodeStatus {
+                state: "refused".into(),
+                session_token: None,
+                user: None,
+            }),
+            "confirmed" => {
+                // Забирается самим UPDATE: два опроса, пришедшие разом, иначе
+                // унесли бы одну сессию дважды.
+                let Some(token) = self.repo.take_telegram_login_session(code).await? else {
+                    return Ok(cold());
+                };
+                let user = self.repo.get_session_user(&fingerprint(&token)).await?;
+                Ok(crate::models::TelegramCodeStatus {
+                    state: "ready".into(),
+                    session_token: Some(token),
+                    user: user.as_ref().map(UserDto::from),
+                })
+            }
+            _ => Ok(cold()),
+        }
+    }
+
+    /// Всё, что бот получает от Telegram. Ошибки здесь не поднимаются наружу:
+    /// Telegram на неуспешный ответ повторяет обновление, и повтор нажатия
+    /// «это я» не должен заводить вторую сессию.
+    pub async fn telegram_update(&self, update: crate::telegram::Update) -> Result<()> {
+        let Some(bot) = self.login_bot() else {
+            return Ok(());
+        };
+        if let Some(msg) = update.message {
+            self.telegram_started(&bot, msg).await;
+        } else if let Some(cb) = update.callback_query {
+            self.telegram_answered(&bot, cb).await;
+        }
+        Ok(())
+    }
+
+    /// `/start <слово>` — показать записку с двумя кнопками.
+    async fn telegram_started(&self, bot: &crate::telegram::Bot, msg: crate::telegram::Message) {
+        let Some(from) = msg.from else { return };
+        let ru = from.speaks_russian();
+        let text = msg.text.unwrap_or_default();
+
+        let Some(code) = crate::telegram::start_code(&text) else {
+            // Открыли бота просто так. Вход начинают на сайте, и сказать об
+            // этом — единственное, что здесь уместно.
+            bot.say(msg.chat.id, if ru {
+                "Это бот входа. Начните вход на сайте — он покажет слово, и я спрошу его здесь."
+            } else {
+                "This bot signs you in. Start on the site: it shows a word, and I will ask for it here."
+            }).await;
+            return;
+        };
+
+        let cold = if ru {
+            "Слово остыло. Начните вход на сайте заново."
+        } else {
+            "That word has gone cold. Start again on the site."
+        };
+        let Ok(Some(row)) = self.repo.find_telegram_login_code(&code).await else {
+            bot.say(msg.chat.id, cold).await;
+            return;
+        };
+        if row.state != "waiting" || row.expires_at < chrono::Utc::now() {
+            bot.say(msg.chat.id, cold).await;
+            return;
+        }
+
+        // Записка называет слово и откуда пришёл запрос: «Chrome, Москва»
+        // человеку в Вологде говорит достаточно, чтобы не нажимать.
+        let esc = crate::telegram::esc;
+        let where_from = {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(b) = row.browser.as_deref().map(browser_name).filter(|b| !b.is_empty()) {
+                parts.push(b);
+            }
+            let place: Vec<&str> = [row.city.as_deref(), row.country_code.as_deref()]
+                .into_iter()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .collect();
+            if !place.is_empty() {
+                parts.push(place.join(", "));
+            }
+            parts.join(" · ")
+        };
+        let note = if ru {
+            format!(
+                "<b>Вход на сайт</b>\nСлово: <b>{}</b>{}\n\nЕсли на сайте другое слово или вы не начинали вход — нажмите «Не я».",
+                esc(&row.word),
+                if where_from.is_empty() { String::new() } else { format!("\nОткуда: {}", esc(&where_from)) },
+            )
+        } else {
+            format!(
+                "<b>Signing in</b>\nWord: <b>{}</b>{}\n\nIf the site shows a different word, or you did not start this, press “Not me”.",
+                esc(&row.word),
+                if where_from.is_empty() { String::new() } else { format!("\nFrom: {}", esc(&where_from)) },
+            )
+        };
+        let (yes, no) = if ru {
+            ("Это я, войти", "Не я")
+        } else {
+            ("It's me, sign in", "Not me")
+        };
+
+        let message_id = bot.ask(msg.chat.id, &note, yes, no, &code).await;
+        // Записка отправлена — теперь закрепляем за словом того, кто её видит.
+        // Условие `state = 'waiting'` внутри: два `/start` подряд не должны
+        // переписывать друг друга, иначе кнопка относилась бы к чужой записке.
+        let taken = self
+            .repo
+            .telegram_login_asked(
+                &code,
+                from.id,
+                from.username.as_deref(),
+                from.first_name.as_deref(),
+                msg.chat.id,
+                message_id,
+            )
+            .await
+            .unwrap_or(false);
+        if !taken {
+            bot.say(msg.chat.id, cold).await;
+        }
+    }
+
+    /// Нажали кнопку под запиской.
+    async fn telegram_answered(&self, bot: &crate::telegram::Bot, cb: crate::telegram::CallbackQuery) {
+        let ru = cb.from.speaks_russian();
+        let Some(answer) = cb.data.as_deref().and_then(crate::telegram::Answer::parse) else {
+            return;
+        };
+        let chat_id = cb.message.as_ref().map(|m| m.chat.id);
+        let message_id = cb.message.as_ref().map(|m| m.message_id);
+        let settle = |text: String| async move {
+            if let (Some(chat), Some(id)) = (chat_id, message_id) {
+                bot.settle(chat, id, &text).await;
+            }
+        };
+
+        let code = match &answer {
+            crate::telegram::Answer::Yes(c) | crate::telegram::Answer::No(c) => c.clone(),
+        };
+
+        if let crate::telegram::Answer::No(_) = answer {
+            let _ = self.repo.telegram_login_refused(&code, cb.from.id).await;
+            bot.ack(&cb.id, if ru { "Вход отменён" } else { "Cancelled" }).await;
+            settle(
+                if ru { "Вход отменён.".to_string() } else { "Sign-in cancelled.".to_string() },
+            )
+            .await;
+            return;
+        }
+
+        let cold = if ru { "Слово остыло" } else { "That word has gone cold" };
+        let Ok(Some(row)) = self.repo.find_telegram_login_code(&code).await else {
+            bot.ack(&cb.id, cold).await;
+            return;
+        };
+        if row.state != "asked" || row.telegram_id != Some(cb.from.id) || row.expires_at < chrono::Utc::now() {
+            bot.ack(&cb.id, cold).await;
+            return;
+        }
+
+        match self.telegram_admit(&row, &cb.from).await {
+            Ok(user_id) => {
+                // Сессия достаётся ТОМУ браузеру, который просил вход, поэтому
+                // её обстоятельства взяты из строки слова, а не из запроса
+                // Telegram: телефон бота — не то устройство, что входит.
+                let ctx = crate::models::ClientContext {
+                    ip: row.ip.clone(),
+                    user_agent: row.browser.clone(),
+                    country_code: row.country_code.clone(),
+                    city: row.city.clone(),
+                };
+                let Ok(token) = self.open_session(user_id, &ctx).await else {
+                    bot.ack(&cb.id, if ru { "Не получилось" } else { "Something went wrong" }).await;
+                    return;
+                };
+                let stored = self
+                    .repo
+                    .telegram_login_confirmed(&code, cb.from.id, &token)
+                    .await
+                    .unwrap_or(false);
+                if !stored {
+                    // Гонка: слово уже отвечено или остыло. Сессию не оставляем
+                    // висеть — её никто не заберёт.
+                    let _ = self.repo.delete_session(&fingerprint(&token)).await;
+                    bot.ack(&cb.id, cold).await;
+                    return;
+                }
+                Self::log_domain_event("telegram_login", "user", user_id, "ok");
+
+                bot.ack(&cb.id, if ru { "Готово" } else { "Done" }).await;
+                // Возвращать надо ВО ВКЛАДКУ, а не «на сайт»: сессия лежит
+                // для того браузера, который просил вход, и открытая по ссылке
+                // новая вкладка показала бы главную не вошедшему — то есть
+                // сказала бы, что вход не удался. Адрес назван вторым, на
+                // случай закрытой вкладки.
+                let back = &self.config.public_url;
+                settle(if ru {
+                    format!(
+                        "Готово. Вернитесь во вкладку браузера, где начинали вход, — она уже впустила вас.\nЕсли вкладка закрыта: {}",
+                        crate::telegram::esc(back)
+                    )
+                } else {
+                    format!(
+                        "Done. Go back to the browser tab where you started — it has already let you in.\nIf that tab is closed: {}",
+                        crate::telegram::esc(back)
+                    )
+                })
+                .await;
+            }
+            Err(e) => {
+                let said = match &e {
+                    AppError::Conflict(_) => {
+                        if ru {
+                            "Этот Telegram уже привязан к другому имени"
+                        } else {
+                            "This Telegram is already linked to another account"
+                        }
+                    }
+                    _ => {
+                        if ru {
+                            "Войти не удалось"
+                        } else {
+                            "Could not sign in"
+                        }
+                    }
+                };
+                bot.ack(&cb.id, said).await;
+                settle(said.to_string()).await;
+            }
+        }
+    }
+
+    /// Кого впускать: привязка к названному аккаунту, знакомое число или
+    /// первый приход. Возвращает того, кому заводить сессию.
+    async fn telegram_admit(
+        &self,
+        row: &crate::models::TelegramLoginCode,
+        from: &crate::telegram::TgUser,
+    ) -> Result<Uuid> {
+        let username = from.username.as_deref();
+
+        // Привязка из профиля: аккаунт уже назван, дверь к нему добавляется.
+        if let Some(user_id) = row.bind_user_id {
+            let user = self
+                .repo
+                .link_telegram_to_user(user_id, from.id, username)
+                .await?;
+            Self::log_domain_event("telegram_linked", "user", user.id, "ok");
+            return Ok(user.id);
+        }
+
+        // Вернувшийся. Узнаём по числу — и только по нему.
+        if let Some(user) = self.repo.find_user_by_telegram_id(from.id).await? {
+            // Заблокированному эта дверь закрыта так же, как и первая: иначе
+            // блокировка означала бы «нельзя войти значками».
+            if user.is_blocked {
+                return Err(AppError::Unauthorized);
+            }
+            // `@имя` освежается, имя в профиле — никогда: его человек мог
+            // выбрать себе сам.
+            let _ = self.repo.touch_telegram_username(user.id, username).await;
+            return Ok(user.id);
+        }
+
+        // Первый приход. Ни почты, ни значков: почту спросит первое дело,
+        // которому она нужна.
+        let ctx = crate::models::ClientContext {
+            ip: row.ip.clone(),
+            user_agent: row.browser.clone(),
+            country_code: row.country_code.clone(),
+            city: row.city.clone(),
+        };
+        let user = self
+            .repo
+            .create_telegram_user(from.id, username, &from.display_name(), &ctx)
+            .await?;
+        Self::log_domain_event("user_registered_telegram", "user", user.id, "ok");
+        Ok(user.id)
+    }
+
     pub async fn get_user_from_session(&self, token: &str) -> Result<User> {
         self.repo
-            .get_session_user(token)
+            .get_session_user(&fingerprint(token))
             .await?
             .ok_or(AppError::Unauthorized)
     }
 
+    /// Свои двери и как закрыть все, кроме этой.
+    pub async fn own_sessions(&self, user: &User, token: &str) -> Result<Vec<crate::models::OwnSessionDto>> {
+        let mut doors = self.repo.own_sessions(user.id, &fingerprint(token)).await?;
+        for door in doors.iter_mut() {
+            door.browser = door
+                .browser
+                .as_deref()
+                .map(browser_name)
+                .filter(|b| !b.is_empty());
+        }
+        Ok(doors)
+    }
+
+    pub async fn close_other_sessions(&self, user: &User, token: &str) -> Result<u64> {
+        let closed = self
+            .repo
+            .revoke_other_sessions(user.id, &fingerprint(token))
+            .await?;
+        Self::log_domain_event("user_sessions_closed", "user", user.id, "ok");
+        Ok(closed)
+    }
+
     pub async fn logout(&self, token: &str) -> Result<()> {
-        self.repo.delete_session(token).await?;
+        self.repo.delete_session(&fingerprint(token)).await?;
         Self::log_domain_event("user_logout", "session", "current", "ok");
         Ok(())
     }
@@ -4299,8 +5366,19 @@ impl AppService {
             .find_user_by_id(user_id)
             .await?
             .ok_or(AppError::Unauthorized)?;
+        // Гостевые брони привязываются по совпадению почты — это и есть защита
+        // от чужой расписки. Почта при этом должна быть ПОДТВЕРЖДЁННОЙ: иначе
+        // достаточно было бы набрать чужой адрес, чтобы чужие расписки стали
+        // совпадать с твоим именем. У аккаунта без подтверждённой почты
+        // совпадать нечему; откроется ящик — привяжутся тогда.
+        if !user.email_confirmed() {
+            return Ok(0);
+        }
+        let Some(email) = user.email.as_deref() else {
+            return Ok(0);
+        };
         self.repo
-            .link_bookings_to_user(user_id, &user.email, cancel_tokens)
+            .link_bookings_to_user(user_id, email, cancel_tokens)
             .await
     }
 
@@ -4362,26 +5440,23 @@ impl AppService {
                 name: None,
             });
         }
-        if let Some(m) = self
-            .repo
-            .link_booking_by_token(user.id, &user.email, token)
-            .await?
-        {
-            return Ok(Self::claim_response("booking", m));
-        }
-        if let Some(m) = self
-            .repo
-            .link_waitlist_by_token(user.id, &user.email, token)
-            .await?
-        {
-            return Ok(Self::claim_response("waitlist", m));
-        }
-        if let Some(m) = self
-            .repo
-            .link_notify_order_by_token(user.id, &user.email, token)
-            .await?
-        {
-            return Ok(Self::claim_response("notify", m));
+        // Бронь, лист ожидания и «сообщить о наличии» сверяют почту — одного
+        // токена мало. У аккаунта без почты эти три пути закрыты, а заказная
+        // работа ниже привязывается только по токену и остаётся доступной.
+        if let Some(email) = user.email.as_deref() {
+            if let Some(m) = self.repo.link_booking_by_token(user.id, email, token).await? {
+                return Ok(Self::claim_response("booking", m));
+            }
+            if let Some(m) = self.repo.link_waitlist_by_token(user.id, email, token).await? {
+                return Ok(Self::claim_response("waitlist", m));
+            }
+            if let Some(m) = self
+                .repo
+                .link_notify_order_by_token(user.id, email, token)
+                .await?
+            {
+                return Ok(Self::claim_response("notify", m));
+            }
         }
         if self.repo.commission_claimable_by(token, user.id).await? {
             // Token-only (no email guard). Reuse claim_commission so the conversation
@@ -4490,16 +5565,25 @@ impl AppService {
         let bookings = self.get_user_bookings(user_id).await?;
         let orders = self.get_user_orders(user_id).await?;
         let sessions = self.repo.admin_get_user_sessions(user_id).await?;
-        let recent_failures = self
-            .repo
-            .count_recent_failures(&user.email, 24 * 60)
-            .await?;
+        // Неудачные попытки записаны на почту. У аккаунта без почты этой
+        // двери нет вовсе, значит и неудачных попыток по ней не бывает.
+        let recent_failures = match user.email.as_deref() {
+            Some(email) => {
+                self.repo
+                    .recent_failures(email, None, 24 * 60, 24 * 60)
+                    .await?
+                    .by_email
+            }
+            None => 0,
+        };
         let messages = self.admin_get_user_threads(user_id).await?;
 
         Ok(AdminUserDetail {
             id: user.id.to_string(),
             email: user.email,
             display_name: user.display_name,
+            telegram_username: user.telegram_username.clone(),
+            telegram_linked: user.telegram_id.is_some(),
             admin_notes: user.admin_notes,
             created_at: user.created_at.to_rfc3339(),
             signup_ip: user.signup_ip,
@@ -4550,10 +5634,10 @@ impl AppService {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("User {} not found", user_id)))?;
 
-        let token = Uuid::new_v4().to_string();
-        let expires_at = chrono::Utc::now() + chrono::Duration::hours(48);
+        let token = secret_key();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(RESET_HOURS);
         self.repo
-            .admin_create_reset_token(user_id, &token, expires_at)
+            .admin_create_reset_token(user_id, &fingerprint(&token), expires_at)
             .await?;
         Self::log_domain_event("admin_reset_token_created", "user", user_id, "ok");
         Ok(ResetTokenResponse {
@@ -4565,7 +5649,7 @@ impl AppService {
     pub async fn validate_reset_token(&self, token: &str) -> Result<UserDto> {
         let user = self
             .repo
-            .find_user_by_reset_token(token)
+            .find_user_by_reset_hash(&fingerprint(token))
             .await?
             .ok_or_else(|| AppError::BadRequest("Reset link is invalid or has expired.".into()))?;
         Ok(UserDto::from(&user))
@@ -4579,7 +5663,7 @@ impl AppService {
     ) -> Result<()> {
         let user = self
             .repo
-            .find_user_by_reset_token(&req.token)
+            .find_user_by_reset_hash(&fingerprint(&req.token))
             .await?
             .ok_or_else(|| AppError::BadRequest("Reset link is invalid or has expired.".into()))?;
 
@@ -4588,7 +5672,7 @@ impl AppService {
         let pool_json = validate_pool(&req.pool, &req.selections)?;
 
         let hash_input = build_hash_input(&req.selections);
-        let new_hash = hash_password(&hash_input)
+        let new_hash = hash_password(&hash_input, &self.config.auth_pepper)
             .map_err(|e| AppError::Internal(format!("Hash error: {e}")))?;
 
         // Record where the reset was applied from (audit), then persist.
@@ -4622,26 +5706,117 @@ impl AppService {
         if user.is_blocked {
             return Ok(());
         }
+        self.send_the_way_back(&user, self.client_context(ip, user_agent))
+            .await
+    }
 
-        let token = Uuid::new_v4().to_string();
-        let expires_at = chrono::Utc::now() + chrono::Duration::hours(48);
-        let ctx = self.client_context(ip, user_agent);
+    /// Прислать ключ к знакам — по своей просьбе изнутри дома.
+    ///
+    /// Та же дорога, что и «забыли знаки», только спрашивать адрес не нужно:
+    /// вошедший уже назван. Это единственный путь к знакам для пришедшего через
+    /// Telegram — у него почты может не быть вовсе, а страница входа, где
+    /// живёт «забыли знаки», вошедшему не показывается.
+    pub async fn ask_for_signs(
+        &self,
+        user: &User,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<()> {
+        if !self.proven_channels(user).await.any() {
+            return Err(AppError::BadRequest(
+                "No proven way to reach you — confirm an email or link Telegram first".into(),
+            ));
+        }
+        self.send_the_way_back(user, self.client_context(ip, user_agent))
+            .await
+    }
+
+    /// Каналы, которые дом считает доказанными.
+    ///
+    /// Доказан тот, о котором известно, что он принадлежит хозяину имени:
+    /// почта — переходом по ссылке из письма, Telegram — нажатием кнопки в
+    /// боте. Названный, но не открытый адрес каналом не является: по нему не
+    /// проверено даже то, что ящик его.
+    async fn proven_channels(&self, user: &User) -> Channels {
+        Channels {
+            email: user.email_confirmed().then(|| user.email.clone()).flatten(),
+            telegram: self.login_bot().and(user.telegram_id),
+        }
+    }
+
+    /// Отправить дорогу назад во все доказанные каналы сразу.
+    ///
+    /// Во ВСЕ, а не в лучший: какой из них человек сейчас читает, дом не знает,
+    /// а ключ один и тот же — вторая копия ничего не добавляет к тому, что уже
+    /// может первая.
+    ///
+    /// Ни одного доказанного канала — дом молчит, но если адрес назван и
+    /// отправить письмо есть чем, уходит приглашение открыть ящик: человеку
+    /// нужен именно этот следующий шаг. Ответ снаружи в любом случае один и тот
+    /// же, потому что разница между «нет такого» и «есть, но недоказан»
+    /// перечисляет жильцов ровно так же, как разница между «нет» и «есть».
+    async fn send_the_way_back(
+        &self,
+        user: &User,
+        ctx: crate::models::ClientContext,
+    ) -> Result<()> {
+        let ways = self.proven_channels(user).await;
+        if !ways.any() {
+            if user.email.is_some() && self.mail_works().await {
+                let svc = self.clone();
+                let user = user.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = svc.resend_confirm_email(&user).await {
+                        tracing::warn!("Confirmation letter failed: {e}");
+                    }
+                });
+            }
+            return Ok(());
+        }
+
+        let token = secret_key();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(RESET_HOURS);
         self.repo
-            .create_self_reset_token(user.id, &token, expires_at, &ctx)
+            .create_self_reset_token(user.id, &fingerprint(&token), expires_at, &ctx)
             .await?;
         Self::log_domain_event("password_reset_requested", "user", user.id, "ok");
 
-        // Fire-and-forget the email so the slow SMTP path can't be timed to infer
-        // whether the account exists.
+        // Вдогонку: медленный SMTP не должен держать ответ, а по времени ответа
+        // не должно быть видно, есть ли такое имя.
         let svc = self.clone();
-        let to = user.email.clone();
         tokio::spawn(async move {
-            if let Err(e) = svc.send_password_reset_email(&to, &token).await {
-                tracing::warn!("Password reset email failed: {e}");
+            if let Some(to) = ways.email {
+                if let Err(e) = svc.send_password_reset_email(&to, &token).await {
+                    tracing::warn!("Password reset email failed: {e}");
+                }
+            }
+            if let Some(chat) = ways.telegram {
+                svc.send_password_reset_note(chat, &token).await;
             }
         });
 
         Ok(())
+    }
+
+    /// Ключ к знакам — запиской в бот.
+    ///
+    /// Заведено затем, что почта есть не у всех и настроена не у всех, а бот
+    /// уже стоит и ничего не стоит. Для пришедшего через Telegram это
+    /// единственная дорога назад.
+    async fn send_password_reset_note(&self, chat: i64, token: &str) {
+        let Some(bot) = self.login_bot() else { return };
+        let link = format!(
+            "{}/set-password?token={}",
+            self.config.public_url.trim_end_matches('/'),
+            token
+        );
+        let note = format!(
+            "<b>Новые знаки</b>\nКто-то попросил новые знаки для этого имени. \
+             Если это вы — перейдите по ссылке в ближайшие два часа:\n{}\n\n\
+             Если это не вы, ничего не делайте: знаки не менялись.",
+            crate::telegram::esc(&link)
+        );
+        bot.say(chat, &note).await;
     }
 
     /// Письмо об утверждении. ОДНО письмо на весь путь работы.
@@ -4654,21 +5829,6 @@ impl AppService {
     /// Отправляется вдогонку (`spawn`): медленный SMTP не должен держать стол
     /// хозяина, а неудача письма не отменяет утверждения.
     async fn send_studio_approved_email(&self, to: &str, work: &str, en: bool) -> Result<()> {
-        use lettre::message::header::ContentType;
-        use lettre::transport::smtp::authentication::Credentials;
-        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-
-        let db = self.get_smtp_settings().await.unwrap_or_default();
-        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
-        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
-        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
-        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
-        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
-        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
-            tracing::warn!("SMTP not configured — studio approval not mailed to {to}");
-            return Ok(());
-        };
-
         let site = self.config.public_url.trim_end_matches('/');
         let (subject, body_text) = if en {
             (
@@ -4693,6 +5853,102 @@ impl AppService {
             )
         };
 
+        self.send_mail(to, subject, body_text).await
+    }
+
+    async fn send_password_reset_email(&self, to: &str, token: &str) -> Result<()> {
+        let link = format!(
+            "{}/set-password?token={}",
+            self.config.public_url.trim_end_matches('/'),
+            token
+        );
+        let body_text = format!(
+            "Someone asked to restore the way into the archive for this address.\n\n\
+            If it was you, follow this passage within two hours:\n\n\
+            {link}\n\n\
+            You will be asked to choose your signs anew.\n\n\
+            If it was not you, no harm is done — ignore this letter and nothing changes.",
+        );
+
+        self.say_or_send(to, "A key to the archive", body_text, &link)
+            .await
+    }
+
+    /// Письмо-приглашение: по нему адрес становится дверью, а имя — живым.
+    async fn send_confirm_email(&self, to: &str, token: &str) -> Result<()> {
+        let link = format!(
+            "{}/confirm?token={}",
+            self.config.public_url.trim_end_matches('/'),
+            token
+        );
+        let body_text = format!(
+            "A name in the house was started with this address.\n\n\
+            Follow this passage within two days and you are inside:\n\n\
+            {link}\n\n\
+            If it was not you, no harm is done — ignore this letter, \
+            and the name stays unopened."
+        );
+        self.say_or_send(to, "The door to the house", body_text, &link)
+            .await
+    }
+
+    /// Письмо, без которого локально не войти.
+    ///
+    /// На своей машине SMTP не настроен, а заведение имени теперь кончается
+    /// письмом — то есть без этого разработчик не может войти в дом, который
+    /// сам и поднял. Ссылка печатается в журнал, и только на локальном адресе:
+    /// снаружи `public_url_is_local` ложен, и ветка не существует.
+    async fn say_or_send(&self, to: &str, subject: &str, body: String, link: &str) -> Result<()> {
+        if self.config.public_url_is_local() {
+            tracing::info!("[local] letter to {to} — follow: {link}");
+            if let Err(e) = self.send_mail(to, subject, body).await {
+                tracing::info!("[local] the letter itself did not go out ({e}) — use the link above");
+            }
+            return Ok(());
+        }
+        self.send_mail(to, subject, body).await
+    }
+
+    /// Ответ на попытку завести имя на уже занятый адрес.
+    ///
+    /// Письмо уходит ВЛАДЕЛЬЦУ ящика, а не тому, кто нажал: если нажал
+    /// посторонний, хозяин узнает об этом и ничего не потеряет, а посторонний
+    /// не узнает ничего вовсе — страница отвечает ему то же самое, что и на
+    /// свободный адрес.
+    async fn send_already_have_name_email(&self, to: &str) -> Result<()> {
+        let site = self.config.public_url.trim_end_matches('/');
+        let body_text = format!(
+            "Someone started a new name with this address — and a name here \
+            already stands on it.\n\nIf that was you: the way in is {site}/login. \
+            Forgotten your signs? The same page asks for a new key.\n\n\
+            If it was not you, nothing happened and nothing changed."
+        );
+        self.send_mail(to, "You already have a name here", body_text)
+            .await
+    }
+
+    /// Одно место, где дом берётся за почту.
+    ///
+    /// Настройки берутся из базы, а из окружения — только то, чего в базе нет.
+    /// Раньше эти двенадцать строк стояли в каждом письме отдельно, и
+    /// разойтись им было делом одной правки.
+    async fn send_mail(&self, to: &str, subject: &str, body: String) -> Result<()> {
+        use lettre::message::header::ContentType;
+        use lettre::{AsyncTransport, Message};
+
+        let db = self.get_smtp_settings().await.unwrap_or_default();
+        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
+        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
+        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
+        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
+        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
+
+        // Не `warn` и не `Ok(())`: письмо стало частью входа, и «почта не
+        // настроена» — это «в дом не войти», а не мелкая неурядица.
+        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
+            return Err(AppError::Internal("SMTP is not configured".into()));
+        };
+
         let email = Message::builder()
             .from(
                 from.parse()
@@ -4703,15 +5959,10 @@ impl AppService {
                 .map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
             .subject(subject)
             .header(ContentType::TEXT_PLAIN)
-            .body(body_text)
+            .body(body)
             .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
 
-        let creds = Credentials::new(user.to_string(), pass.to_string());
-        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
-            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
-            .port(port)
-            .credentials(creds)
-            .build();
+        let mailer = smtp_transport(host, port, user, pass)?;
         mailer
             .send(email)
             .await
@@ -4719,62 +5970,47 @@ impl AppService {
         Ok(())
     }
 
-    async fn send_password_reset_email(&self, to: &str, token: &str) -> Result<()> {
-        use lettre::message::header::ContentType;
-        use lettre::transport::smtp::authentication::Credentials;
-        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-
-        // DB settings take precedence over env config (same resolution as replies).
-        let db = self.get_smtp_settings().await.unwrap_or_default();
-        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
-        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
-        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
-        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
-        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
-
-        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
-            tracing::warn!("SMTP not configured — password reset link not sent to {to}");
-            return Ok(());
+    /// Записка в Telegram о новой двери.
+    ///
+    /// Сессия живёт месяц, и узнать о чужом входе иначе неоткуда: журнал
+    /// попыток видит только хозяин дома. Пишется она лишь тому, у кого бот уже
+    /// есть, — заводить ради этого почтовую рассылку дом не станет, — и
+    /// вдогонку: ни одна дверь не должна ждать, пока Telegram ответит.
+    fn tell_of_new_door(&self, user: &User, ctx: &crate::models::ClientContext) {
+        let (Some(chat), Some(bot)) = (user.telegram_id, self.login_bot()) else {
+            return;
         };
-
-        let link = format!(
-            "{}/set-password?token={}",
-            self.config.public_url.trim_end_matches('/'),
-            token
-        );
-        let body_text = format!(
-            "Someone asked to restore the way into the archive for this address.\n\n\
-            If it was you, follow this passage within 48 hours:\n\n\
-            {link}\n\n\
-            You will be asked to choose your signs anew.\n\n\
-            If it was not you, no harm is done — ignore this letter and nothing changes.",
-        );
-
-        let email = Message::builder()
-            .from(
-                from.parse()
-                    .map_err(|_| AppError::Internal("Invalid SMTP from address".into()))?,
+        let where_from = {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(b) = ctx
+                .user_agent
+                .as_deref()
+                .map(browser_name)
+                .filter(|b| !b.is_empty())
+            {
+                parts.push(b);
+            }
+            let place: Vec<&str> = [ctx.city.as_deref(), ctx.country_code.as_deref()]
+                .into_iter()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .collect();
+            if !place.is_empty() {
+                parts.push(place.join(", "));
+            }
+            parts.join(" · ")
+        };
+        let note = if where_from.is_empty() {
+            "<b>Новый вход</b>\nВ ваше имя только что вошли знаками.".to_string()
+        } else {
+            format!(
+                "<b>Новый вход</b>\nВ ваше имя только что вошли знаками.\nОткуда: {}",
+                crate::telegram::esc(&where_from)
             )
-            .to(to
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
-            .subject("A key to the archive")
-            .header(ContentType::TEXT_PLAIN)
-            .body(body_text)
-            .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
-
-        let creds = Credentials::new(user.to_string(), pass.to_string());
-        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
-            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
-            .port(port)
-            .credentials(creds)
-            .build();
-
-        mailer
-            .send(email)
-            .await
-            .map_err(|e| AppError::Internal(format!("SMTP send error: {e}")))?;
-        Ok(())
+        };
+        tokio::spawn(async move {
+            bot.say(chat, &note).await;
+        });
     }
 
     // === COMMENTS ===
@@ -5404,8 +6640,7 @@ impl AppService {
     /// (the subscription is already active either way).
     async fn send_welcome_email(&self, sub: &crate::models::Subscriber) -> Result<()> {
         use lettre::message::header::ContentType;
-        use lettre::transport::smtp::authentication::Credentials;
-        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+        use lettre::{AsyncTransport, Message};
 
         let db = self.get_smtp_settings().await.unwrap_or_default();
         let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
@@ -5460,12 +6695,7 @@ impl AppService {
             .body(body_text)
             .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
 
-        let creds = Credentials::new(user.to_string(), pass.to_string());
-        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
-            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
-            .port(port)
-            .credentials(creds)
-            .build();
+        let mailer = smtp_transport(host, port, user, pass)?;
 
         mailer
             .send(email)
@@ -5693,8 +6923,7 @@ impl AppService {
         figurine_handle: &str,
     ) -> Result<()> {
         use lettre::message::header::ContentType;
-        use lettre::transport::smtp::authentication::Credentials;
-        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+        use lettre::{AsyncTransport, Message};
 
         let db = self.get_smtp_settings().await.unwrap_or_default();
         let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
@@ -5748,12 +6977,7 @@ impl AppService {
             .body(body_text)
             .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
 
-        let creds = Credentials::new(user.to_string(), pass.to_string());
-        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
-            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
-            .port(port)
-            .credentials(creds)
-            .build();
+        let mailer = smtp_transport(host, port, user, pass)?;
 
         mailer
             .send(email)
@@ -5771,8 +6995,7 @@ impl AppService {
         reply: &str,
     ) -> Result<()> {
         use lettre::message::header::ContentType;
-        use lettre::transport::smtp::authentication::Credentials;
-        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+        use lettre::{AsyncTransport, Message};
 
         // DB settings take precedence over env config
         let db = self.get_smtp_settings().await.unwrap_or_default();
@@ -5813,12 +7036,7 @@ impl AppService {
             .body(body_text)
             .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
 
-        let creds = Credentials::new(user.to_string(), pass.to_string());
-        let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
-            .map_err(|e| AppError::Internal(format!("SMTP relay error: {e}")))?
-            .port(port)
-            .credentials(creds)
-            .build();
+        let mailer = smtp_transport(host, port, user, pass)?;
 
         let _ = mailer.send(email).await;
         Ok(())
@@ -6055,6 +7273,226 @@ impl AppService {
         self.repo.delete_comment(id).await?;
         Self::log_domain_event("comment_deleted", "comment", id, "ok");
         Ok(())
+    }
+
+    // === БАЙКИ: ОТКЛИК ЧИТАТЕЛЯ ===
+
+    /// Жетон посетителя — то же, чем читатель назван у работ: строка из
+    /// хранилища браузера, не адрес и не имя.
+    fn tale_visitor_token(token: &str) -> Result<&str> {
+        let token = token.trim();
+        if token.is_empty() || token.len() > 64 {
+            return Err(AppError::BadRequest("Invalid visitor token".into()));
+        }
+        Ok(token)
+    }
+
+    async fn tale_or_404(&self, tale_id: Uuid) -> Result<()> {
+        if !self.repo.tale_is_live(tale_id).await? {
+            return Err(AppError::NotFound(format!("Tale {tale_id} not found")));
+        }
+        Ok(())
+    }
+
+    /// Правила приёма те же, что у отклика на работу: без имени гость не
+    /// пишет, тысяча знаков потолок, пять штук в час с адреса. Второй набор
+    /// правил разошёлся бы с первым на первой же правке.
+    pub async fn submit_tale_comment(
+        &self,
+        tale_id: Uuid,
+        user: Option<&User>,
+        req: &SubmitCommentRequest,
+        ip: &str,
+    ) -> Result<()> {
+        self.tale_or_404(tale_id).await?;
+        if user.is_none() {
+            self.check_comment_rate_limit(ip).await?;
+        }
+
+        let body = req.body.trim();
+        if body.is_empty() {
+            return Err(AppError::BadRequest("Comment body cannot be empty".into()));
+        }
+        if body.chars().count() > 1000 {
+            return Err(AppError::BadRequest(
+                "Comment is too long (max 1000 characters)".into(),
+            ));
+        }
+
+        let (author_name, author_email, user_id) = if let Some(u) = user {
+            (u.display_name.clone(), None::<String>, Some(u.id))
+        } else {
+            let name = req
+                .author_name
+                .as_deref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    AppError::BadRequest("Author name is required for anonymous comments".into())
+                })?;
+            if name.chars().count() > 100 {
+                return Err(AppError::BadRequest(
+                    "Name is too long (max 100 characters)".into(),
+                ));
+            }
+            (name, req.author_email.clone(), None)
+        };
+
+        self.repo
+            .insert_tale_comment(
+                tale_id,
+                user_id,
+                &author_name,
+                author_email.as_deref(),
+                body,
+            )
+            .await?;
+        Self::log_domain_event("tale_comment_submitted", "tale", tale_id, "ok");
+
+        let tale_title = self
+            .repo
+            .get_gazette_leaf_admin(tale_id)
+            .await?
+            .map(|l| l.title_ru)
+            .unwrap_or_default();
+        {
+            let svc = self.clone();
+            let author_name = author_name.clone();
+            let body = body.to_string();
+            tokio::spawn(async move {
+                svc.send_comment_telegram_notification(&tale_title, &author_name, &body)
+                    .await;
+            });
+        }
+        Ok(())
+    }
+
+    pub async fn get_tale_comments(
+        &self,
+        tale_id: Uuid,
+        newest_first: bool,
+    ) -> Result<Vec<CommentDto>> {
+        Ok(self
+            .repo
+            .get_approved_tale_comments(tale_id, newest_first)
+            .await?
+            .into_iter()
+            .map(|c| CommentDto {
+                id: c.id.to_string(),
+                author_name: c.author_name,
+                author_avatar_url: c.avatar_url,
+                body: c.body,
+                admin_reply: c.admin_reply,
+                created_at: c.created_at.to_rfc3339(),
+            })
+            .collect())
+    }
+
+    pub async fn admin_list_tale_comments(
+        &self,
+        only_pending: bool,
+        tale_filter: Option<Uuid>,
+        newest_first: bool,
+        page: i64,
+        per_page: i64,
+    ) -> Result<crate::models::AdminTaleCommentsPage> {
+        let page = page.max(1);
+        let per_page = per_page.clamp(1, 100);
+        let (rows, total, pending_count) = self
+            .repo
+            .get_tale_comments_admin_page(only_pending, tale_filter, newest_first, page, per_page)
+            .await?;
+        Ok(crate::models::AdminTaleCommentsPage {
+            items: rows
+                .into_iter()
+                .map(|c| crate::models::AdminTaleCommentDto {
+                    id: c.id.to_string(),
+                    tale_id: c.tale_id.to_string(),
+                    tale_title_en: c.tale_title_en,
+                    tale_title_ru: c.tale_title_ru,
+                    tale_slug: c.tale_slug,
+                    author_name: c.author_name,
+                    author_email: c.author_email,
+                    body: c.body,
+                    is_approved: c.is_approved,
+                    admin_reply: c.admin_reply,
+                    created_at: c.created_at.to_rfc3339(),
+                    user_id: c.user_id.map(|u| u.to_string()),
+                })
+                .collect(),
+            total,
+            pending_count,
+            page,
+            per_page,
+        })
+    }
+
+    pub async fn admin_moderate_tale_comment(
+        &self,
+        id: Uuid,
+        is_approved: bool,
+        admin_reply: Option<&str>,
+    ) -> Result<()> {
+        let reply = admin_reply.map(str::trim).filter(|s| !s.is_empty());
+        self.repo.moderate_tale_comment(id, is_approved, reply).await?;
+        Self::log_domain_event("tale_comment_moderated", "tale_comment", id, "ok");
+        Ok(())
+    }
+
+    pub async fn admin_delete_tale_comment(&self, id: Uuid) -> Result<()> {
+        self.repo.delete_tale_comment(id).await?;
+        Self::log_domain_event("tale_comment_deleted", "tale_comment", id, "ok");
+        Ok(())
+    }
+
+    /// Голос читателя. Значение назначается, а не переключается: удвоенный
+    /// запрос не снимает то, что сам же поставил.
+    pub async fn set_tale_vote(
+        &self,
+        tale_id: Uuid,
+        visitor_token: &str,
+        user_id: Option<Uuid>,
+        value: i16,
+    ) -> Result<(i16, i64, i64)> {
+        self.tale_or_404(tale_id).await?;
+        let token = Self::tale_visitor_token(visitor_token)?;
+        if !(-1..=1).contains(&value) {
+            return Err(AppError::BadRequest("Vote must be -1, 0 or 1".into()));
+        }
+        let out = self.repo.set_tale_vote(tale_id, token, user_id, value).await?;
+        Self::log_domain_event("tale_voted", "tale", tale_id, "ok");
+        Ok(out)
+    }
+
+    pub async fn record_tale_view(&self, tale_id: Uuid, visitor_token: &str) -> Result<()> {
+        self.tale_or_404(tale_id).await?;
+        let token = Self::tale_visitor_token(visitor_token)?;
+        self.repo.record_tale_view(tale_id, token).await
+    }
+
+    /// Числа под байкой. Минус читателю не отдаётся — его печатает только стол.
+    pub async fn get_tale_stats(
+        &self,
+        tale_id: Uuid,
+        visitor_token: Option<&str>,
+        with_dislikes: bool,
+    ) -> Result<crate::models::TaleStatsDto> {
+        let token = visitor_token
+            .map(str::trim)
+            .filter(|t| !t.is_empty() && t.len() <= 64);
+        let (views, likes, dislikes, comments, mine) =
+            self.repo.tale_stats(tale_id, token).await?;
+        Ok(crate::models::TaleStatsDto {
+            views,
+            likes,
+            dislikes: with_dislikes.then_some(dislikes),
+            comments,
+            my_vote: mine,
+        })
+    }
+
+    pub async fn admin_tale_stats(&self) -> Result<Vec<crate::models::AdminTaleStatRow>> {
+        self.repo.tale_stats_all().await
     }
 
     // === VISITOR IMPRESSIONS ===
@@ -6478,6 +7916,7 @@ impl AppService {
             href: row.href,
             source_name: row.source_name,
             source_url: row.source_url,
+            author: row.author,
             image_url: row.image_url.clone(),
             image_urls: if row.image_urls.is_empty() {
                 row.image_url.clone().into_iter().collect()
@@ -6720,6 +8159,7 @@ impl AppService {
                 p.href.as_deref(),
                 p.source_name.as_deref(),
                 p.source_url.as_deref(),
+                p.author.as_deref(),
                 p.image_url.as_deref(),
                 &p.image_urls,
                 p.pinned,
@@ -6763,6 +8203,7 @@ impl AppService {
                 p.href.as_deref(),
                 p.source_name.as_deref(),
                 p.source_url.as_deref(),
+                p.author.as_deref(),
                 p.image_url.as_deref(),
                 &p.image_urls,
                 p.pinned,
@@ -6883,9 +8324,13 @@ impl AppService {
     pub async fn list_user_gazette_watches(
         &self,
         user_id: Uuid,
-        email: &str,
+        email: Option<&str>,
     ) -> Result<Vec<GazetteWatchDto>> {
-        let _ = self.repo.link_gazette_watches_to_user(user_id, email).await;
+        // Слежения, оставленные гостем, подбираются по почте. Без почты
+        // подбирать нечего — список остаётся тем, что заведено под именем.
+        if let Some(email) = email {
+            let _ = self.repo.link_gazette_watches_to_user(user_id, email).await;
+        }
         let rows = self.repo.list_gazette_watches_for_user(user_id).await?;
         Ok(rows
             .into_iter()
@@ -7184,6 +8629,7 @@ impl AppService {
             href: Some(cutting.url.clone()),
             source_name: Some(cutting.source_name.clone()),
             source_url: Some(cutting.url),
+            author: None,
             image_url: None,
             image_urls: vec![],
             pinned: false,
@@ -7283,6 +8729,7 @@ impl AppService {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
+            author: crate::gazette::clamp_author(req.author.as_deref()),
             image_url: cover.clone(),
             image_urls,
             pinned: req.pinned,
@@ -9960,9 +11407,10 @@ impl AppService {
             // Письмо — вдогонку: медленный SMTP не держит стол, а неудача
             // письма не отменяет утверждения.
             if let Some((user, _, _, lang, name)) = self.repo.studio_frame_owner(id).await? {
-                if let Ok(Some(who)) = self.repo.find_user_by_id(user).await {
+                if let Ok(Some(who)) = self.repo.find_user_by_id(user).await
+                    && let Some(to) = who.email.clone()
+                {
                     let svc = self.clone();
-                    let to = who.email.clone();
                     let en = lang == "en";
                     tokio::spawn(async move {
                         if let Err(e) = svc.send_studio_approved_email(&to, &name, en).await {
@@ -13205,6 +14653,7 @@ struct PreparedGazetteLeaf {
     href: Option<String>,
     source_name: Option<String>,
     source_url: Option<String>,
+    author: Option<String>,
     image_url: Option<String>,
     image_urls: Vec<String>,
     pinned: bool,

@@ -12,7 +12,7 @@
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
-  import FigurineComments from '$lib/components/FigurineComments.svelte';
+  import CommentsThread from '$lib/components/CommentsThread.svelte';
   import '$lib/styles/figurine-detail/layout-diptych.css';
 
   import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
@@ -498,7 +498,7 @@
     </div>
     <div class="dc-block--comments" class:dc-block--hidden={!isBlockVisible(ctx.displayConfig, 'comments')} style={computeBlockStyle(ctx.displayConfig, 'comments')}>
       <div class="act-divider" aria-hidden="true"></div>
-      <FigurineComments figurineId={ctx.id} />
+      <CommentsThread target={{ kind: 'figurine', id: ctx.id }} />
     </div>
     </div>
   </div>

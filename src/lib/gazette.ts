@@ -5,6 +5,8 @@ import type { Lang, TranslationKey } from '$lib/i18n';
 export const TITLE_MAX = 200;
 export const DEK_MAX = 500;
 export const BODY_MAX = 12_000;
+/** Подпись под историей — имя, а не абзац. Зеркало `AUTHOR_MAX` на сервере. */
+export const AUTHOR_MAX = 120;
 
 export const GAZETTE_KIND_KEY: Record<GazetteKind, TranslationKey> = {
   arrival: 'gazetteKind_arrival',

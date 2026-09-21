@@ -32,6 +32,9 @@ async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
         admin_password: "test-password-123".to_string(),
         cors_allowed_origins: vec![format!("http://127.0.0.1:{}", port)],
         telegram_bot_token: None,
+        telegram_login_bot_token: None,
+        telegram_login_bot_username: None,
+        telegram_webhook_secret: None,
         telegram_chat_id: None,
         smtp_host: None,
         smtp_port: None,
@@ -41,6 +44,8 @@ async fn spawn_app(pool: PgPool) -> (String, String, PathBuf) {
         geoip_db_path: None,
         admin_log_db_path: format!("/tmp/gotiga-api-logs-{}.sqlite", uuid::Uuid::new_v4()),
         analytics_hash_secret: "test-analytics-secret-0123456789".to_string(),
+        auth_pepper: "pepper-for-tests-0123456789".into(),
+        auth_pepper_old: None,
     };
 
     let repo = Repository::new(pool);

@@ -19,21 +19,41 @@ ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
     CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ \
     AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar
 
+# The build context is src-tauri/, not src-tauri/server/: the server has a path
+# dependency on ../battle-core, and a context rooted at the server would leave
+# the engine outside it. The server keeps its own directory (no workspace — a
+# workspace would move the server's target dir), so the engine is copied to
+# /battle-core, exactly where `path = "../battle-core"` looks from /app.
 FROM chef AS planner
-COPY . .
+COPY server /app
+COPY battle-core /battle-core
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
+# battle-core is a path dependency and NOT a workspace member (it lives outside
+# the server's directory), so cargo-chef's recipe cannot recreate it — cooking
+# without it fails on `failed to read /battle-core/Cargo.toml`. A stub manifest
+# with an empty lib is enough to cook, and it keeps the engine's own sources out
+# of the dependency layer: editing the engine must not recompile candle & co.
+COPY battle-core/Cargo.toml /battle-core/Cargo.toml
+RUN mkdir -p /battle-core/src && : > /battle-core/src/lib.rs
 COPY --from=planner /app/recipe.json recipe.json
 # Build & cache dependencies only — this layer is reused until Cargo.toml/lock change.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo chef cook --release --target x86_64-unknown-linux-gnu --recipe-path recipe.json
 # Now the app itself. target/ is a cache mount, so copy the binary out of it.
-COPY . .
+COPY battle-core /battle-core
+COPY server .
+# COPY keeps the context's mtimes, which are older than the stub battle-core
+# cooked above — cargo compares mtimes and would happily link the empty stub
+# ("cannot find function `reduce` in crate `battle_core`"). Touching the real
+# sources is what tells it they are new. cargo-chef does this for its own
+# skeleton; battle-core is outside it.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release --target x86_64-unknown-linux-gnu \
+    find /battle-core -type f -exec touch {} + \
+    && cargo build --release --target x86_64-unknown-linux-gnu \
     && cp target/x86_64-unknown-linux-gnu/release/gotiga-server /gotiga-server \
     && x86_64-linux-gnu-strip /gotiga-server
 
@@ -126,7 +146,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /gotiga-server /usr/local/bin/gotiga-server
-COPY migrations ./migrations
+COPY server/migrations ./migrations
 COPY --from=geoip /geoip/city.mmdb /app/geoip/city.mmdb
 COPY --from=depthweights /depth-weights /app/depth-weights
 COPY --from=embedweights /embed-weights /app/embed-weights

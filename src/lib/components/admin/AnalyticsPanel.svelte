@@ -18,6 +18,7 @@
     LifeOfHouseTrend,
     FigurineGeoDailyPoint,
     SitePageEngagementResponse,
+    SitePageEngagement,
     AdminVisitorSessionsPage,
     AdminVisitorSession,
     AdminVisitorEvent,
@@ -692,6 +693,47 @@
   /** Quick-exit threshold, in seconds — must match server `analytics::QUICK_EXIT_MS`. */
   const QUICK_EXIT_SECONDS = 10;
 
+  /** The rooms of the house, in the order one walks them, with the labels for
+   * the keys `PATH_GROUP_SQL` prints server-side. `grid` marks the two pages
+   * that stand works in rows — only there do "reached works" and "works seen"
+   * mean anything.
+   *
+   * The figurine page is absent on purpose: it reports itself as
+   * `figurine_view` and has its own table above. */
+  const PAGE_ROOMS: { key: string; label: string; grid: boolean }[] = [
+    { key: 'home', label: 'Home', grid: true },
+    { key: 'archive', label: 'Archive', grid: true },
+    { key: 'passport', label: 'Passport', grid: false },
+    { key: 'hall', label: 'Hall', grid: false },
+    { key: 'upcoming', label: 'Upcoming', grid: false },
+    { key: 'author', label: 'Author', grid: false },
+    { key: 'workshop', label: 'Workshop', grid: false },
+    { key: 'commission', label: 'Commission', grid: false },
+    { key: 'acquire', label: 'How to acquire', grid: false },
+    { key: 'cellar', label: 'Cellar', grid: false },
+    { key: 'tale', label: 'Tales', grid: false },
+    { key: 'gazette', label: 'Gazette', grid: false },
+    { key: 'battles', label: 'Battles', grid: false },
+    { key: 'studio', label: 'Studio', grid: false },
+    { key: 'impressions', label: 'Impressions', grid: false },
+    { key: 'account', label: 'Profile & bookings', grid: false },
+    { key: 'auth', label: 'Sign in / register', grid: false },
+    { key: 'letter', label: 'Letter links', grid: false },
+    { key: 'legal', label: 'Privacy & rights', grid: false },
+    { key: 'other', label: 'Unknown & 404', grid: false },
+  ];
+
+  /** The listed rooms, plus any group that arrived with data and is not on the
+   * list. A room the report cannot name is still a room someone visited —
+   * printing the raw key says so, where dropping the row would not. */
+  function pageRoomRows(pages: SitePageEngagement[]) {
+    const known = new Set(PAGE_ROOMS.map((r) => r.key));
+    const extra = [...new Set(pages.map((p) => p.pathGroup))]
+      .filter((k) => !known.has(k))
+      .map((k) => ({ key: k, label: k, grid: false }));
+    return [...PAGE_ROOMS, ...extra];
+  }
+
   /** Delta between two rates (fractions 0–1), in percentage points — the honest
    * unit for a change between two percentages (40% → 50% is +10pp, not +25%).
    * Trust is gated on the smaller sample size, not the rate value (delta()'s
@@ -1176,13 +1218,7 @@
     <section class="a-block">
       <h3 class="block-label"><span>Page engagement</span></h3>
       {#if pageEngagement}
-        {@const pageRows = [
-          { key: 'home', label: 'Home', grid: true },
-          { key: 'archive', label: 'Archive', grid: true },
-          { key: 'author', label: 'Author', grid: false },
-          { key: 'workshop', label: 'Workshop', grid: false },
-          { key: 'commission', label: 'Commission', grid: false },
-        ]}
+        {@const pageRows = pageRoomRows(pageEngagement.pages)}
         {@const cur = new Map(pageEngagement.pages.map((p) => [p.pathGroup, p]))}
         {@const prev = new Map(pageEngagement.previousPages.map((p) => [p.pathGroup, p]))}
         <div class="table-scroll">

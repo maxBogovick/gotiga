@@ -9,7 +9,8 @@
   import { getIconById, iconLabel, type IconCategory } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
-  import type { ChallengeStepDto, ContactSettings } from '$lib/types/api';
+  import TelegramDoor from '$lib/components/auth/TelegramDoor.svelte';
+  import type { ChallengeStepDto, ContactSettings, UserDto } from '$lib/types/api';
   import { onMount } from 'svelte';
 
   const TOTAL_STEPS = 6;
@@ -57,6 +58,17 @@
   function categoryStepIndex() { return step - 2; }
   function currentChallengeStep(): ChallengeStepDto | null {
     return challengeSteps[categoryStepIndex()] ?? null;
+  }
+
+  // Тот же ход назад, что и при заведении имени: клетка ленты открывает свой
+  // знак. Открыт тот, до которого дорога пройдена — все предыдущие выбраны.
+  function signReachable(i: number) {
+    return selectedTokens.slice(0, i).every(Boolean);
+  }
+  function goToSign(i: number) {
+    if (!signReachable(i)) return;
+    error = '';
+    step = i + 2;
   }
 
   async function advance() {
@@ -114,37 +126,7 @@
         challengeId,
         selectedTokens as [string, string, string, string]
       );
-      authStore.setSession(res.sessionToken, res.user);
-
-      // Link any existing cancel tokens from localStorage.
-      // Each gotiga_claims_* entry is a ClaimData[] where each item has `.token`.
-      try {
-        if (typeof localStorage !== 'undefined') {
-          const claimsKeys = Object.keys(localStorage).filter(k => k.startsWith('gotiga_claims_'));
-          const tokens: string[] = [];
-          for (const key of claimsKeys) {
-            const items: Array<{ token?: string }> = JSON.parse(localStorage.getItem(key) ?? '[]');
-            if (Array.isArray(items)) {
-              for (const item of items) {
-                if (item?.token) tokens.push(item.token);
-              }
-            }
-          }
-          if (tokens.length > 0) await api.userLinkBookings(res.sessionToken, tokens);
-        }
-      } catch { /* non-critical */ }
-
-      const redirectTo = page.url.searchParams.get('from') ?? '/';
-      const localIds = savedFigurines.localIds();
-      const serverIds = await api.getWishlist(res.sessionToken).catch(() => null);
-      if (serverIds && localIds.some((id) => !serverIds.includes(id))) {
-        pendingWishlistImport = { localIds, serverIds, redirectTo };
-        step = 6;
-        return;
-      }
-
-      await savedFigurines.syncWithServer({ importLocal: false });
-      goto(redirectTo);
+      await afterSignIn(res.sessionToken, res.user);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '';
       if (msg.includes('401')) {
@@ -157,6 +139,48 @@
     } finally {
       loading = false;
     }
+  }
+
+  /**
+   * Что делается после входа — одинаково, какой бы дверью ни вошли: расписки
+   * гостя привязываются к имени, список желаний сверяется с сервером. Две
+   * двери с двумя разными «потом» разошлись бы на первой же правке.
+   */
+  async function afterSignIn(sessionToken: string, user: UserDto | null) {
+    // Дверь Telegram отдаёт человека вместе с сессией; дверь значков — тоже.
+    // На случай ответа без него имя спрашивается отдельно, потому что без
+    // имени страница не знает, кто вошёл.
+    authStore.setSession(sessionToken, user ?? (await api.userMe(sessionToken)));
+
+    // Расписки гостя из localStorage: каждая запись gotiga_claims_* — это
+    // ClaimData[], и у каждой вещи там свой `.token`.
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const claimsKeys = Object.keys(localStorage).filter((k) => k.startsWith('gotiga_claims_'));
+        const tokens: string[] = [];
+        for (const key of claimsKeys) {
+          const items: Array<{ token?: string }> = JSON.parse(localStorage.getItem(key) ?? '[]');
+          if (Array.isArray(items)) {
+            for (const item of items) {
+              if (item?.token) tokens.push(item.token);
+            }
+          }
+        }
+        if (tokens.length > 0) await api.userLinkBookings(sessionToken, tokens);
+      }
+    } catch { /* non-critical */ }
+
+    const redirectTo = page.url.searchParams.get('from') ?? '/';
+    const localIds = savedFigurines.localIds();
+    const serverIds = await api.getWishlist(sessionToken).catch(() => null);
+    if (serverIds && localIds.some((id) => !serverIds.includes(id))) {
+      pendingWishlistImport = { localIds, serverIds, redirectTo };
+      step = 6;
+      return;
+    }
+
+    await savedFigurines.syncWithServer({ importLocal: false });
+    goto(redirectTo);
   }
 
   async function finishWishlistImport(shouldImport: boolean) {
@@ -201,13 +225,14 @@
                id="auth-email" name="email" autocomplete="email" onkeydown={(e) => e.key === 'Enter' && advance()} />
       </label>
     </div>
+    <TelegramDoor ondone={(token, user) => { void afterSignIn(token, user); }} />
   {/if}
 
   {#if step >= 2 && step <= 5}
     {@const catStep = currentChallengeStep()}
     {@const catIdx = categoryStepIndex()}
     {#if catStep}
-      <p class="auth-hint">{$t('authStep')} {step} {$t('authOf')} 5 — {$t(`authCategory${CATEGORY_IDS[catIdx].charAt(0).toUpperCase()}${CATEGORY_IDS[catIdx].slice(1)}` as any)}</p>
+      <p class="auth-hint">{$t(`authCategory${CATEGORY_IDS[catIdx].charAt(0).toUpperCase()}${CATEGORY_IDS[catIdx].slice(1)}` as any)} — {catIdx + 1} {$t('authOf')} 4</p>
       <p class="auth-choose">{$t('authChooseOne')}</p>
       <div class="auth-grid">
         {#each catStep.icons as item}
@@ -226,6 +251,33 @@
           {/if}
         {/each}
       </div>
+
+      <!-- Лента ключа: она же дорога назад к любому из четырёх знаков. -->
+      <div class="key-strip">
+        <span class="key-strip-label">{$t('authKeyProgress')}</span>
+        <div class="key-strip-slots">
+          {#each CATEGORY_IDS as _, i}
+            <button
+              type="button"
+              class="key-slot"
+              class:filled={!!selectedTokens[i]}
+              class:current={i === catIdx}
+              disabled={!signReachable(i)}
+              onclick={() => goToSign(i)}
+              aria-current={i === catIdx ? 'step' : undefined}
+              aria-label={`${$t('authKeyGoTo')} ${i + 1}`}
+              title={`${$t('authKeyGoTo')} ${i + 1}`}
+            >
+              <span class="key-slot-face">{selectedTokens[i] ? '✦' : '·'}</span>
+              <span class="key-slot-num">{i + 1}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      {#if step < 5}
+        <p class="step-note">{$t('authSignsAheadLogin')}</p>
+      {/if}
     {/if}
   {/if}
 
@@ -254,7 +306,10 @@
         <button class="auth-btn-ghost" onclick={back}>{$t('authBack')}</button>
       {/if}
       <button class="auth-btn-primary" onclick={advance} disabled={loading}>
-        {loading ? '…' : step === 5 ? $t('authSubmit') : $t('authNext')}
+        {#if loading}…
+        {:else if step === 5}{$t('authSubmit')}
+        {:else if step >= 2}{$t('authNextSign')} →
+        {:else}{$t('authNext')}{/if}
       </button>
     </div>
     <p class="auth-switch">
@@ -305,6 +360,72 @@
 </AuthFrame>
 
 <style>
+  /* Лента ключа — и указатель места, и дорога назад к любому знаку */
+  .key-strip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    margin-top: 1rem;
+  }
+  .key-strip-label {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #9a7c5c;
+  }
+  .key-strip-slots { display: flex; gap: 0.4rem; }
+  .key-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    /* Клетка сама по себе 30 px — под палец мало, поэтому отбивка входит в
+       кнопку, а не стоит вокруг неё. */
+    padding: 5px 4px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font: inherit;
+  }
+  .key-slot:disabled { cursor: default; }
+  .key-slot-face {
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #d8c6b1;
+    border-radius: 3px;
+    color: #cbb79c;
+    background: #fdf8f2;
+    font-family: Georgia, serif;
+    font-size: 0.9rem;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .key-slot.filled .key-slot-face { border-color: #c0a384; color: #6f3b24; }
+  .key-slot.current .key-slot-face { border-color: #c65f3c; box-shadow: 0 0 0 1px #c65f3c33; }
+  .key-slot:not(:disabled):hover .key-slot-face { background: #f0e6d6; border-color: #c65f3c; }
+  .key-slot:focus-visible .key-slot-face { outline: 2px solid #c65f3c; outline-offset: 1px; }
+  .key-slot-num {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 0.55rem;
+    letter-spacing: 0.06em;
+    color: #cbb79c;
+  }
+  .key-slot.current .key-slot-num { color: #c65f3c; }
+  .key-slot.filled:not(.current) .key-slot-num { color: #9a7c5c; }
+
+  .step-note {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    color: #9a7c5c;
+    text-align: center;
+    margin: 0.7rem 0 0;
+  }
+
   .auth-forgot {
     margin-top: 10px;
     display: flex;

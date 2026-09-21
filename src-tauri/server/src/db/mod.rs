@@ -20,6 +20,55 @@ fn parse_optional_deadline(raw: Option<&str>) -> Result<Option<chrono::NaiveDate
     }
 }
 
+/// Which room of the house a site-wide event happened in, as SQL.
+///
+/// One string, embedded in every query that groups by room: it was written
+/// twice — once in the daily rollup, once in the engagement query — and the
+/// two are required to line up row for row, which two copies of a growing
+/// CASE eventually do not.
+///
+/// Matched on the path with the query string cut off (`split_part`), because
+/// a room is a room whether or not the visitor is filtering inside it. Order
+/// matters where one prefix contains another: a gazette watch link is a
+/// letter, not the gazette; a passport is not the archive.
+///
+/// `work` is here for the record only — the figurine page reports itself as
+/// `figurine_view` and sends no `page_view` (see `OWN_TRACKING` in
+/// `analytics.ts`), so the branch catches nothing but old rows.
+const PATH_GROUP_SQL: &str = r#"
+                CASE
+                    WHEN split_part(path, '?', 1) = '/' THEN 'home'
+                    WHEN split_part(path, '?', 1) = '/figurines' THEN 'archive'
+                    WHEN split_part(path, '?', 1) LIKE '/figurines/%/passport' THEN 'passport'
+                    WHEN split_part(path, '?', 1) LIKE '/figurines/%' THEN 'work'
+                    WHEN split_part(path, '?', 1) LIKE '/author%' THEN 'author'
+                    WHEN split_part(path, '?', 1) LIKE '/workshop%' THEN 'workshop'
+                    WHEN split_part(path, '?', 1) LIKE '/commission%' THEN 'commission'
+                    WHEN split_part(path, '?', 1) LIKE '/cellar%' THEN 'cellar'
+                    WHEN split_part(path, '?', 1) LIKE '/tales%' THEN 'tale'
+                    WHEN split_part(path, '?', 1) LIKE '/gazette/watch%' THEN 'letter'
+                    WHEN split_part(path, '?', 1) LIKE '/gazette%' THEN 'gazette'
+                    WHEN split_part(path, '?', 1) LIKE '/battles%' THEN 'battles'
+                    WHEN split_part(path, '?', 1) LIKE '/studio%' THEN 'studio'
+                    WHEN split_part(path, '?', 1) LIKE '/impressions%' THEN 'impressions'
+                    WHEN split_part(path, '?', 1) LIKE '/upcoming%' THEN 'upcoming'
+                    WHEN split_part(path, '?', 1) LIKE '/acquire%' THEN 'acquire'
+                    WHEN split_part(path, '?', 1) LIKE '/hall/%' THEN 'hall'
+                    WHEN split_part(path, '?', 1) LIKE '/privacy%'
+                      OR split_part(path, '?', 1) LIKE '/rights%' THEN 'legal'
+                    WHEN split_part(path, '?', 1) LIKE '/profile%'
+                      OR split_part(path, '?', 1) LIKE '/bookings%' THEN 'account'
+                    WHEN split_part(path, '?', 1) LIKE '/login%'
+                      OR split_part(path, '?', 1) LIKE '/register%'
+                      OR split_part(path, '?', 1) LIKE '/confirm%'
+                      OR split_part(path, '?', 1) LIKE '/set-password%' THEN 'auth'
+                    WHEN split_part(path, '?', 1) LIKE '/cancel/%'
+                      OR split_part(path, '?', 1) LIKE '/certificate/%'
+                      OR split_part(path, '?', 1) LIKE '/unsubscribe/%' THEN 'letter'
+                    ELSE 'other'
+                END
+"#;
+
 #[derive(Clone)]
 pub struct Repository {
     pg_pool: PgPool,
@@ -364,19 +413,12 @@ impl Repository {
         // detail pages are tracked separately via 'figurine_view' above, so
         // there's no overlap/double-count between this table and
         // figurine_analytics_daily.
-        sqlx::query(
+        sqlx::query(&format!(
             r#"
             INSERT INTO site_page_views_daily (day, path_group, views, unique_visitors, updated_at)
             SELECT
                 event_date AS day,
-                CASE
-                    WHEN path = '/' OR path LIKE '/?%' THEN 'home'
-                    WHEN path = '/figurines' OR path LIKE '/figurines?%' THEN 'archive'
-                    WHEN path LIKE '/author%' THEN 'author'
-                    WHEN path LIKE '/workshop%' THEN 'workshop'
-                    WHEN path LIKE '/commission%' THEN 'commission'
-                    ELSE 'other'
-                END AS path_group,
+{path_group} AS path_group,
                 COUNT(*)::int AS views,
                 COUNT(DISTINCT visitor_hash) FILTER (WHERE visitor_hash IS NOT NULL)::int AS unique_visitors,
                 NOW()
@@ -386,7 +428,8 @@ impl Repository {
               AND figurine_id IS NULL
             GROUP BY event_date, path_group
             "#,
-        )
+            path_group = PATH_GROUP_SQL,
+        ))
         .bind(from)
         .bind(to)
         .execute(&mut *tx)
@@ -950,8 +993,9 @@ impl Repository {
     /// `get_admin_figurine_engagement_medians` (NULLs never counted as 0), and
     /// same retention limit — the caller clamps `from` to the raw-event floor.
     /// `views`/`unique_visitors` are left 0 here and filled by the caller from
-    /// the permanent page-views rollup. The `path_group` CASE mirrors the
-    /// `site_page_views_daily` rollup so the two line up row-for-row.
+    /// the permanent page-views rollup. Rooms come from the same
+    /// `PATH_GROUP_SQL` the `site_page_views_daily` rollup uses, so the two
+    /// line up row-for-row.
     pub async fn get_admin_site_page_engagement(
         &self,
         from: chrono::NaiveDate,
@@ -959,16 +1003,10 @@ impl Repository {
     ) -> Result<Vec<SitePageEngagement>> {
         Ok(
             sqlx::query_as::<_, (String, i64, i64, i64, Option<f64>, Option<f64>, Option<f64>)>(
-                r#"
+                &format!(
+                    r#"
             SELECT
-                CASE
-                    WHEN path = '/' OR path LIKE '/?%' THEN 'home'
-                    WHEN path = '/figurines' OR path LIKE '/figurines?%' THEN 'archive'
-                    WHEN path LIKE '/author%' THEN 'author'
-                    WHEN path LIKE '/workshop%' THEN 'workshop'
-                    WHEN path LIKE '/commission%' THEN 'commission'
-                    ELSE 'other'
-                END AS path_group,
+{path_group} AS path_group,
                 COUNT(*)::bigint AS engaged_events,
                 COUNT(*) FILTER (WHERE duration_ms IS NOT NULL AND duration_ms < $3)::bigint
                     AS quick_exit_events,
@@ -987,6 +1025,8 @@ impl Repository {
             GROUP BY path_group
             ORDER BY engaged_events DESC
             "#,
+                    path_group = PATH_GROUP_SQL,
+                ),
             )
             .bind(from)
             .bind(to)
@@ -3321,22 +3361,31 @@ impl Repository {
     // USER ACCOUNTS
     // ============================================================
 
+    /// Завести имя. Адрес при этом НЕ подтверждён: подтверждает его переход по
+    /// ссылке из письма, и до перехода имя не пускают внутрь.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_user(
         &self,
         email: &str,
         display_name: &str,
         hash: &str,
         visual_pool: &serde_json::Value,
+        confirm_hash: &str,
+        confirm_expires_at: chrono::DateTime<chrono::Utc>,
         ctx: &crate::models::ClientContext,
     ) -> Result<crate::models::User> {
         let user = sqlx::query_as::<_, crate::models::User>(
-            "INSERT INTO users (email, display_name, visual_password_hash, visual_pool, signup_ip, signup_country_code, signup_city)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *"
+            "INSERT INTO users (email, display_name, visual_password_hash, visual_pool,
+                                email_confirm_hash, email_confirm_expires_at,
+                                signup_ip, signup_country_code, signup_city)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *"
         )
         .bind(email)
         .bind(display_name)
         .bind(hash)
         .bind(visual_pool)
+        .bind(confirm_hash)
+        .bind(confirm_expires_at)
         .bind(&ctx.ip)
         .bind(&ctx.country_code)
         .bind(&ctx.city)
@@ -3350,6 +3399,392 @@ impl Repository {
             e.into()
         })?;
         Ok(user)
+    }
+
+    /// Переписать имя, которое так и не открыли из ящика.
+    ///
+    /// Неподтверждённое имя принадлежит тому, кто докажет ящик, — и никому
+    /// больше. Без этого правила занять чужой адрес можно было бы, просто
+    /// набрав его: настоящий хозяин упёрся бы в уникальный индекс навсегда.
+    /// Захвата здесь нет: письмо в обоих случаях уходит владельцу ящика, а
+    /// прежняя ссылка гаснет вместе с прежними знаками.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn reclaim_unconfirmed_user(
+        &self,
+        email: &str,
+        display_name: &str,
+        hash: &str,
+        visual_pool: &serde_json::Value,
+        confirm_hash: &str,
+        confirm_expires_at: chrono::DateTime<chrono::Utc>,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<Option<crate::models::User>> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "UPDATE users SET display_name = $2, visual_password_hash = $3, visual_pool = $4,
+                    email_confirm_hash = $5, email_confirm_expires_at = $6,
+                    password_reset_token = NULL, password_reset_expires_at = NULL,
+                    signup_ip = $7, signup_country_code = $8, signup_city = $9
+              WHERE email = $1 AND email_confirmed_at IS NULL AND telegram_id IS NULL
+              RETURNING *",
+        )
+        .bind(email)
+        .bind(display_name)
+        .bind(hash)
+        .bind(visual_pool)
+        .bind(confirm_hash)
+        .bind(confirm_expires_at)
+        .bind(&ctx.ip)
+        .bind(&ctx.country_code)
+        .bind(&ctx.city)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    /// Выдать новое письмо-приглашение уже существующему имени: и тому, кто не
+    /// дождался первого, и тому, кто назвал адрес в ответ на дело.
+    pub async fn set_email_confirm(
+        &self,
+        user_id: Uuid,
+        confirm_hash: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE users SET email_confirm_hash = $2, email_confirm_expires_at = $3
+              WHERE id = $1 AND email_confirmed_at IS NULL",
+        )
+        .bind(user_id)
+        .bind(confirm_hash)
+        .bind(expires_at)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Открыли дверь изнутри ящика. Условие стоит в самом `UPDATE`: два
+    /// перехода по одной ссылке, пришедшие разом, иначе оба стали бы входом.
+    pub async fn confirm_email(&self, confirm_hash: &str) -> Result<Option<crate::models::User>> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "UPDATE users SET email_confirmed_at = NOW(),
+                    email_confirm_hash = NULL, email_confirm_expires_at = NULL
+              WHERE email_confirm_hash = $1 AND email_confirm_expires_at > NOW()
+              RETURNING *",
+        )
+        .bind(confirm_hash)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    /// Пересобрать знаки на месте: новый хеш и новый набор при том же выборе.
+    ///
+    /// Зовётся после удачного входа по старым знакам — единственный миг, когда
+    /// дом знает выбор человека в открытую и может переложить его на нынешний
+    /// перец и нынешний размер набора, не спрашивая ни о чём.
+    pub async fn refresh_visual_credentials(
+        &self,
+        user_id: Uuid,
+        hash: &str,
+        visual_pool: &serde_json::Value,
+    ) -> Result<()> {
+        sqlx::query("UPDATE users SET visual_password_hash = $2, visual_pool = $3 WHERE id = $1")
+            .bind(user_id)
+            .bind(hash)
+            .bind(visual_pool)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    // === TELEGRAM LOGIN: одноразовое слово ===
+
+    /// Завести попытку входа. `bind_user` заполнен — это привязка из профиля,
+    /// а не вход.
+    pub async fn create_telegram_login_code(
+        &self,
+        code: &str,
+        word: &str,
+        bind_user: Option<Uuid>,
+        browser: Option<&str>,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<crate::models::TelegramLoginCode> {
+        let row = sqlx::query_as::<_, crate::models::TelegramLoginCode>(
+            "INSERT INTO telegram_login_codes
+                (code, word, bind_user_id, browser, ip, country_code, city)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+        )
+        .bind(code)
+        .bind(word)
+        .bind(bind_user)
+        .bind(browser)
+        .bind(&ctx.ip)
+        .bind(&ctx.country_code)
+        .bind(&ctx.city)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Строка по коду — без оглядки на срок: просроченную надо УВИДЕТЬ, чтобы
+    /// ответить «слово остыло», а не «такого слова нет».
+    pub async fn find_telegram_login_code(
+        &self,
+        code: &str,
+    ) -> Result<Option<crate::models::TelegramLoginCode>> {
+        let row = sqlx::query_as::<_, crate::models::TelegramLoginCode>(
+            "SELECT * FROM telegram_login_codes WHERE code = $1",
+        )
+        .bind(code)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Бот получил `/start` и показал записку. Переход только из `waiting`:
+    /// второй `/start` по тому же коду ничего не переписывает, иначе нажатие
+    /// «это я» относилось бы уже к другой записке.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn telegram_login_asked(
+        &self,
+        code: &str,
+        telegram_id: i64,
+        username: Option<&str>,
+        first_name: Option<&str>,
+        chat_id: i64,
+        message_id: Option<i64>,
+    ) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE telegram_login_codes
+                SET state = 'asked', telegram_id = $2, telegram_username = $3,
+                    telegram_first_name = $4, chat_id = $5, message_id = $6
+              WHERE code = $1 AND state = 'waiting' AND expires_at > NOW()",
+        )
+        .bind(code)
+        .bind(telegram_id)
+        .bind(username)
+        .bind(first_name)
+        .bind(chat_id)
+        .bind(message_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Нажали «это я»: сессия уже заведена, кладём её в строку.
+    ///
+    /// Подтверждает только ТОТ Telegram, который открывал записку: `telegram_id`
+    /// в условии — защита от нажатия по чужой кнопке (её можно переслать).
+    pub async fn telegram_login_confirmed(
+        &self,
+        code: &str,
+        telegram_id: i64,
+        session_token: &str,
+    ) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE telegram_login_codes
+                SET state = 'confirmed', session_token = $3
+              WHERE code = $1 AND telegram_id = $2 AND state = 'asked' AND expires_at > NOW()",
+        )
+        .bind(code)
+        .bind(telegram_id)
+        .bind(session_token)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Нажали «не я». Слово гаснет немедленно, не дожидаясь срока.
+    pub async fn telegram_login_refused(&self, code: &str, telegram_id: i64) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE telegram_login_codes SET state = 'refused'
+              WHERE code = $1 AND telegram_id = $2 AND state = 'asked'",
+        )
+        .bind(code)
+        .bind(telegram_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Страница забирает сессию — ровно один раз. Условие `state = 'confirmed'`
+    /// стоит в самом UPDATE: два опроса, пришедшие разом, иначе унесли бы одну
+    /// сессию дважды.
+    pub async fn take_telegram_login_session(&self, code: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "UPDATE telegram_login_codes
+                SET state = 'taken', taken_at = NOW()
+              WHERE code = $1 AND state = 'confirmed' AND expires_at > NOW()
+              RETURNING session_token",
+        )
+        .bind(code)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Убрать отработавшие и остывшие слова. Срок короткий, строк мало —
+    /// чистится заодно с прочей уборкой.
+    pub async fn prune_telegram_login_codes(&self) -> Result<u64> {
+        let res = sqlx::query(
+            "DELETE FROM telegram_login_codes
+              WHERE expires_at < NOW() - INTERVAL '1 hour' OR state IN ('taken', 'refused')",
+        )
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Аккаунт, заведённый через Telegram: ни почты, ни значков.
+    ///
+    /// Почту спрашивает дело (бронь, заказ, заявка), а не дверь, — и спрашивает
+    /// один раз. Значки человек назначит себе позже через `/set-password`,
+    /// когда почта появится.
+    pub async fn create_telegram_user(
+        &self,
+        telegram_id: i64,
+        telegram_username: Option<&str>,
+        display_name: &str,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<crate::models::User> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "INSERT INTO users (display_name, telegram_id, telegram_username, telegram_linked_at,
+                                signup_ip, signup_country_code, signup_city)
+             VALUES ($1, $2, $3, NOW(), $4, $5, $6) RETURNING *",
+        )
+        .bind(display_name)
+        .bind(telegram_id)
+        .bind(telegram_username)
+        .bind(&ctx.ip)
+        .bind(&ctx.country_code)
+        .bind(&ctx.city)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|e| {
+            if let sqlx::Error::Database(ref dbe) = e
+                && dbe.constraint() == Some("users_telegram_id_idx")
+            {
+                return AppError::Conflict("This Telegram account is already linked".into());
+            }
+            e.into()
+        })?;
+        Ok(user)
+    }
+
+    /// Записать почту аккаунту, у которого её не было.
+    ///
+    /// Условие `email IS NULL` стоит в самом UPDATE: замена почты — другое
+    /// дело, с подтверждением по письму, и случиться молча оно не должно.
+    /// Возвращает None, когда почта уже была.
+    /// Назвать почту. Вместе с адресом заводится письмо-приглашение: названный
+    /// адрес ещё не дверь, и станет ею только изнутри ящика.
+    pub async fn set_user_email(
+        &self,
+        user_id: Uuid,
+        email: &str,
+        confirm_hash: &str,
+        confirm_expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<crate::models::User>> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "UPDATE users SET email = $2, email_confirm_hash = $3, email_confirm_expires_at = $4
+              WHERE id = $1 AND email IS NULL RETURNING *",
+        )
+        .bind(user_id)
+        .bind(email)
+        .bind(confirm_hash)
+        .bind(confirm_expires_at)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| {
+            if let sqlx::Error::Database(ref dbe) = e
+                && (dbe.constraint() == Some("users_email_key")
+                    || dbe.constraint() == Some("idx_users_email"))
+            {
+                return AppError::Conflict("Email already registered".into());
+            }
+            e.into()
+        })?;
+        Ok(user)
+    }
+
+    /// Вернувшегося узнают по ЧИСЛУ, и только по нему. Поиск по `@username`
+    /// однажды отдал бы архив тому, кто забрал освобождённое имя.
+    pub async fn find_user_by_telegram_id(
+        &self,
+        telegram_id: i64,
+    ) -> Result<Option<crate::models::User>> {
+        let user =
+            sqlx::query_as::<_, crate::models::User>("SELECT * FROM users WHERE telegram_id = $1")
+                .bind(telegram_id)
+                .fetch_optional(&self.pg_pool)
+                .await?;
+        Ok(user)
+    }
+
+    /// Привязать Telegram к существующему аккаунту. Занятое число — отказ:
+    /// одно число значит одного человека.
+    pub async fn link_telegram_to_user(
+        &self,
+        user_id: Uuid,
+        telegram_id: i64,
+        telegram_username: Option<&str>,
+    ) -> Result<crate::models::User> {
+        // `telegram_id IS NULL OR telegram_id = $2` — у имени, за которым уже
+        // закреплено ДРУГОЕ число, привязка ничего не переписывает. Прежде
+        // переписывала молча: дверь, о которой хозяин знал, переставала быть
+        // его дверью, и узнавал он об этом, только не сумев войти. Повторная
+        // привязка того же числа проходит — это не подмена, а нажали дважды.
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "UPDATE users
+                SET telegram_id = $2, telegram_username = $3, telegram_linked_at = NOW()
+              WHERE id = $1 AND (telegram_id IS NULL OR telegram_id = $2) RETURNING *",
+        )
+        .bind(user_id)
+        .bind(telegram_id)
+        .bind(telegram_username)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| {
+            if let sqlx::Error::Database(ref dbe) = e
+                && dbe.constraint() == Some("users_telegram_id_idx")
+            {
+                return AppError::Conflict("This Telegram account is already linked".into());
+            }
+            e.into()
+        })?;
+        user.ok_or_else(|| {
+            AppError::Conflict("This account already has a different Telegram linked".into())
+        })
+    }
+
+    /// Отвязать. Проверку «остаётся ли хоть одна дверь» делает слой выше:
+    /// здесь бы она молча зависела от того, кто позвал.
+    pub async fn unlink_telegram(&self, user_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE users
+                SET telegram_id = NULL, telegram_username = NULL, telegram_linked_at = NULL
+              WHERE id = $1",
+        )
+        .bind(user_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Освежить `@имя` при каждом входе: человек переименовался — в профиле
+    /// должно стоять новое. Имя в профиле при этом НЕ трогается: его человек
+    /// мог выбрать себе сам, и второй вход, вернувший телеграмовское, молча
+    /// испортил бы его выбор.
+    pub async fn touch_telegram_username(
+        &self,
+        user_id: Uuid,
+        telegram_username: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("UPDATE users SET telegram_username = $2 WHERE id = $1")
+            .bind(user_id)
+            .bind(telegram_username)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<crate::models::User>> {
@@ -3370,10 +3805,13 @@ impl Repository {
 
     // ── Sessions ─────────────────────────────────────────────
 
+    /// Завести сессию. В колонку `token` кладётся ОТПЕЧАТОК ключа: сам ключ
+    /// уезжает в браузер и в базе не хранится. Чтение базы больше не является
+    /// входом в каждое имя на месяц вперёд.
     pub async fn create_session(
         &self,
         user_id: Uuid,
-        token: &str,
+        token_hash: &str,
         expires_at: chrono::DateTime<chrono::Utc>,
         ctx: &crate::models::ClientContext,
     ) -> Result<()> {
@@ -3382,7 +3820,7 @@ impl Repository {
              VALUES ($1, $2, $3, $4, $5, $6, $7)"
         )
         .bind(user_id)
-        .bind(token)
+        .bind(token_hash)
         .bind(expires_at)
         .bind(&ctx.ip)
         .bind(&ctx.user_agent)
@@ -3393,24 +3831,86 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn get_session_user(&self, token: &str) -> Result<Option<crate::models::User>> {
+    /// Чей это ключ. `is_blocked` спрашивается ЗДЕСЬ, а не только при входе:
+    /// блокировка гасит сессии в свой миг, но полагаться на это значит
+    /// полагаться на то, что ни одна будущая ветка не заведёт сессию в обход.
+    pub async fn get_session_user(&self, token_hash: &str) -> Result<Option<crate::models::User>> {
         let user = sqlx::query_as::<_, crate::models::User>(
             "SELECT u.* FROM users u
              JOIN user_sessions s ON s.user_id = u.id
-             WHERE s.token = $1 AND s.expires_at > NOW()",
+             WHERE s.token = $1 AND s.expires_at > NOW() AND u.is_blocked = false",
         )
-        .bind(token)
+        .bind(token_hash)
         .fetch_optional(&self.pg_pool)
         .await?;
         Ok(user)
     }
 
-    pub async fn delete_session(&self, token: &str) -> Result<()> {
+    pub async fn delete_session(&self, token_hash: &str) -> Result<()> {
         sqlx::query("DELETE FROM user_sessions WHERE token = $1")
-            .bind(token)
+            .bind(token_hash)
             .execute(&self.pg_pool)
             .await?;
         Ok(())
+    }
+
+    /// Свои двери, как их видит хозяин имени. Ключей здесь нет — только
+    /// отпечаток нынешней сессии, чтобы отметить ту, из которой смотрят.
+    pub async fn own_sessions(
+        &self,
+        user_id: Uuid,
+        current_hash: &str,
+    ) -> Result<Vec<crate::models::OwnSessionDto>> {
+        let rows: Vec<(
+            Uuid,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT id, created_at, expires_at, token, user_agent, country_code, city
+               FROM user_sessions
+              WHERE user_id = $1 AND expires_at > NOW()
+              ORDER BY created_at DESC",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, created_at, expires_at, token, user_agent, country_code, city)| {
+                    let place: Vec<String> = [city, country_code]
+                        .into_iter()
+                        .flatten()
+                        .filter(|s| !s.trim().is_empty())
+                        .collect();
+                    crate::models::OwnSessionDto {
+                        id: id.to_string(),
+                        created_at: created_at.to_rfc3339(),
+                        expires_at: expires_at.to_rfc3339(),
+                        current: token == current_hash,
+                        browser: user_agent,
+                        place: (!place.is_empty()).then(|| place.join(", ")),
+                    }
+                },
+            )
+            .collect())
+    }
+
+    /// Закрыть все двери, кроме той, из которой смотрят. Нынешняя остаётся
+    /// намеренно: кнопка, выбрасывающая нажавшего, спрашивала бы каждый раз
+    /// «а точно ли я хотел выйти сам».
+    pub async fn revoke_other_sessions(&self, user_id: Uuid, keep_hash: &str) -> Result<u64> {
+        let res = sqlx::query("DELETE FROM user_sessions WHERE user_id = $1 AND token <> $2")
+            .bind(user_id)
+            .bind(keep_hash)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(res.rows_affected())
     }
 
     // ── Wishlist ─────────────────────────────────────────────
@@ -3600,18 +4100,48 @@ impl Repository {
         Ok(result.rows_affected())
     }
 
-    pub async fn count_recent_failures(&self, email: &str, window_minutes: i64) -> Result<i64> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM login_attempts
-             WHERE email = $1
-               AND success = false
-               AND attempted_at > NOW() - ($2 || ' minutes')::interval",
+    /// Неудачи, посчитанные тремя способами за один проход.
+    ///
+    /// Одного счёта по почте не хватает, и не хватает в обе стороны. Пять
+    /// ошибок по чужому адресу запирали хозяина на пятнадцать минут — то есть
+    /// запереть человека мог кто угодно, бесплатно и сколько угодно раз. А
+    /// счёт по одной только паре «почта и сеть» запирал бы лишь одну сеть:
+    /// перебирающий с десяти адресов не заметил бы преграды вовсе.
+    ///
+    /// Поэтому считается и пара (тесно, на четверть часа), и имя целиком
+    /// (свободно, на час — это потолок на подбор, а не на опечатку), и сама
+    /// сеть (чтобы один адрес не веерил по многим именам).
+    pub async fn recent_failures(
+        &self,
+        email: &str,
+        ip: Option<&str>,
+        pair_minutes: i64,
+        wide_minutes: i64,
+    ) -> Result<crate::models::FailureTally> {
+        let row: (i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                COUNT(*) FILTER (
+                    WHERE email = $1 AND ip IS NOT DISTINCT FROM $2
+                      AND attempted_at > NOW() - ($3 || ' minutes')::interval
+                )::bigint,
+                COUNT(*) FILTER (WHERE email = $1)::bigint,
+                COUNT(*) FILTER (WHERE ip IS NOT DISTINCT FROM $2)::bigint
+             FROM login_attempts
+             WHERE success = false
+               AND attempted_at > NOW() - ($4 || ' minutes')::interval
+               AND (email = $1 OR ip IS NOT DISTINCT FROM $2)",
         )
         .bind(email)
-        .bind(window_minutes)
+        .bind(ip)
+        .bind(pair_minutes)
+        .bind(wide_minutes)
         .fetch_one(&self.pg_pool)
         .await?;
-        Ok(count)
+        Ok(crate::models::FailureTally {
+            pair: row.0,
+            by_email: row.1,
+            by_ip: row.2,
+        })
     }
 
     // ── Profile data ─────────────────────────────────────────
@@ -3794,13 +4324,13 @@ impl Repository {
     pub async fn admin_create_reset_token(
         &self,
         user_id: Uuid,
-        token: &str,
+        token_hash: &str,
         expires_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<()> {
         sqlx::query(
             "UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2 WHERE id = $3"
         )
-        .bind(token)
+        .bind(token_hash)
         .bind(expires_at)
         .bind(user_id)
         .execute(&self.pg_pool)
@@ -3812,7 +4342,7 @@ impl Repository {
     pub async fn create_self_reset_token(
         &self,
         user_id: Uuid,
-        token: &str,
+        token_hash: &str,
         expires_at: chrono::DateTime<chrono::Utc>,
         ctx: &crate::models::ClientContext,
     ) -> Result<()> {
@@ -3822,7 +4352,7 @@ impl Repository {
                  last_reset_request_city = $5, last_reset_request_at = NOW()
              WHERE id = $6",
         )
-        .bind(token)
+        .bind(token_hash)
         .bind(expires_at)
         .bind(&ctx.ip)
         .bind(&ctx.country_code)
@@ -3833,15 +4363,15 @@ impl Repository {
         Ok(())
     }
 
-    /// Returns the user if token is valid and not yet expired.
-    pub async fn find_user_by_reset_token(
+    /// Чей это ключ сброса — по отпечатку и сроку.
+    pub async fn find_user_by_reset_hash(
         &self,
-        token: &str,
+        token_hash: &str,
     ) -> Result<Option<crate::models::User>> {
         let user = sqlx::query_as::<_, crate::models::User>(
             "SELECT * FROM users WHERE password_reset_token = $1 AND password_reset_expires_at > NOW()"
         )
-        .bind(token)
+        .bind(token_hash)
         .fetch_optional(&self.pg_pool)
         .await?;
         Ok(user)
@@ -4911,6 +5441,12 @@ impl Repository {
                     last_reset_request_country_code: None,
                     last_reset_request_city: None,
                     last_reset_request_at: None,
+                    telegram_id: None, // not needed for admin thread listing
+                    telegram_username: None,
+                    telegram_linked_at: None,
+                    email_confirmed_at: None,
+                    email_confirm_hash: None,
+                    email_confirm_expires_at: None,
                 };
                 let unread: i64 = r.get("unread");
                 let preview: Option<String> = r.get("preview");
@@ -5351,7 +5887,7 @@ impl Repository {
     const GAZETTE_LEAF_SELECT: &'static str = r#"
         SELECT l.id, l.slug, l.kind, l.status,
                l.title_en, l.title_ru, l.dek_en, l.dek_ru, l.body_en, l.body_ru,
-               l.figurine_id, l.href, l.source_name, l.source_url, l.image_url, l.image_urls,
+               l.figurine_id, l.href, l.source_name, l.source_url, l.author, l.image_url, l.image_urls,
                l.pinned, l.shelf_order, l.published_at, l.scheduled_at, l.expected_from, l.expected_to,
                l.created_at, l.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
@@ -5567,6 +6103,7 @@ impl Repository {
         href: Option<&str>,
         source_name: Option<&str>,
         source_url: Option<&str>,
+        author: Option<&str>,
         image_url: Option<&str>,
         image_urls: &[String],
         pinned: bool,
@@ -5578,10 +6115,10 @@ impl Repository {
         Ok(sqlx::query_as::<_, crate::models::GazetteLeaf>(
             r#"INSERT INTO gazette_leaves (
                     slug, kind, status, title_en, title_ru, dek_en, dek_ru, body_en, body_ru,
-                    figurine_id, href, source_name, source_url, image_url, image_urls, pinned,
-                    published_at, scheduled_at, expected_from, expected_to
+                    figurine_id, href, source_name, source_url, author, image_url, image_urls,
+                    pinned, published_at, scheduled_at, expected_from, expected_to
                ) VALUES (
-                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
                ) RETURNING *"#,
         )
         .bind(slug)
@@ -5597,6 +6134,7 @@ impl Repository {
         .bind(href)
         .bind(source_name)
         .bind(source_url)
+        .bind(author)
         .bind(image_url)
         .bind(image_urls)
         .bind(pinned)
@@ -5624,6 +6162,7 @@ impl Repository {
         href: Option<&str>,
         source_name: Option<&str>,
         source_url: Option<&str>,
+        author: Option<&str>,
         image_url: Option<&str>,
         image_urls: &[String],
         pinned: bool,
@@ -5637,9 +6176,10 @@ impl Repository {
                     slug = $2, kind = $3, status = $4,
                     title_en = $5, title_ru = $6, dek_en = $7, dek_ru = $8,
                     body_en = $9, body_ru = $10, figurine_id = $11, href = $12,
-                    source_name = $13, source_url = $14, image_url = $15, image_urls = $16,
-                    pinned = $17, published_at = $18, scheduled_at = $19,
-                    expected_from = $20, expected_to = $21,
+                    source_name = $13, source_url = $14, author = $15,
+                    image_url = $16, image_urls = $17,
+                    pinned = $18, published_at = $19, scheduled_at = $20,
+                    expected_from = $21, expected_to = $22,
                     updated_at = NOW()
                WHERE id = $1
                RETURNING *"#,
@@ -5658,6 +6198,7 @@ impl Repository {
         .bind(href)
         .bind(source_name)
         .bind(source_url)
+        .bind(author)
         .bind(image_url)
         .bind(image_urls)
         .bind(pinned)
@@ -6232,6 +6773,272 @@ impl Repository {
             )));
         }
         Ok(())
+    }
+
+    // === БАЙКИ: ОТКЛИК ЧИТАТЕЛЯ ===
+
+    /// Байка существует и её можно читать. Отклик принимается только на такую:
+    /// черновик и лист вестника комментировать нечем.
+    pub async fn tale_is_live(&self, tale_id: Uuid) -> Result<bool> {
+        let (live,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (
+                 SELECT 1 FROM gazette_leaves
+                 WHERE id = $1 AND kind = 'tale'
+                   AND (status = 'published'
+                        OR (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()))
+             )",
+        )
+        .bind(tale_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(live)
+    }
+
+    pub async fn insert_tale_comment(
+        &self,
+        tale_id: Uuid,
+        user_id: Option<Uuid>,
+        author_name: &str,
+        author_email: Option<&str>,
+        body: &str,
+    ) -> Result<crate::models::TaleComment> {
+        Ok(sqlx::query_as::<_, crate::models::TaleComment>(
+            "INSERT INTO tale_comments (tale_id, user_id, author_name, author_email, body)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *",
+        )
+        .bind(tale_id)
+        .bind(user_id)
+        .bind(author_name)
+        .bind(author_email)
+        .bind(body)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn get_approved_tale_comments(
+        &self,
+        tale_id: Uuid,
+        newest_first: bool,
+    ) -> Result<Vec<crate::models::TaleCommentWithAvatar>> {
+        let order = if newest_first { "DESC" } else { "ASC" };
+        Ok(
+            sqlx::query_as::<_, crate::models::TaleCommentWithAvatar>(&format!(
+                "SELECT c.id, c.author_name, c.body, c.admin_reply, c.created_at, u.avatar_url
+                 FROM tale_comments c
+                 LEFT JOIN users u ON u.id = c.user_id
+                 WHERE c.tale_id = $1 AND c.is_approved = true
+                 ORDER BY c.created_at {order}"
+            ))
+            .bind(tale_id)
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
+    }
+
+    /// Очередь стола рассказов. `tale_filter` — отклик на одну байку, иначе всё.
+    pub async fn get_tale_comments_admin_page(
+        &self,
+        only_pending: bool,
+        tale_filter: Option<Uuid>,
+        newest_first: bool,
+        page: i64,
+        per_page: i64,
+    ) -> Result<(Vec<crate::models::AdminTaleCommentRow>, i64, i64)> {
+        let order = if newest_first { "DESC" } else { "ASC" };
+        let mut where_sql = String::from("WHERE 1=1");
+        if only_pending {
+            where_sql.push_str(" AND c.is_approved = false");
+        }
+        if tale_filter.is_some() {
+            where_sql.push_str(" AND c.tale_id = $1");
+        }
+        let (limit_n, offset_n) = if tale_filter.is_some() { (2, 3) } else { (1, 2) };
+        let sql = format!(
+            "SELECT c.id, c.tale_id,
+                    l.title_en AS tale_title_en, l.title_ru AS tale_title_ru, l.slug AS tale_slug,
+                    c.author_name, c.author_email, c.body, c.is_approved, c.admin_reply,
+                    c.created_at, c.user_id
+             FROM tale_comments c
+             JOIN gazette_leaves l ON l.id = c.tale_id
+             {where_sql}
+             ORDER BY c.created_at {order}
+             LIMIT ${limit_n} OFFSET ${offset_n}"
+        );
+        let mut q = sqlx::query_as::<_, crate::models::AdminTaleCommentRow>(&sql);
+        if let Some(id) = tale_filter {
+            q = q.bind(id);
+        }
+        let items = q
+            .bind(per_page)
+            .bind((page - 1) * per_page)
+            .fetch_all(&self.pg_pool)
+            .await?;
+
+        let count_sql = format!("SELECT COUNT(*) FROM tale_comments c {where_sql}");
+        let mut cq = sqlx::query_as::<_, (i64,)>(&count_sql);
+        if let Some(id) = tale_filter {
+            cq = cq.bind(id);
+        }
+        let (total,): (i64,) = cq.fetch_one(&self.pg_pool).await?;
+
+        let (pending,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM tale_comments WHERE is_approved = false")
+                .fetch_one(&self.pg_pool)
+                .await?;
+        Ok((items, total, pending))
+    }
+
+    pub async fn moderate_tale_comment(
+        &self,
+        id: Uuid,
+        is_approved: bool,
+        admin_reply: Option<&str>,
+    ) -> Result<crate::models::TaleComment> {
+        sqlx::query_as::<_, crate::models::TaleComment>(
+            "UPDATE tale_comments SET is_approved = $1, admin_reply = $2 WHERE id = $3 RETURNING *",
+        )
+        .bind(is_approved)
+        .bind(admin_reply)
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Tale comment {id} not found")))
+    }
+
+    pub async fn delete_tale_comment(&self, id: Uuid) -> Result<()> {
+        let affected = sqlx::query("DELETE FROM tale_comments WHERE id = $1")
+            .bind(id)
+            .execute(&self.pg_pool)
+            .await?
+            .rows_affected();
+        if affected == 0 {
+            return Err(AppError::NotFound(format!("Tale comment {id} not found")));
+        }
+        Ok(())
+    }
+
+    /// Назначить голос читателя. `value` — 1, −1 или 0 (снять).
+    ///
+    /// Одна строка на человека и одна сделка: вошедший поглощает свою же
+    /// гостевую строку по этому жетону и строку с другого устройства, иначе
+    /// два уникальных указателя разошлись бы на первом же входе в дом.
+    pub async fn set_tale_vote(
+        &self,
+        tale_id: Uuid,
+        visitor_token: &str,
+        user_id: Option<Uuid>,
+        value: i16,
+    ) -> Result<(i16, i64, i64)> {
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(Self::like_lock_key(tale_id))
+            .execute(&mut *tx)
+            .await?;
+
+        if let Some(uid) = user_id {
+            sqlx::query(
+                "DELETE FROM tale_likes
+                 WHERE tale_id = $1 AND (visitor_token = $2 OR user_id = $3)",
+            )
+            .bind(tale_id)
+            .bind(visitor_token)
+            .bind(uid)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query("DELETE FROM tale_likes WHERE tale_id = $1 AND visitor_token = $2")
+                .bind(tale_id)
+                .bind(visitor_token)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        if value != 0 {
+            sqlx::query(
+                "INSERT INTO tale_likes (tale_id, visitor_token, user_id, value)
+                 VALUES ($1, $2, $3, $4)",
+            )
+            .bind(tale_id)
+            .bind(visitor_token)
+            .bind(user_id)
+            .bind(value)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        let (likes, dislikes): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*) FILTER (WHERE value = 1)::bigint,
+                    COUNT(*) FILTER (WHERE value = -1)::bigint
+             FROM tale_likes WHERE tale_id = $1",
+        )
+        .bind(tale_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok((value, likes, dislikes))
+    }
+
+    /// Просмотр. Один на читателя в сутки — повторное открытие ничего не пишет.
+    pub async fn record_tale_view(&self, tale_id: Uuid, visitor_token: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO tale_views (tale_id, visitor_token)
+             VALUES ($1, $2)
+             ON CONFLICT (tale_id, visitor_token, seen_on) DO NOTHING",
+        )
+        .bind(tale_id)
+        .bind(visitor_token)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Числа под одной байкой. `visitor_token` называет голос спрашивающего —
+    /// без него страница не смогла бы показать, что читатель уже ответил.
+    pub async fn tale_stats(
+        &self,
+        tale_id: Uuid,
+        visitor_token: Option<&str>,
+    ) -> Result<(i64, i64, i64, i64, Option<i16>)> {
+        let (views, likes, dislikes, comments): (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                 (SELECT COUNT(*) FROM tale_views WHERE tale_id = $1)::bigint,
+                 (SELECT COUNT(*) FROM tale_likes WHERE tale_id = $1 AND value = 1)::bigint,
+                 (SELECT COUNT(*) FROM tale_likes WHERE tale_id = $1 AND value = -1)::bigint,
+                 (SELECT COUNT(*) FROM tale_comments WHERE tale_id = $1 AND is_approved)::bigint",
+        )
+        .bind(tale_id)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        let mine = match visitor_token {
+            None => None,
+            Some(token) => sqlx::query_as::<_, (i16,)>(
+                "SELECT value FROM tale_likes WHERE tale_id = $1 AND visitor_token = $2",
+            )
+            .bind(tale_id)
+            .bind(token)
+            .fetch_optional(&self.pg_pool)
+            .await?
+            .map(|r| r.0),
+        };
+        Ok((views, likes, dislikes, comments, mine))
+    }
+
+    /// Свод по всем байкам разом — стол рассказов печатает его строкой списка.
+    pub async fn tale_stats_all(&self) -> Result<Vec<crate::models::AdminTaleStatRow>> {
+        Ok(sqlx::query_as::<_, crate::models::AdminTaleStatRow>(
+            "SELECT l.id::text AS tale_id,
+                    (SELECT COUNT(*) FROM tale_views v WHERE v.tale_id = l.id)::bigint AS views,
+                    (SELECT COUNT(*) FROM tale_likes k WHERE k.tale_id = l.id AND k.value = 1)::bigint AS likes,
+                    (SELECT COUNT(*) FROM tale_likes k WHERE k.tale_id = l.id AND k.value = -1)::bigint AS dislikes,
+                    (SELECT COUNT(*) FROM tale_comments c WHERE c.tale_id = l.id AND c.is_approved)::bigint AS comments,
+                    (SELECT COUNT(*) FROM tale_comments c WHERE c.tale_id = l.id AND NOT c.is_approved)::bigint AS pending_comments
+             FROM gazette_leaves l
+             WHERE l.kind = 'tale'",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
     }
 
     // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===

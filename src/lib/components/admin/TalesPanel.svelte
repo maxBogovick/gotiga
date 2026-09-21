@@ -9,9 +9,11 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { api } from '$lib/api';
   import { t, lang, type Lang } from '$lib/i18n';
-  import { TITLE_MAX, DEK_MAX, BODY_MAX } from '$lib/gazette';
+  import { TITLE_MAX, DEK_MAX, BODY_MAX, AUTHOR_MAX } from '$lib/gazette';
   import { ORNAMENT } from '$lib/tales';
   import type {
+    AdminTaleCommentDto,
+    AdminTaleStat,
     FigurineListItem,
     GazetteLeaf,
     GazetteSeed,
@@ -47,6 +49,8 @@
   let bodyEn = $state('');
   let bodyRu = $state('');
   let figurineId = $state('');
+  // Кем написана история. Одно поле на оба языка: имя не переводится.
+  let author = $state('');
   let imageUrls = $state<string[]>([]);
   let slug = $state('');
   let status = $state<GazetteStatus>('draft');
@@ -64,6 +68,18 @@
   let figQuery = $state('');
   let figOpen = $state(false);
   let restorable = $state<Record<string, unknown> | null>(null);
+
+  /**
+   * Отклик читателя. Свод приходит одним запросом на все байки: строка списка
+   * показывает, есть ли непрочитанный отклик, и ради каждой строки отдельного
+   * запроса не делается.
+   */
+  let stats = $state<Record<string, AdminTaleStat>>({});
+  let comments = $state<AdminTaleCommentDto[]>([]);
+  let commentsLoading = $state(false);
+  let talkOpen = $state(false);
+  let replyFor = $state<string | null>(null);
+  let replyText = $state('');
 
   let bodyBox = $state<HTMLTextAreaElement | null>(null);
   let secondBox = $state<HTMLTextAreaElement | null>(null);
@@ -86,6 +102,7 @@
   let fill = $derived(Math.min(1, chars / LITTLE));
   let tooLong = $derived(chars > LITTLE);
   let open = $derived(selectedId !== null || titleEn !== '' || titleRu !== '');
+  let mine = $derived(selectedId ? stats[selectedId] ?? null : null);
 
   let visible = $derived.by(() => {
     const q = listQuery.trim().toLowerCase();
@@ -102,7 +119,7 @@
 
   function fieldsKey(): string {
     return JSON.stringify({
-      titleEn, titleRu, dekEn, dekRu, bodyEn, bodyRu,
+      titleEn, titleRu, dekEn, dekRu, bodyEn, bodyRu, author,
       figurineId, imageUrls, slug, status, pinned, scheduledAt,
     });
   }
@@ -141,6 +158,60 @@
     });
   }
 
+  /** Свод отклика по всем байкам разом. Тихий: числа — не содержимое стола. */
+  async function loadStats() {
+    try {
+      const rows = await api.adminTaleStats();
+      stats = Object.fromEntries(rows.map((row) => [row.taleId, row]));
+    } catch {
+      stats = {};
+    }
+  }
+
+  async function loadComments(taleId: string) {
+    commentsLoading = true;
+    try {
+      const page = await api.adminListTaleComments({ taleId, perPage: 100, sort: 'newest' });
+      comments = page.items;
+    } catch (e) {
+      flash(String(e), 6000);
+      comments = [];
+    } finally {
+      commentsLoading = false;
+    }
+  }
+
+  /** Одобрить, спрятать или ответить. Ответ уходит вместе с одобрением. */
+  async function moderate(c: AdminTaleCommentDto, isApproved: boolean, adminReply?: string | null) {
+    try {
+      await api.adminModerateTaleComment(c.id, {
+        isApproved,
+        adminReply: adminReply === undefined ? c.adminReply : adminReply,
+      });
+      if (selectedId) {
+        await loadComments(selectedId);
+        await loadStats();
+      }
+      replyFor = null;
+      replyText = '';
+    } catch (e) {
+      flash(String(e), 6000);
+    }
+  }
+
+  async function removeComment(c: AdminTaleCommentDto) {
+    if (!confirm($t('adminTalesCommentDeleteAsk'))) return;
+    try {
+      await api.adminDeleteTaleComment(c.id);
+      if (selectedId) {
+        await loadComments(selectedId);
+        await loadStats();
+      }
+    } catch (e) {
+      flash(String(e), 6000);
+    }
+  }
+
   function blank() {
     selectedId = null;
     titleEn = '';
@@ -150,6 +221,7 @@
     bodyEn = '';
     bodyRu = '';
     figurineId = '';
+    author = '';
     imageUrls = [];
     slug = '';
     status = 'draft';
@@ -159,6 +231,9 @@
     savedAt = null;
     figQuery = '';
     restorable = null;
+    comments = [];
+    talkOpen = false;
+    replyFor = null;
     snapshot = fieldsKey();
   }
 
@@ -171,6 +246,7 @@
     bodyEn = leaf.bodyEn ?? '';
     bodyRu = leaf.bodyRu ?? '';
     figurineId = leaf.figurineId ?? '';
+    author = leaf.author ?? '';
     imageUrls = leaf.imageUrls?.length ? leaf.imageUrls.filter(Boolean) : leaf.imageUrl ? [leaf.imageUrl] : [];
     slug = leaf.slug;
     status = leaf.status;
@@ -185,6 +261,9 @@
     if (dirty && !confirm($t('adminTalesUnsavedLeave'))) return;
     apply(leaf);
     savedAt = null;
+    comments = [];
+    replyFor = null;
+    void loadComments(leaf.id);
     // A crash, a closed tab, a browser that went away mid-sentence: whatever is
     // in this browser wins only if it is newer than what the server holds.
     restorable = null;
@@ -208,6 +287,7 @@
     dekRu = (d.dekRu as string) ?? dekRu;
     bodyEn = (d.bodyEn as string) ?? bodyEn;
     bodyRu = (d.bodyRu as string) ?? bodyRu;
+    author = (d.author as string) ?? author;
     restorable = null;
   }
 
@@ -244,6 +324,9 @@
       bodyEn: bodyEn.trim() || null,
       bodyRu: bodyRu.trim() || null,
       figurineId: figurineId || null,
+      // Пустое поле — это «нет подписи», и оно обязано доехать до сервера:
+      // пропущенное поле там значит то же самое, но молча.
+      author: author.trim() || null,
       imageUrl: imageUrls[0] ?? null,
       // An empty ARRAY, never null: `image_urls` is a plain `Vec<String>` with
       // a serde default on the server, and `default` covers a missing field,
@@ -458,7 +541,7 @@
 
   onMount(async () => {
     try {
-      const [_, figs] = await Promise.all([loadTales(), api.getAllFigurines()]);
+      const [_, figs] = await Promise.all([loadTales(), api.getAllFigurines(), loadStats()]);
       figurines = figs;
     } catch (e) {
       flash(String(e), 6000);
@@ -542,6 +625,11 @@
                     <span class="block text-[10px] text-[#8a6a55] truncate">{tale.figurineName}</span>
                   {/if}
                 </span>
+                {#if (stats[tale.id]?.pendingComments ?? 0) > 0}
+                  <span class="ml-auto text-[#c65f3c] text-[10px]" title={$t('adminTalesPending')}>
+                    {stats[tale.id].pendingComments}✍
+                  </span>
+                {/if}
                 {#if tale.pinned}<span class="ml-auto text-[#c65f3c] text-[10px]">◆</span>{/if}
               </button>
             </li>
@@ -613,6 +701,15 @@
             placeholder={$t('adminTalesEpigraphPh')}
             class="paper-epigraph"
           />
+          <!-- Подпись под историей. Стоит там же, где потом напечатается:
+               под заглавием, а не в отдельной форме внизу. Пусто — подписи
+               на странице не будет. -->
+          <input
+            bind:value={author}
+            maxlength={AUTHOR_MAX}
+            placeholder={$t('adminTalesAuthorPh')}
+            class="paper-byline"
+          />
 
           <div class="columns" class:two={both}>
             <textarea
@@ -653,6 +750,84 @@
             </span>
           </div>
         </div>
+
+        <!-- Отклик на открытую байку: числа и очередь модерации. Стоит под
+             бумагой, а не в подвальной ленте: лента — про то, что с байкой
+             делают, а это про то, что с ней уже случилось. Минус печатается
+             только здесь — читателю его не показывают. -->
+        {#if selectedId}
+          <section class="talk">
+            <div class="talk-nums">
+              <span class="num"><b>{mine?.views ?? 0}</b> {$t('adminTalesViews')}</span>
+              <span class="num"><b>{mine?.likes ?? 0}</b> {$t('adminTalesLikes')}</span>
+              <span class="num num--ill"><b>{mine?.dislikes ?? 0}</b> {$t('adminTalesDislikes')}</span>
+              <span class="num"><b>{mine?.comments ?? 0}</b> {$t('adminTalesComments')}</span>
+              {#if (mine?.pendingComments ?? 0) > 0}
+                <span class="num num--wait"><b>{mine?.pendingComments}</b> {$t('adminTalesPending')}</span>
+              {/if}
+              <button class="talk-toggle" onclick={() => (talkOpen = !talkOpen)}>
+                {talkOpen ? $t('adminTalesTalkHide') : $t('adminTalesTalkShow')}
+              </button>
+            </div>
+
+            {#if talkOpen}
+              {#if commentsLoading}
+                <p class="talk-empty">…</p>
+              {:else if comments.length === 0}
+                <p class="talk-empty">{$t('adminTalesNoComments')}</p>
+              {:else}
+                <ul class="talk-list">
+                  {#each comments as c (c.id)}
+                    <li class="talk-item" class:waiting={!c.isApproved}>
+                      <div class="talk-head">
+                        <span class="talk-who">{c.authorName}</span>
+                        {#if c.authorEmail}<span class="talk-mail">{c.authorEmail}</span>{/if}
+                        <span class="talk-when">{new Date(c.createdAt).toLocaleString()}</span>
+                        {#if !c.isApproved}<span class="talk-flag">{$t('adminTalesPending')}</span>{/if}
+                      </div>
+                      <p class="talk-body">{c.body}</p>
+                      {#if c.adminReply}
+                        <p class="talk-reply"><span>{$t('adminTalesReplyLabel')}</span> {c.adminReply}</p>
+                      {/if}
+
+                      {#if replyFor === c.id}
+                        <div class="talk-reply-box">
+                          <textarea
+                            bind:value={replyText}
+                            rows="3"
+                            placeholder={$t('adminTalesReplyPh')}
+                            class="talk-reply-input"
+                          ></textarea>
+                          <div class="talk-acts">
+                            <button class="act act--do" onclick={() => moderate(c, true, replyText)}>
+                              {$t('adminTalesReplySend')}
+                            </button>
+                            <button class="act" onclick={() => { replyFor = null; replyText = ''; }}>
+                              {$t('adminTalesCancel')}
+                            </button>
+                          </div>
+                        </div>
+                      {:else}
+                        <div class="talk-acts">
+                          {#if c.isApproved}
+                            <button class="act" onclick={() => moderate(c, false)}>{$t('adminTalesHide')}</button>
+                          {:else}
+                            <button class="act act--do" onclick={() => moderate(c, true)}>{$t('adminTalesApprove')}</button>
+                          {/if}
+                          <button
+                            class="act"
+                            onclick={() => { replyFor = c.id; replyText = c.adminReply ?? ''; }}
+                          >{$t('adminTalesReply')}</button>
+                          <button class="act act--ill" onclick={() => removeComment(c)}>{$t('adminTalesDelete')}</button>
+                        </div>
+                      {/if}
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            {/if}
+          </section>
+        {/if}
       </div>
     </div>
 
@@ -764,6 +939,7 @@
 
   .paper-title,
   .paper-epigraph,
+  .paper-byline,
   .paper-body {
     display: block;
     width: 100%;
@@ -775,6 +951,7 @@
   }
   .paper-title::placeholder,
   .paper-epigraph::placeholder,
+  .paper-byline::placeholder,
   .paper-body::placeholder { color: #b9a68f; }
 
   .paper-title {
@@ -790,8 +967,108 @@
     font-weight: 300;
     font-style: italic;
     color: #5f4636;
+    margin-bottom: 10px;
+  }
+
+  .paper-byline {
+    font-size: 16px;
+    color: #5f4636;
     margin-bottom: 26px;
   }
+
+  .talk {
+    margin-top: 36px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(52, 37, 28, 0.12);
+  }
+  .talk-nums {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 16px;
+    font-size: 9px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #8a6a55;
+  }
+  .num { display: inline-flex; align-items: baseline; gap: 5px; }
+  .num b {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 17px;
+    font-weight: 400;
+    letter-spacing: 0;
+    color: #34251c;
+  }
+  .num--ill b { color: #8a6a55; }
+  .num--wait b { color: #c65f3c; }
+  .talk-toggle {
+    margin-left: auto;
+    font-size: 9px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #c65f3c;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+
+  .talk-empty { margin: 16px 0 0; font-size: 12px; font-style: italic; color: #8a6a55; }
+  .talk-list { list-style: none; margin: 16px 0 0; padding: 0; }
+  .talk-item {
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(52, 37, 28, 0.08);
+  }
+  /* Неодобренное отбито полосой слева, а не цветом текста: текст читают, а
+     полосу видно, не читая. */
+  .talk-item.waiting {
+    border-left: 2px solid #c65f3c;
+    padding-left: 10px;
+  }
+  .talk-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 10px;
+    color: #8a6a55;
+  }
+  .talk-who { font-size: 12px; color: #34251c; }
+  .talk-flag { color: #c65f3c; text-transform: uppercase; letter-spacing: 0.14em; font-size: 9px; }
+  .talk-body { margin: 6px 0 0; font-size: 14px; line-height: 1.55; color: #34251c; }
+  .talk-reply {
+    margin: 6px 0 0;
+    padding-left: 12px;
+    border-left: 1px solid rgba(52, 37, 28, 0.15);
+    font-size: 13px;
+    color: #5f4636;
+  }
+  .talk-reply span { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: #8a6a55; }
+  .talk-reply-box { margin-top: 8px; }
+  .talk-reply-input {
+    width: 100%;
+    padding: 8px;
+    font-size: 13px;
+    background: transparent;
+    border: 1px solid rgba(52, 37, 28, 0.15);
+    outline: none;
+    color: #34251c;
+  }
+  .talk-reply-input:focus { border-color: rgba(52, 37, 28, 0.35); }
+  .talk-acts { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
+  .act {
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #8a6a55;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+  .act:hover { color: #34251c; }
+  .act--do { color: #c65f3c; }
+  .act--ill:hover { color: #a33; }
 
   .columns { display: grid; gap: 24px; }
   .columns.two { grid-template-columns: 1fr 1fr; }

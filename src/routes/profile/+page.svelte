@@ -9,6 +9,7 @@
   import AppImage from '$lib/components/AppImage.svelte';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
   import CommissionEditModal from '$lib/components/CommissionEditModal.svelte';
+  import TelegramDoor from '$lib/components/auth/TelegramDoor.svelte';
 
   // ── Cabinet navigation: hub → section → card ──
   type View = 'hub' | 'dealings' | 'card' | 'messages' | 'wishlist' | 'watches';
@@ -188,6 +189,136 @@
 
   // Claim-by-code is an edge tool, hidden behind a masthead toggle (progressive disclosure).
   let showClaim = $state(false);
+
+  // ── Вторая дверь ──
+  let showTelegram = $state(false);
+  let telegramBusy = $state(false);
+  let telegramDone = $state('');
+  let telegramError = $state('');
+  // Отвязать можно, только когда есть чем войти без Telegram: вход по знакам
+  // начинается с почты, поэтому нужны ОБЕ половины первой двери. Почта при
+  // этом должна быть ПОДТВЕРЖДЁННОЙ — по названному, но не открытому адресу
+  // не входят и знаки по нему не восстанавливают. Профиль знает это заранее и
+  // говорит словами, вместо того чтобы отказать после нажатия.
+  let canUnlink = $derived(!!authStore.user?.emailConfirmed && !!authStore.user?.hasSigns);
+
+  // ── Двери: почта, знаки, открытые сессии ──
+  //
+  // Три вещи, которых в профиле не было вовсе. Первая: адрес, названный делом,
+  // мог остаться неоткрытым, и человек узнавал об этом, только не сумев
+  // восстановить знаки. Вторая: пришедшему через Telegram знаки назначить было
+  // неоткуда — путь к ним лежал через «забыли знаки» на странице входа, куда
+  // вошедший не заходит. Третья: сессия живёт месяц, и увидеть, где она
+  // открыта, было нельзя ниоткуда.
+  let showDoors = $state(false);
+  let doorsBusy = $state(false);
+  let doorsSaid = $state('');
+  let doorsError = $state('');
+  let doors = $state<import('$lib/types/api').OwnSessionDto[]>([]);
+
+  async function loadDoors() {
+    const token = authStore.token;
+    if (!token) return;
+    try {
+      doors = await api.userSessions(token);
+    } catch {
+      doors = [];
+    }
+  }
+
+  async function resendConfirm() {
+    const token = authStore.token;
+    if (!token || doorsBusy) return;
+    doorsBusy = true;
+    doorsError = '';
+    doorsSaid = '';
+    try {
+      await api.resendConfirmEmail(token);
+      doorsSaid = $t('profileEmailResent');
+    } catch {
+      doorsError = $t('profileActionError');
+    } finally {
+      doorsBusy = false;
+    }
+  }
+
+  /**
+   * Прислать себе ключ к знакам.
+   *
+   * Уходит во все доказанные каналы: на открытую почту, в привязанный Telegram
+   * или в оба сразу. Ручка своя, а не «забыли знаки» с адресом: у пришедшего
+   * через Telegram почты может не быть вовсе, а вошедший уже назван — спрашивать
+   * его адрес не о чем.
+   */
+  let canAskForSigns = $derived(
+    !!authStore.user?.emailConfirmed || !!authStore.user?.telegramLinked
+  );
+
+  async function askForSigns() {
+    const token = authStore.token;
+    if (!token || doorsBusy) return;
+    doorsBusy = true;
+    doorsError = '';
+    doorsSaid = '';
+    try {
+      await api.askForSignsLetter(token);
+      doorsSaid = $t('profileSignsSent');
+    } catch {
+      doorsError = $t('profileActionError');
+    } finally {
+      doorsBusy = false;
+    }
+  }
+
+  async function closeOtherDoors() {
+    const token = authStore.token;
+    if (!token || doorsBusy) return;
+    doorsBusy = true;
+    doorsError = '';
+    doorsSaid = '';
+    try {
+      await api.userCloseOtherSessions(token);
+      doorsSaid = $t('profileSessionsClosed');
+      await loadDoors();
+    } catch {
+      doorsError = $t('profileActionError');
+    } finally {
+      doorsBusy = false;
+    }
+  }
+
+  function toggleDoors() {
+    showDoors = !showDoors;
+    if (showDoors) void loadDoors();
+  }
+
+  /** Привязали — обновляем имя: сессия та же, а дверей стало две. */
+  async function telegramLinked() {
+    const token = authStore.token;
+    if (!token) return;
+    telegramError = '';
+    try {
+      authStore.setSession(token, await api.userMe(token));
+    } catch {
+      telegramError = $t('profileActionError');
+    }
+  }
+
+  async function unlinkTelegram() {
+    const token = authStore.token;
+    if (!token || telegramBusy) return;
+    telegramBusy = true;
+    telegramError = '';
+    telegramDone = '';
+    try {
+      authStore.setSession(token, await api.telegramUnlink(token));
+      telegramDone = $t('profileTelegramUnlinked');
+    } catch {
+      telegramError = $t('profileActionError');
+    } finally {
+      telegramBusy = false;
+    }
+  }
 
   onMount(async () => {
     if (!authStore.isLoggedIn && !authStore.token) {
@@ -748,7 +879,7 @@
               </div>
             {/if}
             <p class="ms-sub">
-              <span class="ms-email">{authStore.user?.email ?? ''}</span>
+              <span class="ms-email">{authStore.handle}</span>
               {#if authStore.user?.createdAt}
                 <span class="ms-since">· {$t('profileMemberSince')} {formatDate(authStore.user.createdAt)}</span>
               {/if}
@@ -760,9 +891,108 @@
         <div class="masthead-actions">
           <button class="ms-link" class:active={showClaim} onclick={() => showClaim = !showClaim}>{$t('profileCodeToggle')}</button>
           <span class="ms-sep" aria-hidden="true">·</span>
+          <button class="ms-link" class:active={showTelegram} onclick={() => showTelegram = !showTelegram}>{$t('profileTelegramToggle')}</button>
+          <span class="ms-sep" aria-hidden="true">·</span>
+          <button class="ms-link" class:active={showDoors} onclick={toggleDoors}>{$t('profileDoorsToggle')}</button>
+          <span class="ms-sep" aria-hidden="true">·</span>
           <button class="ms-link" onclick={logout}>{$t('profileLogout')}</button>
         </div>
       </header>
+
+      <!-- ── Двери: почта, знаки, открытые сессии ── -->
+      {#if showDoors}
+        <section class="claim doors" aria-labelledby="doors-title">
+          <p id="doors-title" class="claim-hint">{$t('profileDoorsHint')}</p>
+
+          <div class="door">
+            <span class="door-name">{$t('profileDoorEmail')}</span>
+            {#if !authStore.user?.email}
+              <span class="door-state">{$t('profileNoEmail')}</span>
+            {:else if authStore.user?.emailConfirmed}
+              <span class="door-state door-state--ok">{authStore.user.email}</span>
+            {:else}
+              <span class="door-state door-state--warn">{authStore.user.email} — {$t('profileEmailUnconfirmed')}</span>
+              <button class="claim-btn" onclick={resendConfirm} disabled={doorsBusy}>
+                {doorsBusy ? '…' : $t('profileEmailResend')}
+              </button>
+            {/if}
+          </div>
+
+          <div class="door">
+            <span class="door-name">{$t('profileDoorSigns')}</span>
+            {#if authStore.user?.hasSigns}
+              <span class="door-state door-state--ok">{$t('profileSignsYes')}</span>
+            {:else if canAskForSigns}
+              <span class="door-state">{$t('profileSignsNo')}</span>
+              <button class="claim-btn" onclick={askForSigns} disabled={doorsBusy}>
+                {doorsBusy ? '…' : $t('profileSignsAsk')}
+              </button>
+            {:else}
+              <span class="door-state door-state--warn">{$t('profileSignsNeedChannel')}</span>
+            {/if}
+          </div>
+
+          <div class="door door--list">
+            <span class="door-name">{$t('profileSessionsTitle')}</span>
+            {#if doors.length === 0}
+              <span class="door-state">{$t('profileSessionsNone')}</span>
+            {:else}
+              <ul class="door-sessions">
+                {#each doors as door (door.id)}
+                  <li class:now={door.current}>
+                    <span class="door-where">
+                      {door.browser ?? $t('profileSessionUnknown')}{door.place ? ` · ${door.place}` : ''}
+                    </span>
+                    <span class="door-when">
+                      {formatDate(door.createdAt)}{door.current ? ` · ${$t('profileSessionCurrent')}` : ''}
+                    </span>
+                  </li>
+                {/each}
+              </ul>
+              {#if doors.length > 1}
+                <button class="claim-btn" onclick={closeOtherDoors} disabled={doorsBusy}>
+                  {doorsBusy ? '…' : $t('profileSessionsClose')}
+                </button>
+              {/if}
+            {/if}
+          </div>
+
+          {#if doorsError}
+            <p class="claim-msg claim-msg--err" role="alert">{doorsError}</p>
+          {:else if doorsSaid}
+            <p class="claim-msg claim-msg--ok" role="status">{doorsSaid}</p>
+          {/if}
+        </section>
+      {/if}
+
+      <!-- ── Вторая дверь: привязать или снять ── -->
+      {#if showTelegram}
+        <section class="claim tg" aria-labelledby="tg-title">
+          {#if authStore.user?.telegramLinked}
+            <p id="tg-title" class="claim-hint">
+              {$t('profileTelegramYours')}
+              <strong class="tg-handle">
+                {authStore.user?.telegramUsername ? `@${authStore.user.telegramUsername}` : $t('profileTelegramToggle')}
+              </strong>
+            </p>
+            {#if canUnlink}
+              <button class="claim-btn" onclick={unlinkTelegram} disabled={telegramBusy}>
+                {telegramBusy ? '…' : $t('profileTelegramUnlink')}
+              </button>
+            {:else}
+              <p class="claim-msg claim-msg--warn">{$t('profileTelegramOnlyDoor')}</p>
+            {/if}
+          {:else}
+            <p id="tg-title" class="claim-hint">{$t('profileTelegramNone')}</p>
+            <TelegramDoor mode="link" sessionToken={authStore.token} ondone={() => { void telegramLinked(); }} />
+          {/if}
+          {#if telegramError}
+            <p class="claim-msg claim-msg--err" role="alert">{telegramError}</p>
+          {:else if telegramDone}
+            <p class="claim-msg claim-msg--ok" role="status">{telegramDone}</p>
+          {/if}
+        </section>
+      {/if}
 
       <!-- ── Attach a guest request by code (progressive disclosure) ── -->
       {#if showClaim}
@@ -1988,6 +2218,20 @@
   }
 
   /* ── Attach a request by code ── */
+  /* Та же полка, что у расписки по коду: обе — редкие дела, и обе открываются
+     из одной строки над ними. */
+  .tg {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .tg-handle {
+    font-family: Georgia, serif;
+    font-weight: 400;
+    color: #34251c;
+  }
+
   .claim {
     margin: 0.9rem 0 0.2rem;
     padding: 0.9rem 1rem 1rem;
@@ -2005,6 +2249,60 @@
     margin: 0 0 0.7rem;
     max-width: 56ch;
   }
+
+  /* Двери: строка на каждую, и всё, что о ней можно сделать, — в той же
+     строке. Три отдельных раздела под почту, знаки и сессии сказали бы, что
+     это три разные вещи, а это один и тот же вопрос — чем сюда входят. */
+  .doors .door {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.45rem 0.7rem;
+    padding: 0.55rem 0;
+    border-top: 1px solid #e6d8c4;
+  }
+  .doors .door--list { display: block; }
+  .door-name {
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 0.66rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #a89070;
+    flex: 0 0 7rem;
+  }
+  .door-state {
+    font-family: Georgia, serif;
+    font-size: 0.86rem;
+    color: #6f3b24;
+    flex: 1 1 12rem;
+  }
+  .door-state--ok { color: #34251c; }
+  .door-state--warn { color: #c65f3c; }
+
+  .door-sessions {
+    list-style: none;
+    margin: 0.5rem 0 0.6rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .door-sessions li {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.3rem 1rem;
+    font-family: 'Instrument Sans', sans-serif;
+    font-size: 0.74rem;
+    color: #8a7253;
+    border-left: 2px solid #e6d8c4;
+    padding-left: 0.6rem;
+  }
+  .door-sessions li.now {
+    border-left-color: #c65f3c;
+    color: #34251c;
+  }
+  .door-where { font-family: Georgia, serif; font-size: 0.82rem; }
 
   .claim-form {
     display: flex;
