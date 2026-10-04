@@ -20,6 +20,7 @@
   import {
     CARD_WIDTHS,
     DEFAULT_FRAMES,
+    PRESETS_MAX,
     FRAME_MODES,
     LAYOUTS,
     KIND_SIDES,
@@ -50,11 +51,14 @@
     newOrnament,
     dressOf,
     frameName,
+    frameForCard,
+    isFreeform,
     kindOf,
     livePiece,
     normalizeSheet,
     sliceSigns,
     parseFocal,
+    FOCAL_ZOOM_MIN,
     parseFrameOverride,
     parseLevelFrames,
     pickImageFile,
@@ -887,12 +891,27 @@
     }
   });
 
+  /** Which real card `frameSample` below currently stands in for — a plain
+   *  key, read from as little as the choice actually depends on (the open
+   *  draft's presence, the rank, which card of it exists), so it changes
+   *  only when the SUBJECT changes, never on every field of it. */
+  type FrameSampleKey =
+    | { kind: "draft" }
+    | { kind: "card"; id: string }
+    | { kind: "blank"; tier: number };
+  let frameSampleKey = $derived.by((): FrameSampleKey => {
+    if (draft.titleRu || draft.titleEn) return { kind: "draft" };
+    const tier = frames[frameIndex]?.tier ?? 1;
+    const real = cards.find((c) => c.tier === tier);
+    return real ? { kind: "card", id: real.id } : { kind: "blank", tier };
+  });
+
   /** The card the frames / face views dress: the one being written, else any
    *  real card of that rank, else a stand-in — so the sliders always have a
    *  subject. Race and card dresses are stripped: this desk edits the RANK,
    *  and a sample that wore another look would show a roster the sidebar is
    *  not editing. */
-  let frameSample = $derived.by((): BattleCardDto => {
+  function buildFrameSample(): BattleCardDto {
     const tier = frames[frameIndex]?.tier ?? 1;
     const raw =
       draft.titleRu || draft.titleEn
@@ -910,6 +929,35 @@
             power: 10,
           });
     return { ...raw, frameOverride: null, raceLevelFrames: null };
+  }
+
+  /** `$state`, not `$derived`: a drag on the stand's card writes straight
+   *  into `frameSample.artFocal` (the same way it writes into `draft`'s in
+   *  the card editor), and a `$derived` would both ignore that write for
+   *  reactivity and throw it away outright the next time anything it reads
+   *  changed. Rebuilt only when `frameSampleKey` says the SUBJECT changed —
+   *  never by the drag itself, or every pointer-move would replace the very
+   *  object the drag is writing into. */
+  let frameSample = $state<BattleCardDto>(buildFrameSample());
+  $effect(() => {
+    frameSampleKey;
+    frameSample = buildFrameSample();
+  });
+
+  /** The copy above exists only to hide a card's own frame override from a
+   *  preview meant to show the rank's shared design — it must not also
+   *  swallow the one field on it that genuinely belongs to a card. So a
+   *  drag on the stand is carried back to whichever real card it stands
+   *  for, the same way the card editor's own drag reaches `draft`. */
+  $effect(() => {
+    const focal = frameSample.artFocal;
+    const key = frameSampleKey;
+    if (key.kind === "draft") {
+      if (draft.artFocal !== focal) draft.artFocal = focal;
+    } else if (key.kind === "card") {
+      const real = cards.find((c) => c.id === key.id);
+      if (real && real.artFocal !== focal) real.artFocal = focal;
+    }
   });
 
   /** The race dictionary's own sample, so the icon can be judged on a card
@@ -1188,6 +1236,13 @@
   /** Наряд этой карты принёс картинку рамы, но не принёс окна. */
   let draftDressBlind = $derived(
     dressWindowMissing(parseFrameOverride(draft.frameOverride)),
+  );
+
+  /** Готовая иллюстрация: фотография сидит на своей бумаге, а не в вырезе
+   *  резьбы, и потому вправе стать меньше окна — ползунок увеличения ниже
+   *  спрашивает именно эту раму, а не рамы вообще. */
+  let draftFreeform = $derived(
+    isFreeform(frameForCard(draft, frames, previewLevel)),
   );
 
 
@@ -1872,8 +1927,12 @@
       : 0,
   );
 
-  /** Пока непусто — сохранить нельзя, и сервер откажет тем же словом. */
+  /** Пока непусто — опубликовать нельзя, и сервер откажет тем же словом. */
   let blocking = $derived(weigh?.readiness.blocking ?? []);
+  /** Обязательные поля, которых нет. Пока непусто — не сохранить вовсе, даже
+   *  черновиком: что обязательно, называет сервер (`missing_fields`), и тем
+   *  же словом откажет кнопка. */
+  let missing = $derived(weigh?.readiness.missing ?? []);
 
   /**
    * Куда на листе показывает каждый отказ.
@@ -1886,8 +1945,14 @@
    * комнаты, и без неё жалоба внизу листа не помогает никому.
    */
   const FAULT_AT: Record<string, string> = {
-    noTitle: "fault-title",
-    noEffect: "fault-effect",
+    titleEn: "fault-title",
+    titleRu: "fault-title",
+    effectEn: "fault-effect",
+    effectRu: "fault-effect",
+    price: "fault-price",
+    traitName: "fault-traits",
+    traitText: "fault-traits",
+    abilityName: "fault-abilities",
     traitsWithoutAbilities: "fault-abilities",
     forbiddenShape: "fault-abilities",
     auraNeedsRider: "fault-abilities",
@@ -1895,41 +1960,75 @@
     costBeyondMana: "fault-cost",
     overTierBudget: "fault-body",
   };
-  let faults = $derived(new Set(blocking));
+  let faults = $derived(new Set([...missing, ...blocking]));
 
-  /** На каком языке пусто. Спрашивается ТОЛЬКО чтобы навести на нужную
-   *  сторону переключателя: отказал уже сервер, здесь выбирают, куда вести. */
-  function blankSide(field: "title" | "effect"): "en" | "ru" | null {
-    const en = ((field === "title" ? draft.titleEn : draft.effectEn) ?? "").trim();
-    const ru = ((field === "title" ? draft.titleRu : draft.effectRu) ?? "").trim();
-    // Сперва то, что перед глазами. Пусто здесь — вести некуда, поле уже под
-    // курсором; иначе на пустых обеих сторонах отказ говорил бы «заполнено, но
-    // пусто на другом языке», стоя над пустым полем.
-    if (!(editLang === "en" ? en : ru)) return null;
-    if (!en) return "en";
-    if (!ru) return "ru";
-    return null;
+  /** Чего нет у поля на двух языках — по словам сервера. */
+  const lacks = (field: "title" | "effect", side: "en" | "ru") =>
+    faults.has(`${field}${side === "en" ? "En" : "Ru"}`);
+
+  /** Пометка под полем: пусто здесь — или здесь заполнено, а пусто там. */
+  function lackNote(field: "title" | "effect"): string {
+    return lacks(field, editLang)
+      ? $t("adminBattlesFaultHere")
+      : $t("adminBattlesFaultOtherSide");
+  }
+
+  /** Метки EN / RU у подписи поля: что заполнено, видно сразу на обеих
+   *  сторонах. Это показ, а не правило — решает сервер. */
+  function langsOf(field: "title" | "effect") {
+    const en = (field === "title" ? draft.titleEn : draft.effectEn) ?? "";
+    const ru = (field === "title" ? draft.titleRu : draft.effectRu) ?? "";
+    return { en: !!en.trim(), ru: !!ru.trim(), current: editLang };
+  }
+
+  /** Начато на одном языке, а на другом пусто. */
+  const half = (a: string | null | undefined, b: string | null | undefined) =>
+    !(a ?? "").trim() !== !(b ?? "").trim();
+
+  /** На какой стороне пусто у черты или способности, начатой на одном
+   *  языке, — чтобы отвести к ней, а не к той, что уже заполнена. */
+  function halfSide(fault: string): "en" | "ru" | null {
+    const pairs: [string, string][] =
+      fault === "abilityName"
+        ? (draft.abilities ?? []).map((a) => [a.nameEn, a.nameRu])
+        : (draft.traits ?? [])
+            .filter((t) => t.nameEn.trim() || t.nameRu.trim())
+            .map((t) =>
+              fault === "traitName"
+                ? [t.nameEn, t.nameRu]
+                : [t.textEn, t.textRu],
+            );
+    const odd = pairs.find(([en, ru]) => half(en, ru));
+    if (!odd) return null;
+    return odd[0].trim() ? "ru" : "en";
   }
 
   /** Отвести к полю, на которое показывает отказ. Языковую сторону меняем до
    *  прокрутки: иначе хранитель приезжает к полю, которое уже заполнил. */
   function goToFault(fault: string) {
-    if (fault === "noTitle" || fault === "noEffect") {
-      const side = blankSide(fault === "noTitle" ? "title" : "effect");
+    if (/^(title|effect)(En|Ru)$/.test(fault)) {
+      editLang = fault.endsWith("En") ? "en" : "ru";
+    } else if (FAULT_AT[fault] === "fault-traits" || fault === "abilityName") {
+      const side = halfSide(fault);
       if (side) editLang = side;
     }
     const at = FAULT_AT[fault];
     if (!at) return;
     // Плавность — не украшение: `prefers-reduced-motion` в доме обязательство.
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    requestAnimationFrame(() => {
+    // `tick`, а не кадр анимации: курсор обязан стоять в поле той стороны
+    // раньше, чем хранитель начнёт печатать, а кадр в фоновой вкладке
+    // откладывается, и набранное уходило в поле, где курсор стоял прежде.
+    void tick().then(() => {
       const box = document.getElementById(at);
       if (!box) return;
+      box
+        .querySelector<HTMLElement>("input, textarea, select")
+        ?.focus({ preventScroll: true });
       box.scrollIntoView({
         block: "center",
         behavior: still ? "auto" : "smooth",
       });
-      box.querySelector<HTMLElement>("input, textarea, select")?.focus();
     });
   }
 
@@ -1964,6 +2063,23 @@
     $t(
       `adminBattlesFault${fault[0].toUpperCase()}${fault.slice(1)}` as TranslationKey,
     );
+  /** Слово недостающего поля — для списка у кнопки. */
+  const missingWord = (field: string) =>
+    $t(
+      `adminBattlesMissing${field[0].toUpperCase()}${field.slice(1)}` as TranslationKey,
+    );
+
+  /** Отказ сервера словами стола: `card:missing:titleRu` → «Название · RU».
+   *  Кнопка до отказа не допускает, но весы отвечают с задержкой, и нажатие
+   *  в эту четверть секунды не должно печатать код. */
+  function refusalWord(e: unknown): string {
+    const raw = String(e);
+    const lost = raw.match(/card:missing:(\w+)/);
+    if (lost) return `${$t("adminBattlesMissingLead")} ${missingWord(lost[1])}`;
+    const fault = raw.match(/card:(\w+)/);
+    return fault ? faultWord(fault[1]) : raw;
+  }
+
   let notes = $derived(weigh?.readiness.notes ?? []);
 
   /**
@@ -2025,7 +2141,7 @@
       openCard(saved);
       flash($t("adminBattlesSaved"));
     } catch (e) {
-      flash(String(e), 6000);
+      flash(refusalWord(e), 6000);
     } finally {
       saving = false;
     }
@@ -2186,6 +2302,14 @@
     }
   }
 
+  /** Полный ящик говорит словами до запроса: сервер откажет и сам, но его
+   *  отказ — английская строка ошибки, а не объяснение, что делать. */
+  function drawerFull(): boolean {
+    if (presets.length < PRESETS_MAX) return false;
+    flash($t("adminBattlesPresetFull").replace("{max}", String(PRESETS_MAX)), 6000);
+    return true;
+  }
+
   /** Fold the rank being edited into the drawer under a name of the keeper's
    *  own. A name already in the drawer is overwritten rather than doubled:
    *  two dresses called the same thing could not be told apart when the time
@@ -2197,6 +2321,7 @@
     const already = presets.find(
       (p) => p.name.toLowerCase() === name.toLowerCase(),
     );
+    if (!already && drawerFull()) return;
     const kept: BattleFramePreset = {
       id: already?.id ?? crypto.randomUUID(),
       name,
@@ -2239,6 +2364,7 @@
       tick().then(() => frameNameBox?.focus());
       return;
     }
+    if (drawerFull()) return;
     const kept: BattleFramePreset = {
       id: crypto.randomUUID(),
       name: uniquePresetName(seed),
@@ -3317,7 +3443,7 @@
                 <input
                   value={field.get()}
                   oninput={(e) => field.set(e.currentTarget.value)}
-                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
                 />
               </label>
             {/each}
@@ -3329,7 +3455,7 @@
               >
               <select
                 bind:value={etudeDepth}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
               >
                 {#each BOT_HANDS as hand (hand.depth)}
                   <option value={hand.depth}>{$t(hand.label)}</option>
@@ -3347,7 +3473,7 @@
                 min="0"
                 max="1000"
                 bind:value={etudeReward}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
               />
             </label>
 
@@ -3365,7 +3491,7 @@
                 min="0"
                 max="1000"
                 bind:value={etudeFinish}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
               />
             </label>
 
@@ -3376,7 +3502,7 @@
               >
               <select
                 bind:value={etudeSide}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
               >
                 <option value="scripted"
                   >{$t("adminBattlesEtudeSideScripted")}</option
@@ -3392,7 +3518,7 @@
               >
               <select
                 bind:value={etudeStatus}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
               >
                 <option value="draft">{$t("adminBattlesStatusDraft")}</option>
                 <option value="published"
@@ -3484,7 +3610,7 @@
                         value={etudeRules[dial.key]}
                         oninput={(e) =>
                           tune(dial.key, Number(e.currentTarget.value))}
-                        class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                        class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
                       />
                     </label>
                   {/if}
@@ -3609,7 +3735,7 @@
                     benchAddToHand(row.side, e.currentTarget.value);
                     e.currentTarget.value = "";
                   }}
-                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
                 >
                   <option value="">+</option>
                   {#each benchable as c (c.id)}
@@ -5022,7 +5148,9 @@
                     <p
                       class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
                     >
-                      {$t("adminBattlesAimHint")}
+                      {draftFreeform
+                        ? $t("adminBattlesAimHintFreeform")
+                        : $t("adminBattlesAimHint")}
                     </p>
                   </details>
                   <div class="grid grid-cols-3 gap-3">
@@ -5069,7 +5197,7 @@
                       >
                       <input
                         type="range"
-                        min="1"
+                        min={draftFreeform ? FOCAL_ZOOM_MIN : 1}
                         max="3"
                         step="0.05"
                         value={focal.zoom}
@@ -5093,17 +5221,20 @@
                 wide
                 title={$t("adminBattlesSheetPrint")}
                 lead={$t("adminBattlesSheetPrintLead")}
-                fault={faults.has("noTitle") || faults.has("noEffect")}
+                fault={["titleEn", "titleRu", "effectEn", "effectRu"].some((f) =>
+                  faults.has(f),
+                )}
               >
                 <div class="grid grid-cols-2 gap-3">
                   <SheetField
                     label={$t("adminBattlesTitle")}
                     wide
+                    required
+                    langs={langsOf("title")}
+                    onlang={(side) => (editLang = side)}
                     anchor="fault-title"
-                    fault={faults.has("noTitle")}
-                    faultNote={blankSide("title")
-                      ? $t("adminBattlesFaultOtherSide")
-                      : $t("adminBattlesFaultHere")}
+                    fault={lacks("title", "en") || lacks("title", "ru")}
+                    faultNote={lackNote("title")}
                   >
                     <input
                       maxlength="80"
@@ -5146,11 +5277,12 @@
                   <SheetField
                     label={$t("adminBattlesEffect")}
                     wide
+                    required
+                    langs={langsOf("effect")}
+                    onlang={(side) => (editLang = side)}
                     anchor="fault-effect"
-                    fault={faults.has("noEffect")}
-                    faultNote={blankSide("effect")
-                      ? $t("adminBattlesFaultOtherSide")
-                      : $t("adminBattlesFaultHere")}
+                    fault={lacks("effect", "en") || lacks("effect", "ru")}
+                    faultNote={lackNote("effect")}
                   >
                     <textarea
                       maxlength="400"
@@ -5187,7 +5319,10 @@
 
               <SheetPanel
                 title={$t("adminBattlesTraits")}
-                fault={faults.has("traitsWithoutAbilities")}
+                anchor="fault-traits"
+                fault={faults.has("traitsWithoutAbilities") ||
+                  faults.has("traitName") ||
+                  faults.has("traitText")}
               >
                 {#if !(draft.traits ?? []).length}
                   <p class="mb-2 text-[11px] italic text-[#8a6a55]">
@@ -5202,6 +5337,8 @@
                       <div class="flex-1 min-w-0 space-y-1.5">
                         <input
                           maxlength="60"
+                          aria-invalid={half(trait.nameEn, trait.nameRu) &&
+                            !(editLang === "en" ? trait.nameEn : trait.nameRu).trim()}
                           placeholder={$t("adminBattlesTraitName")}
                           value={editLang === "en" ? trait.nameEn : trait.nameRu}
                           oninput={(e) => {
@@ -5209,10 +5346,13 @@
                               trait.nameEn = e.currentTarget.value;
                             else trait.nameRu = e.currentTarget.value;
                           }}
-                          class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                          class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
                         />
                         <input
                           maxlength="200"
+                          aria-invalid={!!(trait.nameEn.trim() || trait.nameRu.trim()) &&
+                            half(trait.textEn, trait.textRu) &&
+                            !(editLang === "en" ? trait.textEn : trait.textRu).trim()}
                           placeholder={$t("adminBattlesTraitText")}
                           value={editLang === "en" ? trait.textEn : trait.textRu}
                           oninput={(e) => {
@@ -5220,7 +5360,7 @@
                               trait.textEn = e.currentTarget.value;
                             else trait.textRu = e.currentTarget.value;
                           }}
-                          class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                          class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
                         />
                       </div>
                       <div class="flex flex-col gap-0.5 flex-shrink-0">
@@ -5490,7 +5630,8 @@
                 anchor="fault-abilities"
                 title={$t("adminBattlesAbilities")}
                 note={$t("adminBattlesAbilitiesHint")}
-                fault={faults.has("traitsWithoutAbilities")}
+                fault={faults.has("traitsWithoutAbilities") ||
+                  faults.has("abilityName")}
               >
                 {#snippet aside()}
                   {#if weigh}
@@ -5530,9 +5671,18 @@
                 title={$t("adminBattlesSheetPrice")}
                 lead={$t("adminBattlesSheetPriceLead")}
                 note={$t("adminBattlesPriceHint")}
+                anchor="fault-price"
+                fault={faults.has("price")}
               >
+                <!-- Обязательна цена хотя бы в одной монете, а не обе: пусто
+                     значит «за эту монету не продаётся», и это законно. Поэтому
+                     звёздочка стоит у обеих, а пояснение одно, под ними. -->
                 <div class="grid grid-cols-2 gap-3">
-                  <SheetField label={$t("adminBattlesPriceDust")}>
+                  <SheetField
+                    label={$t("adminBattlesPriceDust")}
+                    required
+                    fault={faults.has("price")}
+                  >
                     <input
                       type="number"
                       min="0"
@@ -5543,7 +5693,11 @@
                       onwheel={blurOnWheel}
                     />
                   </SheetField>
-                  <SheetField label={$t("adminBattlesPriceFeed")}>
+                  <SheetField
+                    label={$t("adminBattlesPriceFeed")}
+                    required
+                    fault={faults.has("price")}
+                  >
                     <input
                       type="number"
                       min="0"
@@ -5555,6 +5709,14 @@
                     />
                   </SheetField>
                 </div>
+                <p
+                  class="mt-1.5 text-[10px] leading-snug italic {faults.has('price')
+                    ? 'text-[#8f2f22]'
+                    : 'text-[#8a6a55]'}"
+                >
+                  <span class="not-italic text-[#c65f3c]">*</span>
+                  {$t("adminBattlesRequiredOneOf")}
+                </p>
 
                 <!-- Лестница уровней. Заводится сейчас, поднимаются по ней в 1c. -->
                 <details class="mt-4 mb-2">
@@ -5793,7 +5955,10 @@
           >
             <button
               onclick={save}
-              disabled={saving || blocking.length > 0 || workTaken}
+              disabled={saving ||
+                missing.length > 0 ||
+                blocking.length > 0 ||
+                workTaken}
               class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
               >{$t("adminBattlesSave")}</button
             >
@@ -5810,7 +5975,31 @@
                  имени руками, и на другом языке, о котором в этот миг никто не
                  думает. Теперь она ведёт к полю, по дороге переключая язык на
                  ту сторону, где пусто. -->
-            <div class="min-w-0 space-y-0.5">
+            <div class="min-w-0 flex-1 space-y-1">
+              <!-- Недостающее — первым и строкой меток: это не объяснение, а
+                   перечень, и каждая метка ведёт к своему полю на своём
+                   языке. Длинные слова годности ниже — про публикацию. -->
+              {#if missing.length}
+                <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span
+                    class="text-[10px] uppercase tracking-[0.14em] text-[#8f2f22]"
+                    >{$t("adminBattlesMissingLead")}</span
+                  >
+                  {#each missing as field (field)}
+                    <button
+                      type="button"
+                      onclick={() => goToFault(field)}
+                      class="px-1.5 py-0.5 text-[11px] leading-none border border-[#8f2f22]/40 text-[#8f2f22] hover:bg-[#8f2f22]/8"
+                      >{missingWord(field)}</button
+                    >
+                  {/each}
+                </div>
+              {/if}
+              {#if blocking.length}
+                <p class="text-[10px] uppercase tracking-[0.14em] text-[#8f2f22]">
+                  {$t("adminBattlesPublishLead")}
+                </p>
+              {/if}
               {#each blocking as fault (fault)}
                 <button
                   type="button"
@@ -5833,6 +6022,10 @@
                 </p>
               {/each}
             </div>
+            <span
+              class="ml-auto flex-shrink-0 text-[10px] uppercase tracking-[0.14em] text-[#8a6a55]"
+              ><span class="text-[#c65f3c]">*</span> {$t("adminBattlesRequiredLegend")}</span
+            >
           </div>
         </div>
       </div>

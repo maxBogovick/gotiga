@@ -31,6 +31,7 @@ fn test_config() -> Config {
         telegram_login_bot_token: None,
         telegram_login_bot_username: None,
         telegram_webhook_secret: None,
+        telegram_channel_id: None,
         telegram_chat_id: None,
         smtp_host: None,
         smtp_port: None,

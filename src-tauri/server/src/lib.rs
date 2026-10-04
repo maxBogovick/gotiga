@@ -21,4 +21,5 @@ pub mod services;
 pub mod sheet;
 pub mod slug;
 pub mod studio;
+pub mod tales;
 pub mod telegram;

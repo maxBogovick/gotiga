@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Запускалка cutout: при первом запуске (и после правки requirements.txt)
+# сама заводит окружение в tools/cutout/.venv и ставит зависимости.
+# Работает и через символическую ссылку (например, ~/.local/bin/cutout).
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
+done
+DIR="$(cd "$(dirname "$SELF")" && pwd)"
+VENV="$DIR/.venv"
+REQ="$DIR/requirements.txt"
+STAMP="$VENV/.requirements.sha"
+
+pick_python() {
+  for py in python3.13 python3.12 python3.14 python3.11 python3.10 python3; do
+    if command -v "$py" >/dev/null 2>&1 &&
+       "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+      command -v "$py"; return 0
+    fi
+  done
+  return 1
+}
+
+# Запуск со значка (AppleScript) идёт с урезанным PATH — Homebrew и Python
+# с python.org там не видны.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+for fw in /Library/Frameworks/Python.framework/Versions/3.*/bin; do
+  [ -d "$fw" ] && PATH="$PATH:$fw"
+done
+
+say() {  # в терминале — строкой, со значка — уведомлением macOS
+  if [ -t 2 ]; then echo "$1" >&2
+  else osascript -e "display notification \"$1\" with title \"Вырезать фигурки\"" >/dev/null 2>&1 || true; fi
+}
+
+want="$(shasum -a 256 "$REQ" | cut -d' ' -f1)"
+have="$(cat "$STAMP" 2>/dev/null || true)"
+
+if [ ! -x "$VENV/bin/python" ] || [ "$want" != "$have" ]; then
+  if [ ! -x "$VENV/bin/python" ]; then
+    PY="$(pick_python)" || {
+      say "Нужен Python 3.10 или новее. Поставьте: brew install python"
+      exit 1
+    }
+    say "Первый запуск: устанавливаю нужное, это минута-две…"
+    "$PY" -m venv "$VENV"
+  else
+    say "Обновились зависимости — доставляю…"
+  fi
+  "$VENV/bin/python" -m pip install --quiet --disable-pip-version-check --upgrade pip >&2
+  "$VENV/bin/python" -m pip install --quiet --disable-pip-version-check -r "$REQ" >&2
+  echo "$want" > "$STAMP"
+  [ -t 2 ] && echo "Готово." >&2
+fi
+
+exec "$VENV/bin/python" "$DIR/cutout.py" "$@"

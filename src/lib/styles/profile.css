@@ -1,0 +1,205 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Профиль — общие примитивы
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Эти классы читают шесть маршрутов профиля (`/profile`, `/profile/dealings`,
+   `…/messages`, `…/wishlist`, `…/watches`, `…/account`) и шапка их листа. Лежат
+   они здесь, а не в <style> каждого маршрута, по той же причине, по которой
+   стрельчатая арка объявлена один раз: форма у них одна, а мест шесть.
+
+   Цвета берутся ТОЛЬКО переменными. Хекс в <style> мимо темы не проходит:
+   `generateHexBridgeCSS` переписывает лишь Tailwind-классы вида `.text-[#…]`,
+   поэтому прежний профиль с его 48 вхождениями `#c65f3c` не менялся, когда
+   автор менял палитру в админке.
+
+   Каждая краска мелкого текста измерена на бумаге (`--color-canvas-base`,
+   #FAF6EE): ink-tertiary 6.44:1, ink-secondary 10.0:1, ember 4.80:1 — все выше
+   порога WCAG AA 4.5:1. Прежние #9a7c5c (3.46:1), #a8916f (2.70:1) и #b5a090
+   (2.23:1) его не брали. `--color-ink-disabled` (2.23:1) остаётся только там,
+   где он ничего не сообщает: линейки и разделительные точки.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pf-page {
+  --pf-rule: color-mix(in srgb, var(--color-ink-primary) 12%, transparent);
+  --pf-rule-soft: color-mix(in srgb, var(--color-ink-primary) 7%, transparent);
+  min-height: 100vh;
+  background: var(--color-canvas-base);
+  color: var(--color-ink-primary);
+  font-family: var(--font-serif);
+}
+
+.pf-body {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 2.25rem 2rem 3.5rem;
+}
+
+@media (max-width: 680px) {
+  .pf-body { padding: 1.5rem 1.1rem 2.5rem; }
+}
+
+/* ── Слова ──────────────────────────────────────────────────────────────── */
+
+.pf-h2 {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--color-ink-primary);
+  margin: 0;
+}
+
+/* Надзаголовок раздела: капс, но не мельче 0.74rem и не светлее ink-tertiary. */
+.pf-kicker {
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-ink-tertiary);
+}
+
+.pf-note {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--color-ink-secondary);
+  margin: 0;
+}
+
+.pf-quiet {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  color: var(--color-ink-tertiary);
+}
+
+.pf-empty {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  color: var(--color-ink-tertiary);
+  padding: 2.5rem 0;
+  margin: 0;
+}
+
+.pf-error {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  color: var(--color-ember-deep);
+  margin: 0.4rem 0 0;
+}
+
+.pf-said {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  color: var(--color-sage-ink);
+  margin: 0.4rem 0 0;
+}
+
+/* ── Кнопки и ссылки ────────────────────────────────────────────────────── */
+
+.pf-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  color: var(--color-ember);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.pf-link:hover { color: var(--color-ember-deep); text-decoration: underline; }
+.pf-link--danger { color: var(--color-ink-tertiary); }
+.pf-link--danger:hover { color: var(--color-ember-deep); }
+
+.pf-btn {
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-ember-deep);
+  background: transparent;
+  border: 1px solid var(--color-border-ember);
+  border-radius: 2px;
+  padding: 0.42rem 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.pf-btn:hover:not(:disabled) {
+  background: var(--color-ember-subtle);
+  border-color: var(--color-ember);
+}
+.pf-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* Возврат на уровень выше. Настоящая ссылка, а не кнопка: у уровня есть адрес. */
+.pf-crumb {
+  display: inline-block;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-tertiary);
+  text-decoration: none;
+  margin-bottom: 1.1rem;
+  transition: color 0.15s;
+}
+.pf-crumb:hover { color: var(--color-ember-deep); }
+
+/* ── Числа ──────────────────────────────────────────────────────────────── */
+
+.pf-count {
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-tertiary);
+}
+
+/* Непрочитанное — единственное число, которое красится: оно значит «от вас
+   ждут ответа», а не «здесь столько-то строк». */
+.pf-count--new {
+  background: var(--color-ember);
+  color: var(--color-canvas-raised);
+  border-radius: 999px;
+  padding: 0.05em 0.5em;
+  font-weight: 500;
+}
+
+/* ── Тона состояний ─────────────────────────────────────────────────────── */
+
+.pf-tone {
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+}
+.pf-tone--pending   { color: var(--color-ochre-deep); }
+.pf-tone--confirmed { color: var(--color-sage-ink); }
+.pf-tone--rejected  { color: var(--color-ink-tertiary); }
+.pf-tone--neutral   { color: var(--color-ink-tertiary); }
+.pf-tone--attention { color: var(--color-ember-deep); }
+
+/* ── Линейки и ряды ─────────────────────────────────────────────────────── */
+
+.pf-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--pf-rule);
+}
+
+.pf-row {
+  border-bottom: 1px solid var(--pf-rule-soft);
+}
+
+.pf-panel {
+  background: var(--color-canvas-raised);
+  border: 1px solid var(--pf-rule);
+  padding: 1.1rem 1.2rem;
+}
+
+.pf-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

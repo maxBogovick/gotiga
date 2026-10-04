@@ -139,6 +139,11 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/tales/:id/vote", post(handlers::set_tale_vote))
             .route("/tales/:id/view", post(handlers::record_tale_view))
             .route("/tales/:id/stats", get(handlers::get_tale_stats))
+            // === БАЙКИ: ПОСЛЕ ПОСЛЕДНЕЙ СТРОКИ ===
+            .route("/tales/:id/sequel", post(handlers::set_tale_sequel_wish))
+            .route("/tales/doors", get(handlers::get_tale_doors))
+            .route("/tales/poll", get(handlers::get_tale_poll))
+            .route("/tales/poll/:id/vote", post(handlers::vote_tale_poll))
             .route("/booking-rules", get(handlers::get_booking_rules))
             .route("/settings/contact", get(handlers::get_contact_settings))
             .route("/settings/programme", get(handlers::get_programme_settings))
@@ -504,6 +509,46 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     config.clone(),
                     auth_middleware,
                 )),
+            )
+            // === БАЙКИ: ГОЛОСОВАНИЕ И ПРОДОЛЖЕНИЕ (СТОЛ РАССКАЗОВ) ===
+            .route(
+                "/admin/tales/polls",
+                get(handlers::admin_tale_polls)
+                    .post(handlers::admin_open_tale_poll)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/tales/polls/:id",
+                delete(handlers::admin_delete_tale_poll).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/tales/polls/:id/close",
+                post(handlers::admin_close_tale_poll).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/tales/:id/sequel",
+                post(handlers::admin_set_tale_sequel).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/tales/:id/waiting",
+                get(handlers::admin_sequel_wishes).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/tales/:id/letters",
+                get(handlers::admin_tale_letters_forecast).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
             )
             // === IMPRESSIONS (ADMIN) ===
             .route(
@@ -1652,6 +1697,20 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .layer(middleware::from_fn(public_cache_middleware))
             .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT));
 
+    // Доиграть вход за Telegram на своей машине. Бот входа один, webhook у
+    // него один, и принадлежит он рабочему серверу — сюда Telegram не
+    // достучится никогда (§ 16.2). Маршрута снаружи локальной машины не
+    // существует: не «есть, но отказывает», а нет вовсе, как и у webhook с
+    // неверным секретом.
+    let api = if config.public_url_is_local() {
+        api.route(
+            "/auth/telegram/local/:code",
+            get(handlers::telegram_play_locally),
+        )
+    } else {
+        api
+    };
+
     // Serve only known media subdirectories — never the whole UPLOAD_DIR (which can
     // contain *.db dumps, temp files, etc.). Each subdir is mounted explicitly.
     let upload_dir = std::path::Path::new(&config.upload_dir);
@@ -1661,7 +1720,9 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         // Live RSS feed of new works — connected to Pinterest's "Подключить RSS-канал".
         .route("/feed.xml", get(handlers::feed_rss))
         // Live RSS of gazette leaves — separate from the Pinterest works channel.
-        .route("/gazette/feed.xml", get(handlers::gazette_feed_rss));
+        .route("/gazette/feed.xml", get(handlers::gazette_feed_rss))
+        // Живая лента небылиц — для своей доски в Pinterest.
+        .route("/tales/feed.xml", get(handlers::tales_feed_rss));
     for subdir in [
         "images",
         "videos",

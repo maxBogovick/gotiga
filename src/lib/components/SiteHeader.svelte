@@ -13,6 +13,7 @@
   import NeighborPlate from '$lib/components/NeighborPlate.svelte';
   import { afterLoadIdle } from '$lib/after-load-idle';
   import { keeper } from '$lib/stores/keeper.svelte';
+  import { userDesk } from '$lib/stores/user-desk.svelte';
   import { ARCHIVE_KEEPER_INPUT_ID } from '$lib/keeper-search';
   import type { AuthorProfile, Figurine, FigurineListItem } from '$lib/types/api';
 
@@ -142,16 +143,46 @@
 
   let count = $derived(allClaims.pendingCount);
 
+  // ── Меню вошедшего ──────────────────────────────────────────────────────
+  //
+  // Прежде в нём стояло два пункта — «Профиль →» и «Выйти», — то есть нажатие
+  // покупало один переход, который аватар мог дать сам (на телефоне он так и
+  // делает: один элемент, два разных поведения). Теперь меню называет разделы
+  // с их числами и работает с любой страницы, минуя первый экран профиля, —
+  // ради этого его и открывают.
   let userMenuOpen = $state(false);
   let userMenuRef = $state<HTMLElement | null>(null);
+  let userMenuBtn = $state<HTMLButtonElement | null>(null);
 
-  function toggleUserMenu() { userMenuOpen = !userMenuOpen; keeper.closePanel(); }
+  function closeUserMenu(refocus = false) {
+    if (!userMenuOpen) return;
+    userMenuOpen = false;
+    if (refocus) userMenuBtn?.focus();
+  }
+
+  function toggleUserMenu() {
+    userMenuOpen = !userMenuOpen;
+    keeper.closePanel();
+    // Числа разделов набираются в миг открытия и остаются набранными: тот же
+    // стол потом читает и сам профиль, поэтому это не лишний запрос, а
+    // заблаговременный.
+    if (userMenuOpen) void userDesk.load();
+  }
 
   function handleUserOutside(e: MouseEvent) {
     if (userMenuOpen && userMenuRef && !userMenuRef.contains(e.target as Node)) {
       userMenuOpen = false;
     }
   }
+
+  // Разделы меню. Числа берутся из того же стола, что и рейка профиля: два
+  // счётчика одного однажды разошлись бы.
+  let userMenuRooms = $derived([
+    { href: '/profile/dealings', label: $t('profileHubDealings'), count: userDesk.counts.deals, unread: 0 },
+    { href: '/profile/messages', label: $t('profileMessages'), count: userDesk.counts.threads, unread: userDesk.counts.unread },
+    { href: '/profile/wishlist', label: $t('profileWishlist'), count: userDesk.counts.wishlist, unread: 0 },
+    { href: '/profile/watches', label: $t('profileWatches'), count: userDesk.counts.watches, unread: 0 },
+  ]);
 
   // "Write to the author" panel — a quill icon always in reach, so the
   // lightweight contact form (see ContactMessageForm) is one click away
@@ -230,6 +261,12 @@
   }
 
   function handleKeeperKey(e: KeyboardEvent) {
+    if (e.key === 'Escape' && userMenuOpen) {
+      // Фокус возвращается на кнопку: меню открыли с клавиатуры — с неё же и
+      // продолжают. Прежде Escape меню не закрывал вовсе.
+      closeUserMenu(true);
+      return;
+    }
     if (e.key === 'Escape' && keeper.panelOpen) {
       keeper.closePanel();
       return;
@@ -264,6 +301,7 @@
     if (token) {
       try { await api.userLogout(token); } catch { /* ok */ }
     }
+    userDesk.reset();
     authStore.logout();
     goto('/');
   }
@@ -299,6 +337,10 @@
     if (authStore.token) {
       savedFigurines.load();
       savedFigurines.syncWithServer({ importLocal: false });
+      // Одно число, ради которого над аватаром и стоит точка: ответ мастерской
+      // прежде был виден только тому, кто сам зашёл в профиль и прокликал два
+      // уровня.
+      void userDesk.refreshUnread();
     }
   });
 
@@ -561,7 +603,7 @@
             {/if}
 
             <div class="panel-footer">
-              <a href={authStore.isLoggedIn ? '/profile' : '/bookings'} class="panel-view-all" onclick={closePanel}>
+              <a href={authStore.isLoggedIn ? '/profile/dealings' : '/bookings'} class="panel-view-all" onclick={closePanel}>
                 {$t('bookingsViewAll')} →
               </a>
             </div>
@@ -572,18 +614,30 @@
 
       <div class="user-anchor" bind:this={userMenuRef}>
         <button
+          bind:this={userMenuBtn}
           class="user-btn"
           class:logged-in={authStore.isLoggedIn}
           class:is-open={userMenuOpen}
           onclick={authStore.isLoggedIn ? toggleUserMenu : () => goto('/login')}
-          aria-label={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
+          aria-label={authStore.isLoggedIn
+            ? (userDesk.counts.unread > 0
+                ? `${authStore.user?.displayName} — ${$t('profileLatestNewReplies')}`
+                : authStore.user?.displayName)
+            : $t('authLogin')}
           title={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
+          aria-haspopup={authStore.isLoggedIn ? 'menu' : undefined}
+          aria-expanded={authStore.isLoggedIn ? userMenuOpen : undefined}
         >
           {#if authStore.isLoggedIn}
             {#if avatarUrl}
               <img src={avatarUrl} alt="" class="user-avatar" />
             {:else}
               <span class="user-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+            {/if}
+            {#if userDesk.counts.unread > 0}
+              <!-- Точка, а не число: в 28 px число нечитаемо, а вопрос у точки
+                   один — «есть ли что-то новое». Сколько именно, говорит меню. -->
+              <span class="user-dot" aria-hidden="true"></span>
             {/if}
           {:else}
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -595,19 +649,35 @@
 
         {#if userMenuOpen && authStore.isLoggedIn}
           <div class="user-panel" transition:fade={{ duration: 150 }}>
-            <div class="user-panel-head">
+            <a href="/profile" class="user-panel-head" onclick={() => closeUserMenu()}>
               {#if avatarUrl}
                 <img src={avatarUrl} alt="" class="user-panel-avatar" />
               {:else}
                 <span class="user-panel-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
               {/if}
-              <div class="user-panel-info">
+              <span class="user-panel-info">
                 <span class="user-panel-name">{authStore.user?.displayName}</span>
                 <span class="user-panel-email">{authStore.handle}</span>
-              </div>
-            </div>
-            <a href="/profile" class="user-panel-link" onclick={() => userMenuOpen = false}>
-              {$t('profileTitle')} →
+              </span>
+            </a>
+
+            <ul class="user-rooms">
+              {#each userMenuRooms as room (room.href)}
+                <li>
+                  <a href={room.href} class="user-room" onclick={() => closeUserMenu()}>
+                    <span class="user-room-name">{room.label}</span>
+                    {#if room.unread > 0}
+                      <span class="user-room-new">{room.unread}</span>
+                    {:else if room.count > 0}
+                      <span class="user-room-count">{room.count}</span>
+                    {/if}
+                  </a>
+                </li>
+              {/each}
+            </ul>
+
+            <a href="/profile/account" class="user-panel-link" onclick={() => closeUserMenu()}>
+              {$t('profileTabAccount')}
             </a>
             <button class="user-panel-logout" onclick={handleLogout}>
               {$t('profileLogout')}
@@ -655,13 +725,20 @@
       <button
         class="mobile-user-btn"
         onclick={authStore.isLoggedIn ? () => { closeMobileNav(); goto('/profile'); } : () => goto('/login')}
-        aria-label={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
+        aria-label={authStore.isLoggedIn
+          ? (userDesk.counts.unread > 0
+              ? `${authStore.user?.displayName} — ${$t('profileLatestNewReplies')}`
+              : authStore.user?.displayName)
+          : $t('authLogin')}
       >
         {#if authStore.isLoggedIn}
           {#if avatarUrl}
             <img src={avatarUrl} alt="" class="user-avatar" />
           {:else}
             <span class="user-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
+          {/if}
+          {#if userDesk.counts.unread > 0}
+            <span class="user-dot" aria-hidden="true"></span>
           {/if}
         {:else}
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -1016,13 +1093,23 @@
 
   /* .ghost-left itself stays at full opacity now that it carries the maker
      avatar — that must never look grey/dimmed. .ghost-right (bookings/account
-     icons) stays muted until hovered. */
-  .ghost-right {
+     icons) stays muted until hovered.
+
+     Приглушается ровно КНОПКА, а не `.ghost-right` целиком: прозрачность на
+     предке склеивает всё его поддерево в один слой, и выпадающие панели
+     (брони, меню вошедшего) рисовались сквозь себя — сквозь меню читался
+     заголовок страницы, какой бы непрозрачной ни была его собственная
+     бумага. То же правило уже стояло у `.over-plate` ниже; здесь его не
+     было. */
+  .ghost-right .bookings-btn,
+  .ghost-right .user-btn {
     opacity: 0.42;
     transition: opacity 0.3s ease;
   }
-  .ghost-right:hover,
-  .ghost-right:focus-within {
+  .ghost-right:hover .bookings-btn,
+  .ghost-right:hover .user-btn,
+  .ghost-right:focus-within .bookings-btn,
+  .ghost-right:focus-within .user-btn {
     opacity: 0.78;
   }
 
@@ -1136,10 +1223,21 @@
   }
 
   /* bookings & user sit at normal opacity inside ghost-right
-     when they have active state */
-  .ghost-right:has(.bookings-btn.has-claims),
-  .ghost-right:has(.user-btn.logged-in) {
+     when they have active state. Красится сама кнопка — по той же причине,
+     по которой выше: прозрачность на `.ghost-right` уносила с собой и
+     выпадающую панель. Вошедший — обычное положение дел, поэтому именно это
+     правило и делало меню вошедшего полупрозрачным всегда. */
+  .ghost-right .bookings-btn.has-claims,
+  .ghost-right .user-btn.logged-in {
     opacity: 0.68;
+  }
+  /* Наведение всё равно доводит до 0.78: без этой строки правило выше, стоя
+     позже при той же силе, било бы ховер у вошедшего. */
+  .ghost-right:hover .bookings-btn.has-claims,
+  .ghost-right:hover .user-btn.logged-in,
+  .ghost-right:focus-within .bookings-btn.has-claims,
+  .ghost-right:focus-within .user-btn.logged-in {
+    opacity: 0.78;
   }
 
   /* ── Nav sides ────────────────────────────────────────────── */
@@ -1762,6 +1860,7 @@
   .user-anchor { position: relative; }
 
   .user-btn {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1797,6 +1896,17 @@
     display: block;
   }
 
+  .user-dot {
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-ember);
+    box-shadow: 0 0 0 1.5px var(--color-canvas-base);
+  }
+
   .user-initial {
     font-family: 'Fraunces', Georgia, serif;
     font-size: 12px;
@@ -1804,26 +1914,36 @@
     line-height: 1;
   }
 
+  /* ── Меню вошедшего ──────────────────────────────────────────────────
+     Краски — только переменными. Хекс в <style> мимо темы не проходит
+     (`generateHexBridgeCSS` переписывает лишь Tailwind-классы), поэтому
+     прежняя панель на #f2e8d9 / #c65f3c не менялась, когда автор менял
+     палитру в админке. Измерено на её бумаге: прежние «ПРОФИЛЬ →» давали
+     3.51:1, «ВЫЙТИ» — 2.33:1, почта — 2.57:1 при пороге AA 4.5:1. Теперь
+     ink-secondary 8.9:1, ink-tertiary 5.7:1 и ember-deep 5.5:1. */
   .user-panel {
     position: absolute;
     top: calc(100% + 10px);
     right: 0;
-    width: 220px;
-    background: #f2e8d9;
-    border: 1px solid #d8c6b1;
-    box-shadow: 0 8px 32px rgba(52, 37, 28, 0.12);
+    width: 244px;
+    background: var(--color-canvas-sunken);
+    border: 1px solid var(--color-border-default);
+    box-shadow: var(--shadow-md);
     z-index: 300;
-    font-family: Georgia, serif;
-    color: #34251c;
+    font-family: var(--font-serif);
+    color: var(--color-ink-primary);
   }
 
   .user-panel-head {
-    padding: 12px 14px 10px;
-    border-bottom: 1px solid rgba(52, 37, 28, 0.08);
     display: flex;
     align-items: center;
     gap: 10px;
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--color-border-subtle);
+    text-decoration: none;
+    transition: background 0.15s;
   }
+  .user-panel-head:hover { background: var(--color-canvas-raised); }
 
   .user-panel-avatar {
     width: 36px;
@@ -1831,22 +1951,22 @@
     border-radius: 50%;
     object-fit: cover;
     flex-shrink: 0;
-    border: 1px solid rgba(52, 37, 28, 0.10);
+    border: 1px solid var(--color-border-subtle);
   }
 
   .user-panel-initial {
     width: 36px;
     height: 36px;
     border-radius: 50%;
-    background: #efe6d6;
-    border: 1px solid rgba(52, 37, 28, 0.10);
+    background: var(--color-canvas-raised);
+    border: 1px solid var(--color-border-subtle);
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-family: 'Fraunces', Georgia, serif;
+    font-family: var(--font-display);
     font-size: 1rem;
-    color: #9a7c5c;
+    color: var(--color-ink-tertiary);
   }
 
   .user-panel-info {
@@ -1857,51 +1977,96 @@
   }
 
   .user-panel-name {
-    font-family: 'Fraunces', Georgia, serif;
-    font-size: 0.85rem;
-    color: #34251c;
+    font-family: var(--font-display);
+    font-size: 0.88rem;
+    color: var(--color-ink-primary);
     line-height: 1.2;
   }
 
   .user-panel-email {
-    font-family: 'Instrument Sans', sans-serif;
-    font-size: 0.7rem;
-    color: rgba(95, 70, 54, 0.55);
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    color: var(--color-ink-tertiary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  .user-rooms {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .user-room {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 14px;
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    color: var(--color-ink-secondary);
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .user-room:hover {
+    background: var(--color-canvas-raised);
+    color: var(--color-ember-deep);
+  }
+
+  .user-room-name { white-space: nowrap; }
+
+  .user-room-count {
+    font-size: 0.74rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-tertiary);
+  }
+
+  .user-room-new {
+    font-family: var(--font-body);
+    font-size: 0.7rem;
+    font-weight: 500;
+    line-height: 1;
+    background: var(--color-ember);
+    color: var(--color-canvas-raised);
+    border-radius: 999px;
+    padding: 3px 7px;
+  }
+
   .user-panel-link {
     display: block;
-    padding: 10px 14px;
-    font-family: 'Instrument Sans', sans-serif;
-    font-size: 0.78rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: rgba(95, 70, 54, 0.7);
+    padding: 9px 14px;
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    color: var(--color-ink-secondary);
     text-decoration: none;
-    border-bottom: 1px solid rgba(52, 37, 28, 0.06);
-    transition: color 0.2s;
+    border-bottom: 1px solid var(--color-border-subtle);
+    transition: background 0.15s, color 0.15s;
   }
-  .user-panel-link:hover { color: #c65f3c; }
+  .user-panel-link:hover {
+    background: var(--color-canvas-raised);
+    color: var(--color-ember-deep);
+  }
 
   .user-panel-logout {
     display: block;
     width: 100%;
-    padding: 10px 14px;
+    padding: 9px 14px;
     background: none;
     border: none;
     text-align: left;
-    font-family: 'Instrument Sans', sans-serif;
-    font-size: 0.78rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: rgba(95, 70, 54, 0.5);
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    color: var(--color-ink-tertiary);
     cursor: pointer;
-    transition: color 0.2s;
+    transition: background 0.15s, color 0.15s;
   }
-  .user-panel-logout:hover { color: #c65f3c; }
+  .user-panel-logout:hover {
+    background: var(--color-canvas-raised);
+    color: var(--color-ember-deep);
+  }
 
   /* ── Mobile breakpoint ───────────────────────────────────────
      The desktop layout is a wide 5-column "proscenium" (avatar + 2 switchers |
@@ -2105,6 +2270,7 @@
     }
 
     .mobile-user-btn {
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: center;

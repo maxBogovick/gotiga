@@ -1011,6 +1011,14 @@ export interface UserDto {
 export interface TelegramLoginConfig {
     enabled: boolean;
     botUsername: string | null;
+    /**
+     * Стенд на своей машине. Telegram сюда не достучится никогда — webhook
+     * принадлежит рабочему серверу, — поэтому дверь доигрывает сам сервер, и
+     * страница обязана предложить именно её. Иначе она показывает кнопку в
+     * Telegram, за которой бот отвечает «слово остыло»: тупик, о котором она
+     * молчит.
+     */
+    local: boolean;
 }
 
 /** Слово для сверки и ссылка на бота. */
@@ -1308,6 +1316,16 @@ export interface TaleStats {
     dislikes?: number;
     comments: number;
     myVote?: TaleVote;
+    /** Просил ли этот читатель продолжение. */
+    wantsSequel?: boolean;
+    /** Ждёт ли его просьба письма. */
+    sequelLetter?: boolean;
+    /** Ждёт ли его просьба записки в Telegram. */
+    sequelTelegram?: boolean;
+    /** Вышедшее продолжение этой байки. */
+    sequel?: GazetteNeighbor | null;
+    /** Начало, которое эта байка продолжает. */
+    sequelOf?: GazetteNeighbor | null;
 }
 
 /** Строка свода стола рассказов. */
@@ -1318,6 +1336,118 @@ export interface AdminTaleStat {
     dislikes: number;
     comments: number;
     pendingComments: number;
+    /** Какую байку продолжает эта. */
+    sequelOf: string | null;
+    /** Сколько читателей просили продолжение и сколько из них ждут письма. */
+    sequelWishes: number;
+    sequelLetters: number;
+}
+
+/** Что уйдёт людям, если выложить байку сейчас. */
+export interface TaleLettersForecast {
+    /** Письма по этой байке уже разложены — второй раз они не уйдут. */
+    laid: boolean;
+    /** Разных адресов, которым уйдёт письмо. */
+    letters: number;
+    /** Записок в Telegram просившим продолжение. */
+    notes: number;
+    /** Есть ли чем отправить письмо. */
+    mail: boolean;
+    /** Через сколько секунд после выхода письма раскладываются. */
+    graceSecs: number;
+}
+
+/** Двери, через которые следующая байка приходит сама. */
+export interface TaleDoors {
+    /** Есть ли чем отправить письмо. */
+    letters: boolean;
+    /** Публичная ссылка на Telegram-канал. */
+    telegram: string | null;
+    /** Может ли сайт написать вошедшему через Telegram. */
+    telegramNotes: boolean;
+}
+
+export interface TaleSequelWishRequest {
+    visitorToken: string;
+    want: boolean;
+    email?: string | null;
+    lang?: string | null;
+    ageConfirmed?: boolean;
+    /** Сообщить в Telegram — только вошедшему с привязанным Telegram. */
+    telegram?: boolean | null;
+}
+
+export interface TaleSequelWishResponse {
+    wants: boolean;
+    /** Придёт ли письмо, когда продолжение выйдет. */
+    letter: boolean;
+    /** Придёт ли записка в Telegram. */
+    telegram: boolean;
+}
+
+/** Судьба письма или записки: не просили / ждёт отправки / ушло / не дошло. */
+export type TaleNoticeStatus = 'none' | 'pending' | 'sent' | 'failed';
+
+/** Читатель, ждущий продолжения, — строка списка на столе рассказов. */
+export interface AdminSequelWish {
+    createdAt: string;
+    email: string | null;
+    name: string | null;
+    telegramUsername: string | null;
+    byTelegram: boolean;
+    lang: string;
+    letter: TaleNoticeStatus;
+    note: TaleNoticeStatus;
+}
+
+export interface TalePollWork {
+    figurineId: string;
+    name: string;
+    slug: string | null;
+    imageUrl: string | null;
+}
+
+/** Голосование «о ком записать следующую» глазами читателя. Без счёта. */
+export interface TalePoll {
+    id: string;
+    state: 'open' | 'closed';
+    candidates: TalePollWork[];
+    myChoice?: string;
+    myLetter: boolean;
+    winner?: TalePollWork;
+}
+
+export interface TalePollVoteRequest {
+    visitorToken: string;
+    figurineId: string;
+    email?: string | null;
+    lang?: string | null;
+    ageConfirmed?: boolean;
+}
+
+export interface TalePollVoteResponse {
+    myChoice: string;
+    myLetter: boolean;
+}
+
+export interface AdminTalePollCandidate {
+    figurineId: string;
+    name: string;
+    imageUrl: string | null;
+    votes: number;
+    letters: number;
+}
+
+export interface AdminTalePoll {
+    id: string;
+    state: 'open' | 'closed';
+    openedAt: string;
+    closedAt: string | null;
+    winnerFigurineId: string | null;
+    fulfilled: GazetteNeighbor | null;
+    candidates: AdminTalePollCandidate[];
+    /** Сколько всех голосовавших ждут письма. */
+    letters: number;
 }
 
 export interface ModerateCommentRequest {
@@ -2556,7 +2686,7 @@ export interface SaveBattleDeckRequest {
 }
 
 export type BattleLayout = 'corners' | 'plaque';
-export type BattleFrameMode = 'overlay' | 'behind' | 'sliced';
+export type BattleFrameMode = 'overlay' | 'behind' | 'sliced' | 'freeform';
 
 /** How a piece's picture fills the box it was given. */
 export type SliceFit = 'stretch' | 'contain' | 'cover' | 'tile';
@@ -2764,6 +2894,18 @@ export interface BattleFrame {
      * `behind`  — the picture is the card's ground, for a frame with no hole.
      */
     frameMode: BattleFrameMode;
+    /** How large the frame's OWN picture is drawn, independently on each axis —
+     *  a multiplier on the 100% that exactly fills the card, like `costSize`
+     *  and the rest. 1 is the card's own edges; past 1 the picture is enlarged
+     *  around its centre and the excess is cropped by the card's own edges
+     *  (a plain background, never a second scrollbar to find), so growing one
+     *  axis alone stretches the illustration on just that side without
+     *  touching the card's shape (`aspect` does that instead). `sliced` never
+     *  reads either one: its pieces already grow and slide by themselves
+     *  (§ `SlicePlace`), one per side, and a whole-picture zoom would only
+     *  fight that. */
+    frameScaleX: number;
+    frameScaleY: number;
     /** Texture for the card's ground. A cut-out frame has nothing behind it but
      *  this. Empty = the flat `paper` colour. */
     paperImage: string;
@@ -2880,6 +3022,23 @@ export interface BattleFrame {
     healthWeight: number;
     healthX: number | null;
     healthY: number | null;
+    /** `frameMode: 'freeform'` only: a whole ready-made illustration, worn
+     *  like `overlay`, under which the photograph sits full-bleed (panned and
+     *  zoomed by the same `artFocal` a windowed card already carries) and over
+     *  which the name and the lore stand wherever the keeper dragged them —
+     *  a certificate's blank paper is where the artist drew it, not a band. */
+    freeNameX: number | null;
+    freeNameY: number | null;
+    /** Множитель кегля имени в этом режиме, как `costSize`. */
+    freeNameSize: number;
+    freeLoreX: number | null;
+    freeLoreY: number | null;
+    freeLoreSize: number;
+    /** Приписка не носила своего шрифта и своих чернил в полосе свойств — она
+     *  красилась общими. Здесь она стоит одна на пустой бумаге. Пустая строка
+     *  — тот же дом: обычный шрифт карты, цвет `ink`. */
+    freeLoreFont: string;
+    freeLoreInk: string;
 }
 
 /** `none` — не шестая форма, а её отсутствие: подложка не печатается вовсе и
@@ -2958,7 +3117,7 @@ export type BattleAssetRole =
 export type MotionOccasion = 'blow' | 'spell' | 'mend' | 'arrive' | 'fall' | 'unseen';
 
 /** Кому происходит жест. `flight` — то, что летит от бьющего к цели. */
-export type GestureWhom = 'striker' | 'target' | 'flight' | 'field';
+export type GestureWhom = 'striker' | 'target' | 'flight' | 'beam' | 'field';
 
 /** Что делает тело. Список ЗАКРЫТ по той же причине, по которой закрыт список
  *  глаголов способностей: новое движение — новое сочетание, не новый жест. */
@@ -3249,6 +3408,10 @@ export interface BattleWeigh {
 }
 
 export interface CardReadiness {
+    /** Required fields that are empty (`titleEn`, `effectRu`, `price`…).
+     *  While this is non-empty, the keeper's desk does not save the card at
+     *  all, not even as a draft. */
+    missing: string[];
     /** While this is non-empty, the card cannot be published. */
     blocking: string[];
     /** Allowed, but worth knowing. */

@@ -1,0 +1,1151 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вырезать фигурки</title>
+<style>
+  :root {
+    --paper: #f8f1e7; --ink: #34251c; --ink-2: #6b5646; --accent: #c65f3c; --dark: #6f3b24;
+    --line: #d8c6b1; --card: #fffaf2; --warn: #8a5000; --warn-bg: #fbebc8; --ok: #2f6b3a; --ok-bg: #dcefd9;
+    --err: #a12a1a; --err-bg: #f8dcd5;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+  h1 { font: 600 24px/1.2 Georgia, serif; margin: 0; }
+  h2 { font: 600 17px/1.3 Georgia, serif; margin: 0 0 12px; }
+  button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--card);
+    border-radius: 7px; padding: 7px 13px; }
+  button:hover { border-color: var(--ink-2); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--dark); color: #fff; border-color: var(--dark); }
+  button.primary:hover:not(:disabled) { background: var(--ink); }
+  button.big { font-size: 17px; padding: 12px 28px; border-radius: 9px; }
+  button.link { border: 0; background: none; padding: 0; color: var(--dark); text-decoration: underline; text-underline-offset: 3px; }
+  button.danger { color: var(--err); }
+  .muted { color: var(--ink-2); }
+  .small { font-size: 13px; }
+  kbd { font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 2px 5px; background: #fff; color: var(--ink-2); }
+
+  .page { max-width: 980px; margin: 0 auto; padding: 28px 20px 60px; display: flex; flex-direction: column; gap: 18px; }
+  .wide { max-width: none; padding: 0; }
+  .top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .banner { background: var(--warn-bg); border: 1px solid #ecd39b; border-radius: 10px; padding: 12px 16px;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .error-box { background: var(--err-bg); color: var(--err); border-radius: 8px; padding: 10px 14px; }
+
+  /* выбор */
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 34px 20px; text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 10px; transition: background .15s, border-color .15s; }
+  .drop.over, body.dragging .drop { border-color: var(--accent); background: #fbe9df; }
+  .drop-title { font: 600 19px/1.3 Georgia, serif; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .chosen { display: flex; flex-direction: column; gap: 8px; }
+  .chosen-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .chosen-head b { font: 600 19px/1.3 Georgia, serif; }
+  .where { padding: 10px 12px; background: #f3eadc; border-radius: 8px; }
+  .pathline { word-break: break-all; }
+
+  /* настройки */
+  .set { display: grid; grid-template-columns: 120px 1fr; gap: 14px 16px; align-items: start; }
+  .set .label { padding-top: 7px; color: var(--ink-2); }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button { padding: 7px 12px; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .seg .sub { display: block; font-size: 11.5px; opacity: .75; }
+  .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 6px;
+    border: 1px solid rgba(0,0,0,.2); }
+  .checker { background-color: #fff; background-image: linear-gradient(45deg,#ccc 25%,transparent 25%),
+    linear-gradient(-45deg,#ccc 25%,transparent 25%), linear-gradient(45deg,transparent 75%,#ccc 75%),
+    linear-gradient(-45deg,transparent 75%,#ccc 75%); background-size: 8px 8px; background-position: 0 0,0 4px,4px -4px,-4px 0; }
+  .hint { grid-column: 2; margin-top: -8px; font-size: 13px; color: var(--ink-2); }
+  input[type=color] { width: 34px; height: 30px; padding: 0 2px; border: 1px solid var(--line); border-radius: 6px; background: #fff; vertical-align: middle; }
+
+  .go { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+
+  /* недавние */
+  .recent { display: flex; flex-direction: column; }
+  .recent-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 14px; padding: 12px 0; border-top: 1px solid #eadfcf; align-items: center; }
+  .recent-row:first-child { border-top: 0; }
+  .recent-name { font-weight: 600; }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip { font-size: 11.5px; border-radius: 10px; padding: 1px 8px; background: #efe5d6; color: var(--ink-2); white-space: nowrap; }
+  .chip.warn { background: var(--warn-bg); color: var(--warn); }
+  .chip.ok { background: var(--ok-bg); color: var(--ok); }
+  .chip.edit { background: #f1ddd2; color: var(--dark); }
+  .chip.err { background: var(--err-bg); color: var(--err); }
+
+  /* папка */
+  .fbar { position: sticky; top: 0; z-index: 5; background: var(--paper); border-bottom: 1px solid var(--line);
+    padding: 12px 20px; display: flex; flex-direction: column; gap: 10px; }
+  .fbar .line { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; }
+  .fbar h1 { font-size: 20px; }
+  .spacer { flex: 1; }
+  .progress { display: flex; flex-direction: column; gap: 6px; }
+  .bar { height: 10px; background: #eadfcf; border-radius: 6px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--dark); width: 0; transition: width .4s; }
+  .bar.indet > div { width: 30% !important; animation: indet 1.2s ease-in-out infinite; }
+  @keyframes indet { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+  .tabs, .bgs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tabs button, .bgs button { padding: 5px 10px; font-size: 13.5px; }
+  .tabs button[aria-pressed="true"], .bgs button[aria-pressed="true"], #b-orig[aria-pressed="true"] {
+    background: var(--ink); color: #fff; border-color: var(--ink); }
+  main.gridwrap { padding: 16px 20px 40px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer;
+    display: flex; flex-direction: column; text-align: left; padding: 0; }
+  .tile:hover { border-color: var(--ink-2); }
+  .tile .well { aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center; }
+  .tile .well img { max-width: 100%; max-height: 100%; display: block; }
+  .tile .meta { padding: 7px 9px 9px; display: flex; flex-direction: column; gap: 5px; }
+  .tile .name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { padding: 60px 0; text-align: center; color: var(--ink-2); font: 17px Georgia, serif; }
+
+  .bg-checker .well { background-color: #fff; background-image:
+    linear-gradient(45deg, #e6e0d8 25%, transparent 25%), linear-gradient(-45deg, #e6e0d8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e6e0d8 75%), linear-gradient(-45deg, transparent 75%, #e6e0d8 75%);
+    background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0; }
+  .bg-parchment .well { background: #f8f1e7; }
+  .bg-white .well { background: #fff; }
+  .bg-black .well { background: #111; }
+  .bg-teal .well { background: #28aa96; }
+
+  /* редактор */
+  .editor { position: fixed; inset: 0; z-index: 20; background: var(--paper); display: grid; grid-template-columns: 1fr 340px; }
+  .stage { position: relative; display: flex; align-items: center; justify-content: center; padding: 18px; min-width: 0; min-height: 0; user-select: none; }
+  .stage .well { position: relative; max-width: 100%; max-height: 100%; display: flex; line-height: 0; box-shadow: 0 0 0 1px var(--line); }
+  .stage img { max-width: calc(100vw - 340px - 36px); max-height: calc(100vh - 36px); display: block; cursor: crosshair; -webkit-user-drag: none; }
+  .band { position: absolute; border: 2px dashed var(--accent); background: rgba(198, 95, 60, .12); pointer-events: none; }
+  .band.keep { border-color: #2f6b3a; background: rgba(47, 107, 58, .10); }
+  .busy { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  .busy span { background: rgba(52, 37, 28, .85); color: #fff; border-radius: 20px; padding: 8px 16px; font-size: 13px; }
+  .orig-label { position: absolute; top: 26px; left: 26px; background: rgba(52,37,28,.85); color: #fff; border-radius: 4px; padding: 3px 8px; font-size: 12px; line-height: 1.4; }
+  aside { border-left: 1px solid var(--line); padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; background: #fbf6ee; font-size: 14px; }
+  aside .title { font: 600 15px/1.3 Georgia, serif; word-break: break-word; }
+  aside .row button { flex: 1 1 auto; }
+  .flag { background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 6px 9px; font-size: 13px; }
+  .help { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+  .section { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); margin-bottom: -6px; }
+  .status { font-size: 12.5px; color: var(--ink-2); min-height: 1.4em; }
+  .status.err { color: var(--err); }
+  .keys { font-size: 12px; color: var(--ink-2); display: grid; grid-template-columns: auto 1fr; gap: 5px 8px; align-items: center; }
+
+  /* окно настроек и перетаскивание */
+  .modal { position: fixed; inset: 0; z-index: 30; background: rgba(52, 37, 28, .35); display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .modal .card { max-width: 760px; width: 100%; max-height: 90vh; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
+  .dropveil { position: fixed; inset: 0; z-index: 40; background: rgba(198, 95, 60, .18); border: 4px dashed var(--accent);
+    display: flex; align-items: center; justify-content: center; font: 600 26px Georgia, serif; color: var(--dark); pointer-events: none; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 50; background: var(--ink); color: #fff;
+    padding: 10px 18px; border-radius: 8px; font-size: 14px; max-width: 90vw; }
+  .toast.err { background: var(--err); }
+
+  @media (max-width: 900px) {
+    .editor { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    .stage img { max-width: calc(100vw - 36px); max-height: calc(60vh - 36px); }
+    aside { border-left: 0; border-top: 1px solid var(--line); max-height: 40vh; }
+    .set { grid-template-columns: 1fr; gap: 6px; }
+    .set .label { padding-top: 8px; }
+    .hint { grid-column: 1; margin-top: 0; }
+  }
+</style>
+</head>
+<body class="bg-checker">
+
+<!-- ═════════ стартовый экран ═════════ -->
+<div id="home" class="page" hidden>
+  <div class="top">
+    <h1>Вырезать фигурки</h1>
+    <span class="muted">фигурка остаётся, фон уходит</span>
+  </div>
+
+  <div class="banner" id="job-banner" hidden>
+    <span id="job-banner-text"></span>
+    <span class="spacer"></span>
+    <button class="primary" id="job-banner-open">Открыть</button>
+  </div>
+
+  <section class="card">
+    <div class="drop" id="drop">
+      <div class="drop-title">Перетащите сюда папку с фото</div>
+      <div class="muted">или отдельные фото — можно много сразу</div>
+      <div class="row" style="justify-content:center; margin-top:6px">
+        <button class="primary" id="pick-folder">Выбрать папку…</button>
+        <button id="pick-files">Выбрать фото…</button>
+      </div>
+      <div class="muted small">Или скопируйте фото и нажмите <kbd>⌘</kbd><kbd>V</kbd> прямо здесь — можно по одному, они добавятся.</div>
+      <div class="muted small">Подпапки тоже обработаются. Понимает JPG, PNG, HEIC с iPhone, WebP, TIFF.</div>
+    </div>
+
+    <div class="chosen" id="chosen" hidden>
+      <div class="chosen-head">
+        <b id="chosen-name"></b>
+        <span id="chosen-count" class="muted"></span>
+        <span class="spacer"></span>
+        <span class="muted small" id="chosen-more" hidden>⌘V — добавить ещё</span>
+        <button class="link" id="chosen-clear">выбрать другое</button>
+      </div>
+      <div class="muted small pathline" id="chosen-paths"></div>
+      <div class="where">
+        Готовые картинки лягут в <b class="pathline" id="out-path"></b>
+        <button class="link" id="out-change">изменить…</button>
+        <div class="muted small">Оригиналы не меняются.</div>
+      </div>
+      <div class="small" id="chosen-note"></div>
+    </div>
+
+    <div id="upload" hidden>
+      <div class="progress">
+        <div id="upload-text">Копирую фото…</div>
+        <div class="bar"><div id="upload-bar"></div></div>
+      </div>
+    </div>
+    <div class="error-box" id="pick-error" hidden style="margin-top:12px"></div>
+  </section>
+
+  <section class="card">
+    <h2>Как сделать</h2>
+    <div id="home-settings"></div>
+  </section>
+
+  <div class="go">
+    <button class="primary big" id="start" disabled>Начать</button>
+    <span class="muted" id="estimate">Сначала выберите фото.</span>
+  </div>
+
+  <section class="card" id="recent-card" hidden>
+    <h2>Недавние</h2>
+    <div class="recent" id="recent"></div>
+  </section>
+</div>
+
+<!-- ═════════ папка ═════════ -->
+<div id="folder" hidden>
+  <div class="fbar">
+    <div class="line">
+      <button class="link" id="back">← Все папки</button>
+      <h1 id="f-name"></h1>
+      <span class="muted small pathline" id="f-path"></span>
+      <span class="spacer"></span>
+      <button id="f-reveal" title="Открыть папку с готовыми картинками в Finder">Открыть в Finder</button>
+      <button id="f-settings" title="Пересобрать эту папку с другим фоном, форматом или обрезкой">Другие настройки…</button>
+    </div>
+    <div class="progress" id="f-progress" hidden>
+      <div class="line">
+        <span id="f-progress-text"></span>
+        <span class="spacer"></span>
+        <button id="f-stop">Остановить</button>
+        <button class="primary" id="f-continue" hidden>Продолжить</button>
+      </div>
+      <div class="bar" id="f-bar"><div></div></div>
+      <div class="error-box small" id="f-errors" hidden></div>
+    </div>
+    <div class="line">
+      <div class="tabs" id="tabs" role="group" aria-label="Что показать"></div>
+      <span class="spacer"></span>
+      <span class="muted small" title="Под прозрачными частями — только для просмотра, в файлы не идёт">подложка для просмотра:</span>
+      <div class="bgs" id="bgs" role="group" aria-label="Фон под фигуркой"></div>
+    </div>
+  </div>
+  <main class="gridwrap">
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty" hidden></div>
+  </main>
+</div>
+
+<!-- ═════════ редактор ═════════ -->
+<div class="editor" id="editor" hidden>
+  <div class="stage">
+    <div class="well" id="well">
+      <img id="pic" alt="">
+      <div class="band" id="band" hidden></div>
+    </div>
+    <div class="orig-label" id="orig-label" hidden>исходник</div>
+    <div class="busy" id="busy" hidden><span id="busy-text"></span></div>
+  </div>
+  <aside>
+    <div>
+      <div class="title" id="e-name"></div>
+      <div class="muted small" id="e-pos"></div>
+    </div>
+    <div class="chips" id="e-chips"></div>
+    <div id="e-flags" style="display:flex;flex-direction:column;gap:6px"></div>
+
+    <div class="section">Как править</div>
+    <ul class="help">
+      <li><b>Щелчок</b> — убрать предмет под курсором (руку, подставку, лишнее)</li>
+      <li><b>Shift + щелчок</b> или <b>правая кнопка</b> — вернуть предмет (кота, мешок, книгу)</li>
+      <li><b>Протянуть рамку</b> — стереть всё внутри неё</li>
+      <li><b>Протянуть с Alt</b> — оставить только то, что внутри</li>
+    </ul>
+
+    <div class="row">
+      <button id="b-undo" title="Отменить последнюю правку (Z)">Отменить</button>
+      <button id="b-reset" title="Вернуть то, что дала модель (R)">Как было</button>
+    </div>
+    <div class="row">
+      <button id="b-orig" title="Показать исходник (держать пробел)">Исходник</button>
+      <button id="b-final" title="Открыть готовый файл (O)">Готовый файл</button>
+      <button id="b-reveal" title="Показать файл в Finder">В Finder</button>
+    </div>
+    <div class="row">
+      <button id="b-prev" title="Предыдущее (←)">←</button>
+      <button id="b-approve" class="primary" title="Хорошо, дальше (A или Enter)">Хорошо, дальше</button>
+      <button id="b-next" title="Следующее (→)">→</button>
+    </div>
+    <div class="status" id="status" aria-live="polite"></div>
+
+    <div class="keys">
+      <kbd>←</kbd><span>/ <kbd>→</kbd> предыдущее / следующее</span>
+      <kbd>A</kbd><span>или <kbd>Enter</kbd> — хорошо, дальше</span>
+      <kbd>Z</kbd><span>отменить, <kbd>R</kbd> — как было</span>
+      <kbd>пробел</kbd><span>держать — исходник</span>
+      <kbd>Esc</kbd><span>к списку</span>
+    </div>
+    <button id="b-close">← К списку</button>
+  </aside>
+</div>
+
+<!-- ═════════ другие настройки папки ═════════ -->
+<div class="modal" id="resettings" hidden>
+  <div class="card">
+    <h2>Пересобрать папку с другими настройками</h2>
+    <div class="muted small">Фон, формат, обрезка и размер меняются без нового вырезания: файлы пересоберутся
+      из уже найденных контуров, правки щелчком сохранятся.</div>
+    <div id="re-settings"></div>
+    <div class="error-box small" id="re-error" hidden></div>
+    <div class="row">
+      <button class="primary" id="re-apply">Пересобрать</button>
+      <button id="re-cancel">Отмена</button>
+      <span class="muted small" id="re-note"></span>
+    </div>
+  </div>
+</div>
+
+<div class="dropveil" id="dropveil" hidden>Отпустите — и фото выбраны</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const local = {
+  get(k, d) { try { return localStorage.getItem('cutout:' + k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('cutout:' + k, v); } catch {} },
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const IMAGE_EXT = /\.(jpe?g|png|webp|heic|heif|tiff?|bmp|avif)$/i;
+
+async function api(path, body, method) {
+  const opt = body === undefined && !method ? {} : {
+    method: method || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}),
+  };
+  let r;
+  try { r = await fetch(path, opt); } catch { throw new Error('программа не отвечает — возможно, она выключилась. Запустите её снова.'); }
+  const data = await r.json().catch(() => ({ error: 'программа ответила непонятно' }));
+  if (!r.ok || (data && data.error)) throw new Error((data && data.error) || r.statusText);
+  return data;
+}
+
+let toastTimer;
+function toast(text, err) {
+  const t = $('toast');
+  t.textContent = text; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), err ? 7000 : 3500);
+}
+
+// ═════════ настройки (общие для старта и «других настроек») ═════════
+let MODELS = [];
+const SETTINGS_SPEC = () => [
+  { key: 'bg', label: 'Фон', options: [
+    { v: 'none', t: '<span class="swatch checker"></span>Прозрачный' },
+    { v: '#f8f1e7', t: '<span class="swatch" style="background:#f8f1e7"></span>Пергамент сайта' },
+    { v: '#ffffff', t: '<span class="swatch" style="background:#fff"></span>Белый' },
+    { v: 'custom', t: 'Свой цвет <input type="color" data-color>' },
+  ] },
+  { key: 'format', label: 'Файл', options: [
+    { v: 'png', t: 'PNG<span class="sub">без потерь</span>' },
+    { v: 'webp', t: 'WebP<span class="sub">лёгкий, для сайта</span>' },
+    { v: 'jpg', t: 'JPG<span class="sub">без прозрачности</span>' },
+  ] },
+  { key: 'crop', label: 'Обрезка', options: [
+    { v: 'none', t: 'Как на фото' },
+    { v: 'fit', t: 'По фигурке' },
+    { v: 'square', t: 'Квадрат' },
+  ] },
+  { key: 'max_size', label: 'Размер', options: [
+    { v: 0, t: 'Как есть' }, { v: 2000, t: '2000 px' }, { v: 1200, t: '1200 px' }, { v: 800, t: '800 px' },
+  ] },
+  { key: 'model', label: 'Качество', options: MODELS.map((m, i) => ({
+    v: m.key, t: ['Лучшее', 'Быстрее', 'Черновик'][i] + `<span class="sub">≈${String(m.seconds).replace('.', ',')} с на фото</span>`,
+  })) },
+];
+const HINTS = {
+  model: {
+    'birefnet-general': 'Тонкие пряди и черенки мётел сохраняются. Для всего, что пойдёт на сайт.',
+    'birefnet-general-lite': 'Чаще сама убирает руку, но может потерять тонкое — черенок метлы, отдельные волоски.',
+    'isnet-general-use': 'Чтобы быстро прикинуть; края мутнее, рука чаще остаётся.',
+  },
+};
+
+function renderSettings(host, s, onChange) {
+  host.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'set';
+  for (const spec of SETTINGS_SPEC()) {
+    const label = document.createElement('div');
+    label.className = 'label'; label.textContent = spec.label;
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    const isCustom = spec.key === 'bg' && !['none', '#f8f1e7', '#ffffff'].includes(s.bg);
+    for (const o of spec.options) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.innerHTML = o.t;
+      const pressed = spec.key === 'bg' && o.v === 'custom' ? isCustom : String(s[spec.key]) === String(o.v);
+      b.setAttribute('aria-pressed', String(pressed));
+      const color = b.querySelector('[data-color]');
+      if (color) {
+        color.value = isCustom ? s.bg : '#e8dcc8';
+        color.addEventListener('click', (e) => e.stopPropagation());
+        color.addEventListener('input', () => { s.bg = color.value; renderSettings(host, s, onChange); onChange(); });
+      }
+      b.onclick = () => {
+        if (o.v === 'custom') { s.bg = color.value; }
+        else s[spec.key] = o.v;
+        if (spec.key === 'format' && o.v === 'jpg' && s.bg === 'none') s.bg = '#ffffff';
+        renderSettings(host, s, onChange); onChange();
+      };
+      seg.appendChild(b);
+    }
+    grid.append(label, seg);
+    const hint = spec.key === 'model' ? HINTS.model[s.model]
+      : spec.key === 'bg' && s.format === 'jpg' && s.bg === 'none' ? 'У JPG нет прозрачности — фон будет белым.'
+      : spec.key === 'format' && s.format === 'jpg' ? 'У JPG прозрачности не бывает: фигурка ляжет на выбранный фон.'
+      : spec.key === 'crop' && s.crop !== 'none' ? 'Вокруг фигурки останется небольшое поле.' : '';
+    if (hint) { const h = document.createElement('div'); h.className = 'hint'; h.textContent = hint; grid.appendChild(h); }
+  }
+  host.appendChild(grid);
+}
+
+// ═════════ стартовый экран ═════════
+let settings = {}, sel = null, inspected = null, inspectSeq = 0;
+
+function showView(name) {
+  $('home').hidden = name !== 'home';
+  $('folder').hidden = name !== 'folder';
+  if (name !== 'folder') $('editor').hidden = true;
+}
+
+async function loadHome() {
+  const h = await api('/api/home');
+  MODELS = h.models;
+  settings = Object.assign({}, h.settings);
+  renderSettings($('home-settings'), settings, () => inspect());
+  renderRecent(h.recent);
+  renderJobBanner(h.job);
+  return h;
+}
+
+function renderRecent(rows) {
+  $('recent-card').hidden = !rows.length;
+  const host = $('recent');
+  host.innerHTML = '';
+  for (const r of rows) {
+    const div = document.createElement('div');
+    div.className = 'recent-row';
+    const chips = [`<span class="chip">${r.count} фото</span>`];
+    if (r.flagged) chips.push(`<span class="chip warn">посмотреть ${r.flagged}</span>`);
+    if (r.edited) chips.push(`<span class="chip edit">исправлено ${r.edited}</span>`);
+    if (r.approved) chips.push(`<span class="chip ok">проверено ${r.approved}</span>`);
+    div.innerHTML = `<div>
+        <div class="recent-name">${esc(r.name)}</div>
+        <div class="muted small pathline">${esc(r.outShort)} · ${esc(r.when)}</div>
+        <div class="chips" style="margin-top:4px">${chips.join('')}</div>
+      </div>
+      <div class="row">
+        <button class="primary" data-act="open">Открыть</button>
+        <button data-act="reveal" title="Показать в Finder">Finder</button>
+        <button data-act="forget" title="Убрать из списка (файлы останутся)">×</button>
+      </div>`;
+    div.querySelector('[data-act=open]').onclick = () => goFolder(r.fid);
+    div.querySelector('[data-act=reveal]').onclick = () => api('/api/reveal', { path: r.out }).catch((e) => toast(e.message, true));
+    div.querySelector('[data-act=forget]').onclick = async () => {
+      await api('/api/forget', { out: r.out }); div.remove();
+      if (!host.children.length) $('recent-card').hidden = true;
+    };
+    host.appendChild(div);
+  }
+}
+
+function renderJobBanner(job) {
+  const show = job && ['starting', 'loading', 'running'].includes(job.state);
+  $('job-banner').hidden = !show;
+  if (show) {
+    $('job-banner-text').textContent = `Идёт обработка «${job.name}»: готово ${job.done + job.skipped} из ${job.total + job.skipped}` + (job.etaText ? `, осталось ≈ ${job.etaText}` : '');
+    $('job-banner-open').onclick = () => goFolder(job.fid);
+  }
+}
+
+function pickError(msg) { $('pick-error').hidden = !msg; $('pick-error').textContent = msg || ''; }
+
+async function choose(paths, out, keepPaste) {
+  if (!keepPaste) pasteDrop = null;
+  sel = { paths, out: out || null };
+  pickError('');
+  await inspect();
+}
+
+async function inspect() {
+  if (!sel) { updateStart(); return; }
+  const seq = ++inspectSeq;
+  $('estimate').textContent = 'Считаю фото…';
+  try {
+    const r = await api('/api/inspect', { paths: sel.paths, out: sel.out, settings });
+    if (seq !== inspectSeq) return;
+    inspected = r;
+    sel.out = r.out;
+    renderChosen();
+  } catch (e) {
+    if (seq !== inspectSeq) return;
+    inspected = null;
+    $('chosen').hidden = true; $('drop').hidden = false;
+    pickError(e.message);
+  }
+  updateStart();
+}
+
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  return n + ' ' + (m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many);
+}
+
+function renderChosen() {
+  const r = inspected, c = r.counts;
+  $('drop').hidden = true;
+  $('chosen').hidden = false;
+  const name = r.paths.length === 1 ? r.paths[0].split('/').pop() : `${r.paths.length} выбранных`;
+  $('chosen-name').textContent = name;
+  $('chosen-count').textContent = plural(c.images, 'фото', 'фото', 'фото');
+  $('chosen-paths').textContent = r.paths.length === 1 ? r.paths[0] : r.paths.slice(0, 4).join(', ') + (r.paths.length > 4 ? '…' : '');
+  $('out-path').textContent = r.outShort;
+  $('chosen-more').hidden = !pasteDrop;
+  const notes = [];
+  if (c.skip) notes.push(`${plural(c.skip, 'фото уже готово', 'фото уже готовы', 'фото уже готовы')} — их пропущу.`);
+  if (c.render) notes.push(`${c.render} пересоберу с новыми настройками (быстро).`);
+  if (c.broken) notes.push(`${plural(c.broken, 'файл не открывается', 'файла не открываются', 'файлов не открываются')} — пропущу.`);
+  if (c.other) notes.push(`Не фото: ${c.other} — не трогаю.`);
+  $('chosen-note').textContent = notes.join(' ');
+}
+
+function updateStart() {
+  const c = inspected && inspected.counts;
+  const work = c ? c.new + c.render : 0;
+  $('start').disabled = !inspected || !work;
+  if (!inspected) { $('estimate').textContent = 'Сначала выберите фото.'; return; }
+  if (!work) { $('estimate').textContent = 'Всё уже готово — откройте папку в «Недавних».'; return; }
+  $('start').textContent = c.new ? `Начать: ${plural(work, 'фото', 'фото', 'фото')}` : 'Пересобрать';
+  $('estimate').textContent = inspected.estimateText ? `Займёт ≈ ${inspected.estimateText}. Можно закрыть окно — работа продолжится.` : '';
+}
+
+$('pick-folder').onclick = async () => {
+  try { const r = await api('/api/pick', { kind: 'folder' }); if (r.paths) choose(r.paths); }
+  catch (e) { pickError(e.message); }
+};
+$('pick-files').onclick = async () => {
+  try { const r = await api('/api/pick', { kind: 'files' }); if (r.paths) choose(r.paths); }
+  catch (e) { pickError(e.message); }
+};
+$('out-change').onclick = async () => {
+  try { const r = await api('/api/pick', { kind: 'out' }); if (r.paths) { sel.out = r.paths[0]; inspect(); } }
+  catch (e) { pickError(e.message); }
+};
+$('chosen-clear').onclick = () => {
+  pasteDrop = null;
+  sel = null; inspected = null;
+  $('chosen').hidden = true; $('drop').hidden = false; pickError(''); updateStart();
+};
+$('start').onclick = async () => {
+  $('start').disabled = true;
+  try {
+    const job = await api('/api/start', { paths: sel.paths, out: sel.out, settings });
+    sel = null; inspected = null;
+    $('chosen').hidden = true; $('drop').hidden = false;
+    goFolder(job.fid);
+  } catch (e) { pickError(e.message); updateStart(); }
+};
+
+// ── перетаскивание ──
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => {
+  if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+  e.preventDefault(); dragDepth++; $('dropveil').hidden = false;
+});
+window.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault(); });
+window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('dropveil').hidden = true; } });
+window.addEventListener('drop', async (e) => {
+  e.preventDefault(); dragDepth = 0; $('dropveil').hidden = true;
+  if (!e.dataTransfer) return;
+  const entries = [...e.dataTransfer.items].map((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+  if (!$('editor').hidden) return;
+  if ($('home').hidden) { history.replaceState(null, '', '#'); await route(); }
+  try { await uploadEntries(entries); } catch (err) { pickError(err.message); $('upload').hidden = true; }
+});
+
+function readAll(dirEntry) {
+  const reader = dirEntry.createReader();
+  return new Promise((resolve, reject) => {
+    const out = [];
+    const step = () => reader.readEntries((batch) => { if (!batch.length) resolve(out); else { out.push(...batch); step(); } }, reject);
+    step();
+  });
+}
+async function walk(entry, prefix, out) {
+  if (entry.name.startsWith('.')) return;
+  if (entry.isFile) {
+    if (IMAGE_EXT.test(entry.name)) out.push({ entry, path: prefix + entry.name });
+  } else if (entry.isDirectory) {
+    for (const child of await readAll(entry)) await walk(child, prefix + entry.name + '/', out);
+  }
+}
+async function uploadEntries(entries) {
+  const files = [];
+  for (const en of entries) await walk(en, '', files);
+  if (!files.length) throw new Error('Среди перетащенного нет фото (JPG, PNG, HEIC, WebP, TIFF).');
+  const list = files.map((f) => ({ path: f.path, get: () => new Promise((res, rej) => f.entry.file(res, rej)) }));
+  const drop = newDropId();
+  await uploadList(list, drop);
+  const r = await api('/api/drop-done', { drop });
+  await choose(r.paths);
+  toast(`Скопировано ${plural(files.length, 'фото', 'фото', 'фото')}. Оригиналы остались на месте.`);
+}
+
+function newDropId() { return Math.random().toString(36).slice(2, 12) + Date.now().toString(36); }
+
+async function uploadList(list, drop) {
+  $('upload').hidden = false; $('drop').hidden = true; $('chosen').hidden = true; pickError('');
+  let done = 0;
+  const show = () => {
+    $('upload-text').textContent = `Копирую фото в программу: ${done} из ${list.length}…`;
+    $('upload-bar').style.width = (100 * done / list.length) + '%';
+  };
+  show();
+  const queue = list.slice();
+  const worker = async () => {
+    while (queue.length) {
+      const f = queue.shift();
+      const file = await f.get();
+      const r = await fetch(`/api/upload?drop=${drop}&path=${encodeURIComponent(f.path)}`, { method: 'PUT', body: file });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'не удалось скопировать ' + f.path);
+      done++; show();
+    }
+  };
+  try { await Promise.all([worker(), worker(), worker(), worker()]); }
+  finally { $('upload').hidden = true; $('drop').hidden = false; }
+}
+
+// ── вставка ⌘V ──
+// Вставленное копится в одну папку, пока выбор не сменили: вставили фото,
+// потом ещё одно — выбрано два, а не «последнее вместо первого».
+let pasteDrop = null, pasteNames = new Set(), pasteCount = 0;
+
+const MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/heic': 'heic',
+  'image/heif': 'heif', 'image/tiff': 'tiff', 'image/bmp': 'bmp', 'image/avif': 'avif', 'image/gif': '' };
+
+function pasteName(file) {
+  // У скриншота и картинки, скопированной из браузера, имя всегда «image.png» —
+  // по нему два вставленных фото затёрли бы друг друга.
+  let name = file.name && !/^image\.\w+$/i.test(file.name) ? file.name : '';
+  if (!name) {
+    const ext = MIME_EXT[file.type] || (file.name.split('.').pop() || 'png');
+    const t = new Date(), z = (n) => String(n).padStart(2, '0');
+    name = `вставка ${t.getFullYear()}-${z(t.getMonth() + 1)}-${z(t.getDate())} ${z(t.getHours())}-${z(t.getMinutes())}-${z(t.getSeconds())}.${ext}`;
+  }
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+  let n = 1, out = name;
+  while (pasteNames.has(out.toLowerCase())) out = `${stem} (${++n})${ext}`;
+  pasteNames.add(out.toLowerCase());
+  return out;
+}
+
+function pathFromText(text) {
+  // скопированный путь к папке или файлу (например, «Скопировать как путь» в Finder)
+  if (!text || text.includes('\n')) return null;
+  let t = text.trim().replace(/^["']|["']$/g, '');
+  if (t.startsWith('file://')) { try { t = decodeURIComponent(new URL(t).pathname); } catch { return null; } }
+  return t.startsWith('/') || t.startsWith('~/') ? t : null;
+}
+
+document.addEventListener('paste', async (e) => {
+  if (!$('editor').hidden || !$('resettings').hidden) return;
+  if (e.target.closest && e.target.closest('input, textarea')) return;
+  const cd = e.clipboardData;
+  if (!cd) return;
+  // Всё достаётся сразу: после первого await буфер обмена уже недоступен.
+  // Берётся сам файл, а не запись файловой системы (webkitGetAsEntry): при
+  // перетаскивании браузер даёт доступ к пути, а при вставке — нет, и Safari
+  // на чтение такой записи отвечает «Path does not exist».
+  let files = [...(cd.files || [])];
+  if (!files.length) {
+    for (const it of cd.items) if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); }
+  }
+  const text = cd.getData('text/plain');
+  if (!files.length) {
+    const p = pathFromText(text);
+    if (!p) { toast('В буфере нет фото. Скопируйте фото (⌘C) и вставьте снова.', true); return; }
+    e.preventDefault();
+    await toHome();
+    await choose([p]);
+    return;
+  }
+  e.preventDefault();
+  await toHome();
+  try {
+    const list = [];
+    let folders = 0;
+    for (const f of files) {
+      if (f.type.startsWith('image/') || IMAGE_EXT.test(f.name)) {
+        const name = pasteName(f);
+        list.push({ path: name, get: () => readPasted(f, name) });
+      } else if (!f.type && !/\.[a-z0-9]{2,5}$/i.test(f.name)) folders++;  // без расширения и типа — это папка
+    }
+    if (!list.length && folders) throw new Error('Папку вставить нельзя — перетащите её в окно мышью или нажмите «Выбрать папку…».');
+    if (!list.length) throw new Error('В буфере нет фото (JPG, PNG, HEIC, WebP, TIFF).');
+    if (!pasteDrop || !sel) { pasteDrop = newDropId(); pasteNames = new Set(list.map((x) => x.path.toLowerCase())); pasteCount = 0; }
+    const drop = pasteDrop;
+    await uploadList(list, drop);
+    pasteCount += list.length;
+    const r = await api('/api/drop-done', { drop });
+    await choose(r.paths, null, true);
+    toast(pasteCount > list.length
+      ? `Добавлено ${plural(list.length, 'фото', 'фото', 'фото')}, всего вставлено ${pasteCount}. Можно вставлять ещё.`
+      : `Вставлено ${plural(list.length, 'фото', 'фото', 'фото')}. Можно вставить ещё — они добавятся.`);
+  } catch (err) { pickError(err.message); }
+});
+
+async function readPasted(file, name) {
+  // Содержимое читается заранее: если браузер не отдаст файл, лучше сказать
+  // об этом словами, чем показать его английскую ошибку.
+  try { return new Blob([await file.arrayBuffer()], { type: file.type }); }
+  catch { throw new Error(`Браузер не отдал содержимое «${name}». Перетащите фото в окно мышью или нажмите «Выбрать фото…».`); }
+}
+
+async function toHome() {
+  if ($('home').hidden) { history.replaceState(null, '', '#'); await route(); }
+}
+
+// ═════════ экран папки ═════════
+let F = null;               // текущая папка: {fid, name, folder, inputs, settings}
+let items = [], byId = {}, flagText = {};
+let filter = 'all', nav = [], navIdx = -1, cur = null, busy = false, prepared = new Set(), showingOrig = false, samReady = false;
+let lastRev = -1, job = null;
+
+const FILTERS = {
+  check: { label: 'Посмотреть', test: (it) => it.flags.length && !it.approved },
+  all: { label: 'Все', test: () => true },
+  edited: { label: 'Исправленные', test: (it) => it.edited },
+  approved: { label: 'Проверенные', test: (it) => it.approved },
+};
+const BGS = { checker: 'шахматка', parchment: 'пергамент', white: 'белый', black: 'чёрный', teal: 'бирюза' };
+const SHORT = { edge: 'край кадра', parts: 'несколько частей', small: 'мало', large: 'почти всё', collage: 'коллаж' };
+
+const q = () => `f=${F.fid}`;
+const cutUrl = (it, w) => `/img/cut/${it.id}?${q()}&w=${w}&v=${it.v}`;
+const srcUrl = (it, w) => `/img/src/${it.id}?${q()}&w=${w}`;
+const finalUrl = (it, w) => `/img/final/${it.id}?${q()}&w=${w}&v=${it.fv}`;
+
+async function openFolder(fid) {
+  const s = await api(`/api/state?f=${fid}`);
+  const first = !F || F.fid !== fid;
+  F = { fid, name: s.name, folder: s.folder, inputs: s.inputs, inputsMissing: s.inputsMissing, settings: s.settings };
+  items = s.items; flagText = s.flagText; samReady = s.samReady;
+  byId = Object.fromEntries(items.map((it) => [it.id, it]));
+  $('f-name').textContent = s.name;
+  $('f-path').textContent = s.folderShort;
+  document.title = s.name + ' — Вырезать фигурки';
+  if (first) {
+    prepared = new Set();
+    lastRev = job && job.fid === fid ? job.rev : -1;
+    // вкладка, в которой что-то есть: открыть папку на «Здесь пусто» — вопрос «а где фото?»
+    const saved = local.get('filter', 'check');
+    filter = isRunningHere() ? 'all'
+      : FILTERS[saved] && items.some(FILTERS[saved].test) ? saved
+      : items.some(FILTERS.check.test) ? 'check' : 'all';
+  }
+  renderTabs(); renderBgs(); renderGrid();
+  renderProgress();
+}
+
+function isRunningHere() { return job && F && job.fid === F.fid && ['starting', 'loading', 'running'].includes(job.state); }
+
+function renderTabs() {
+  const tabs = $('tabs');
+  tabs.innerHTML = '';
+  for (const [key, f] of Object.entries(FILTERS)) {
+    const b = document.createElement('button');
+    b.textContent = `${f.label} · ${items.filter(f.test).length}`;
+    b.setAttribute('aria-pressed', String(key === filter));
+    b.onclick = () => { filter = key; local.set('filter', key); renderTabs(); renderGrid(); };
+    tabs.appendChild(b);
+  }
+}
+
+function renderBgs() {
+  const curBg = local.get('bg', 'checker');
+  document.body.className = 'bg-' + curBg;
+  const bgs = $('bgs');
+  bgs.innerHTML = '';
+  for (const [key, label] of Object.entries(BGS)) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.setAttribute('aria-pressed', String(key === curBg));
+    b.onclick = () => { local.set('bg', key); renderBgs(); };
+    bgs.appendChild(b);
+  }
+}
+
+function chipsFor(it, long) {
+  const out = [];
+  for (const f of it.flags) out.push(`<span class="chip warn" title="${esc(flagText[f] || f)}">⚠ ${esc(long ? flagText[f] : SHORT[f] || f)}</span>`);
+  if (it.edited) out.push('<span class="chip edit">✎ исправлено</span>');
+  if (it.approved) out.push('<span class="chip ok">✓ проверено</span>');
+  if (it.missing) out.push('<span class="chip err">оригинал пропал</span>');
+  return out.join('');
+}
+
+function visible() { return items.filter(FILTERS[filter].test); }
+
+function renderGrid() {
+  const list = visible();
+  const grid = $('grid');
+  $('empty').hidden = list.length > 0;
+  if (!list.length) {
+    $('empty').textContent = isRunningHere() ? 'Фото появятся здесь по мере готовности.'
+      : filter === 'check' ? 'Всё, что стоило посмотреть, просмотрено. Остальное — во вкладке «Все».'
+      : 'Здесь пока пусто.';
+  }
+  // плитки, что уже стоят, не пересоздаются — иначе картинки мигали бы на каждом готовом фото
+  const want = new Set(list.map((it) => it.id));
+  for (const el of [...grid.children]) if (!want.has(el.dataset.id)) el.remove();
+  let prev = null;
+  list.forEach((it, i) => {
+    let b = grid.querySelector(`.tile[data-id="${it.id}"]`);
+    if (!b) {
+      b = document.createElement('button');
+      b.className = 'tile';
+      b.dataset.id = it.id;
+      b.innerHTML = `<div class="well"><img loading="lazy" alt=""></div>
+        <div class="meta"><div class="name"></div><div class="chips"></div></div>`;
+      b.querySelector('.name').textContent = it.rel;
+      b.querySelector('.name').title = it.rel;
+    }
+    const img = b.querySelector('img');
+    const url = finalUrl(it, 360);
+    if (img.getAttribute('src') !== url) img.setAttribute('src', url);
+    b.querySelector('.chips').innerHTML = chipsFor(it);
+    b.onclick = () => openEditor(visible().map((x) => x.id), visible().findIndex((x) => x.id === it.id));
+    const anchor = prev ? prev.nextSibling : grid.firstChild;
+    if (b !== anchor) grid.insertBefore(b, anchor);
+    prev = b;
+  });
+}
+
+function renderProgress() {
+  const box = $('f-progress');
+  const mine = job && F && job.fid === F.fid;
+  if (!mine) { box.hidden = true; return; }
+  box.hidden = false;
+  const running = ['starting', 'loading', 'running'].includes(job.state);
+  const bar = $('f-bar');
+  bar.classList.toggle('indet', job.state === 'loading' || job.state === 'starting');
+  // счёт по всей папке, а не по остатку: «9 из 24», а не «2 из 17» после продолжения
+  const all = job.total + job.skipped, ready = job.done + job.skipped;
+  bar.firstElementChild.style.width = all ? (100 * (job.k + job.skipped) / all) + '%' : '100%';
+  let text;
+  if (job.state === 'loading' || job.state === 'starting') text = 'Готовлю модель… (в самый первый раз она скачивается, ≈1 ГБ)';
+  else if (running) text = `Готово ${ready} из ${all}` + (job.etaText ? ` · осталось ≈ ${job.etaText}` : '') + (job.current ? ` · сейчас: ${job.current}` : '');
+  else if (job.state === 'done') text = `Готово: ${ready} фото` + (job.done ? ` (за ${job.elapsed})` : '') + '.' + (job.flagged ? ` Посмотрите отмеченные: ${job.flagged}.` : ' Всё выглядит чисто.');
+  else if (job.state === 'stopped') text = `Остановлено: готово ${ready} из ${all}. Готовое сохранено — «Продолжить» доделает остальное.`;
+  else text = 'Обработка прервалась: ' + (job.message || 'неизвестная ошибка');
+  $('f-progress-text').textContent = text;
+  $('f-stop').hidden = !running;
+  $('f-continue').hidden = job.state !== 'stopped';
+  const errs = $('f-errors');
+  errs.hidden = !job.errorCount;
+  if (job.errorCount) errs.innerHTML = `Не получилось (${job.errorCount}): ` + job.errors.map(([r, m]) => `<div>${esc(r)} — ${esc(m)}</div>`).join('');
+}
+
+$('f-stop').onclick = async () => { $('f-stop').disabled = true; try { job = await api('/api/stop', {}); } finally { $('f-stop').disabled = false; } renderProgress(); };
+$('f-continue').onclick = () => startFolderJob(F.settings);
+$('f-reveal').onclick = () => api('/api/reveal', { f: F.fid }).catch((e) => toast(e.message, true));
+$('back').onclick = () => { location.hash = ''; };
+
+async function startFolderJob(s) {
+  if (!F.inputs || !F.inputs.length) throw new Error('Не знаю, из каких фото сделана эта папка — выберите их заново на стартовой странице.');
+  if (F.inputsMissing && F.inputsMissing.length) throw new Error('Оригиналы не найдены: ' + F.inputsMissing.join(', ') + '. Их переместили или удалили.');
+  job = await api('/api/start', { paths: F.inputs, out: F.folder, settings: s });
+  F.settings = s;
+  renderProgress();
+}
+
+// другие настройки
+let reSettings = null;
+$('f-settings').onclick = () => {
+  reSettings = Object.assign({}, F.settings);
+  const note = () => {
+    const m = MODELS.find((x) => x.key === reSettings.model);
+    $('re-note').textContent = reSettings.model !== F.settings.model && m
+      ? `Сменилось качество — фото будут вырезаны заново, ≈ ${Math.max(1, Math.round(items.length * m.seconds / 60))} мин. Исправленные щелчком останутся как есть.`
+      : 'Займёт пару секунд на фото.';
+    $('re-apply').textContent = reSettings.model !== F.settings.model ? 'Вырезать заново' : 'Пересобрать';
+  };
+  renderSettings($('re-settings'), reSettings, note);
+  note();
+  $('re-error').hidden = true;
+  $('resettings').hidden = false;
+};
+$('re-cancel').onclick = () => { $('resettings').hidden = true; };
+$('re-apply').onclick = async () => {
+  try { await startFolderJob(reSettings); $('resettings').hidden = true; }
+  catch (e) { $('re-error').hidden = false; $('re-error').textContent = e.message; }
+};
+
+// ═════════ редактор ═════════
+function setBusy(text) { busy = !!text; $('busy').hidden = !text; $('busy-text').textContent = text || ''; }
+function setStatus(text, err) { $('status').textContent = text || ''; $('status').className = 'status' + (err ? ' err' : ''); }
+
+async function showPic(url) {
+  const img = new Image();
+  img.src = url;
+  try { await img.decode(); } catch {}
+  $('pic').src = url;
+}
+
+async function openEditor(ids, idx) {
+  nav = ids; navIdx = idx;
+  $('editor').hidden = false;
+  document.body.style.overflow = 'hidden';
+  await loadCurrent();
+}
+
+async function loadCurrent() {
+  cur = byId[nav[navIdx]];
+  showingOrig = false;
+  $('orig-label').hidden = true;
+  $('b-orig').setAttribute('aria-pressed', 'false');
+  $('e-name').textContent = cur.rel;
+  $('e-pos').textContent = `${navIdx + 1} из ${nav.length} · ${cur.size ? cur.size.join('×') + ' px' : ''}`;
+  renderSide();
+  setStatus('');
+  await showPic(cutUrl(cur, 1600));
+  new Image().src = srcUrl(cur, 1600);
+  if (!prepared.has(cur.id)) {
+    const id = cur.id;
+    setStatus(samReady ? 'Готовлю фото к щелчкам…' : 'Готовлю щелчки (только в первый раз, секунд десять)…');
+    try {
+      await api(`/api/item/${id}/prepare?${q()}`, {});
+      prepared.add(id); samReady = true;
+      if (cur && cur.id === id) setStatus('Можно щёлкать.');
+    } catch (e) { if (cur && cur.id === id) setStatus('Не удалось подготовить: ' + e.message, true); }
+  }
+  const next = byId[nav[navIdx + 1]];
+  if (next) new Image().src = cutUrl(next, 1600);
+}
+
+function renderSide() {
+  $('e-chips').innerHTML = chipsFor({ ...cur, flags: [] });
+  $('e-flags').innerHTML = cur.flags.map((f) => `<div class="flag">⚠ ${esc(flagText[f] || f)}</div>`).join('');
+}
+
+function closeEditor() {
+  $('editor').hidden = true;
+  document.body.style.overflow = '';
+  cur = null;
+  renderTabs(); renderGrid();
+}
+
+function go(delta) {
+  const n = navIdx + delta;
+  if (n < 0 || n >= nav.length) {
+    if (delta > 0) { closeEditor(); toast('Это было последнее фото в списке.'); } else setStatus('Это первое.');
+    return;
+  }
+  navIdx = n;
+  loadCurrent();
+}
+
+function applyItem(it) {
+  Object.assign(byId[it.id], it);
+  // ответ мог прийти, когда редактор уже закрыли (Esc посреди правки)
+  if ($('editor').hidden) { renderTabs(); renderGrid(); return; }
+  if (cur && cur.id === it.id) { cur = byId[it.id]; renderSide(); }
+}
+
+async function act(path, body, busyText, okText) {
+  if (busy || !cur) return;
+  const id = cur.id;
+  setBusy(busyText);
+  try {
+    applyItem(await api(path + `?${q()}`, body));
+    if (cur && cur.id === id) await showPic(cutUrl(cur, 1600));
+    setStatus(okText || '');
+  } catch (e) { setStatus('Не получилось: ' + e.message, true); }
+  finally { setBusy(''); }
+}
+const edit = (body, text, ok) => act(`/api/item/${cur.id}/edit`, body, text, ok);
+
+async function approveNext() {
+  if (!cur || busy) return;
+  try { applyItem(await api(`/api/item/${cur.id}/approve?${q()}`, { value: true })); } catch (e) { return setStatus(e.message, true); }
+  go(1);
+}
+
+let drag = null;
+const pic = $('pic');
+pic.addEventListener('contextmenu', (e) => e.preventDefault());
+pic.addEventListener('pointerdown', (e) => {
+  if (busy || showingOrig) return;
+  e.preventDefault();
+  pic.setPointerCapture(e.pointerId);
+  drag = { x: e.clientX, y: e.clientY, button: e.button, shift: e.shiftKey, alt: e.altKey, moved: false };
+});
+pic.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
+  drag.moved = true;
+  const r = pic.getBoundingClientRect();
+  const x0 = Math.max(r.left, Math.min(drag.x, e.clientX)), x1 = Math.min(r.right, Math.max(drag.x, e.clientX));
+  const y0 = Math.max(r.top, Math.min(drag.y, e.clientY)), y1 = Math.min(r.bottom, Math.max(drag.y, e.clientY));
+  const band = $('band');
+  band.hidden = false;
+  band.className = 'band' + (e.altKey || drag.alt ? ' keep' : '');
+  Object.assign(band.style, { left: (x0 - r.left) + 'px', top: (y0 - r.top) + 'px', width: (x1 - x0) + 'px', height: (y1 - y0) + 'px' });
+});
+pic.addEventListener('pointerup', (e) => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  $('band').hidden = true;
+  const r = pic.getBoundingClientRect();
+  const nx = (v) => Math.max(0, Math.min(1, (v - r.left) / r.width));
+  const ny = (v) => Math.max(0, Math.min(1, (v - r.top) / r.height));
+  if (d.moved) {
+    const keep = e.altKey || d.alt;
+    edit({ op: keep ? 'keep' : 'erase', x0: nx(d.x), x1: nx(e.clientX), y0: ny(d.y), y1: ny(e.clientY) },
+      keep ? 'Оставляю только рамку…' : 'Стираю…', (keep ? 'Оставлено только внутри рамки.' : 'Стёрто.') + ' Z — отменить.');
+  } else {
+    const restore = d.button === 2 || d.shift;
+    edit({ op: restore ? 'restore' : 'remove', x: nx(e.clientX), y: ny(e.clientY) },
+      restore ? 'Возвращаю…' : 'Убираю…', (restore ? 'Возвращено.' : 'Убрано.') + ' Z — отменить.');
+  }
+});
+pic.addEventListener('pointercancel', () => { drag = null; $('band').hidden = true; });
+
+function setOrig(on) {
+  if (!cur || showingOrig === on) return;
+  showingOrig = on;
+  $('orig-label').hidden = !on;
+  $('b-orig').setAttribute('aria-pressed', String(on));
+  showPic(on ? srcUrl(cur, 1600) : cutUrl(cur, 1600));
+}
+
+$('b-undo').onclick = () => act(`/api/item/${cur.id}/undo`, {}, 'Отменяю…', 'Отменено.');
+$('b-reset').onclick = () => act(`/api/item/${cur.id}/reset`, {}, 'Возвращаю как было…', 'Как было у модели.');
+$('b-orig').onclick = () => setOrig(!showingOrig);
+$('b-final').onclick = () => window.open(`/file/final/${cur.id}?${q()}&t=${Date.now()}`, '_blank');
+$('b-reveal').onclick = () => api('/api/reveal', { f: F.fid, id: cur.id }).catch(() => {});
+$('b-prev').onclick = () => go(-1);
+$('b-next').onclick = () => go(1);
+$('b-approve').onclick = approveNext;
+$('b-close').onclick = closeEditor;
+
+document.addEventListener('keydown', (e) => {
+  if (!$('resettings').hidden && e.key === 'Escape') { $('resettings').hidden = true; return; }
+  if ($('editor').hidden) return;
+  if (e.target.closest('input, textarea')) return;
+  const k = e.key.toLowerCase();
+  if (k === 'escape') return closeEditor();
+  if (k === ' ') { e.preventDefault(); return setOrig(true); }
+  if (e.metaKey || e.ctrlKey) { if (k === 'z' || k === 'я') { e.preventDefault(); $('b-undo').click(); } return; }
+  if (k === 'arrowright') return go(1);
+  if (k === 'arrowleft') return go(-1);
+  if (k === 'a' || k === 'ф' || k === 'enter') { e.preventDefault(); return approveNext(); }
+  if (k === 'z' || k === 'я') return $('b-undo').click();
+  if (k === 'r' || k === 'к') return $('b-reset').click();
+  if (k === 'o' || k === 'щ') return $('b-final').click();
+});
+document.addEventListener('keyup', (e) => { if (e.key === ' ' && !$('editor').hidden) setOrig(false); });
+
+// ═════════ маршрут и опрос ═════════
+function goFolder(fid) { location.hash = 'f=' + fid; }
+
+async function route() {
+  const h = decodeURIComponent(location.hash.slice(1));
+  try {
+    if (h.startsWith('f=')) {
+      showView('folder');
+      await openFolder(h.slice(2));
+      return;
+    }
+    showView('home');
+    document.title = 'Вырезать фигурки';
+    const home = await loadHome();
+    if (h.startsWith('paths=')) {
+      history.replaceState(null, '', '#');
+      await choose(JSON.parse(h.slice(6)));
+    } else if (h.startsWith('open=')) {
+      const out = h.slice(5);
+      const r = home.recent.find((x) => x.out === out);
+      if (r) return goFolder(r.fid);
+      history.replaceState(null, '', '#');
+    }
+  } catch (e) {
+    showView('home');
+    pickError(e.message);
+  }
+}
+window.addEventListener('hashchange', route);
+
+let refreshing = false;
+async function poll() {
+  try {
+    const j = await api('/api/job');
+    const was = job;
+    job = j;
+    if (!$('home').hidden) renderJobBanner(job);
+    if (!$('folder').hidden && F) {
+      renderProgress();
+      if (job && job.fid === F.fid && job.rev !== lastRev && !refreshing) {
+        lastRev = job.rev;
+        refreshing = true;
+        try { await refreshItems(); } finally { refreshing = false; }
+      }
+      if (was && job && was.state !== job.state && job.fid === F.fid && job.state === 'done' && job.flagged && filter === 'all') {
+        filter = 'check'; renderTabs(); renderGrid();
+      }
+    }
+  } catch {}
+  const running = job && ['starting', 'loading', 'running'].includes(job.state);
+  setTimeout(poll, running ? 1000 : 4000);
+}
+
+async function refreshItems() {
+  const s = await api(`/api/state?f=${F.fid}`);
+  if (!F || s.fid !== F.fid) return;
+  items = s.items;
+  for (const it of items) { if (byId[it.id]) Object.assign(byId[it.id], it); else byId[it.id] = it; }
+  items = items.map((it) => byId[it.id]);
+  if ($('editor').hidden) { renderTabs(); renderGrid(); }
+}
+
+renderBgs();
+(async () => {
+  try { MODELS = (await api('/api/home')).models; } catch {}
+  await route();
+  poll();
+})();
+</script>
+</body>
+</html>

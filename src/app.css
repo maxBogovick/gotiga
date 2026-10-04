@@ -6,6 +6,7 @@
 @import "tailwindcss";
 /* Local file — Vite inlines it into this sheet. Not a network @import. */
 @import "./lib/styles/lightbox.css";
+@import "./lib/styles/profile.css";
 @source "../src/**/*.{svelte,ts,js,html}";
 
 /* ═══════════════════════════════════════════════════════════════════════════

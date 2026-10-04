@@ -24,6 +24,12 @@
   // Дверь не рисуется, пока сервер не сказал, что она есть: кнопка, ведущая в
   // никуда, хуже отсутствующей.
   let enabled = $state(false);
+  // Стенд на своей машине: Telegram сюда не достучится никогда — webhook
+  // принадлежит рабочему серверу. Пока страница об этом не знала, она честно
+  // вела в Telegram, где бот отвечал «слово остыло», — то есть показывала
+  // тупик и молчала о нём.
+  let local = $state(false);
+  let playing = $state(false);
   // Не `state`: в компоненте это имя забирает себе `$state`, и компонент молча
   // уезжает в legacy-режим (CLAUDE.md § 14.1).
   let stage = $state<'idle' | 'waiting' | 'asked' | 'done' | 'refused' | 'cold' | 'failed'>('idle');
@@ -46,7 +52,9 @@
 
   onMount(async () => {
     try {
-      enabled = (await api.telegramLoginConfig()).enabled;
+      const conf = await api.telegramLoginConfig();
+      enabled = conf.enabled;
+      local = conf.local;
     } catch {
       enabled = false; // сервер старой сборки — двери просто нет
     }
@@ -191,6 +199,25 @@
     if (res.state === 'waiting' || res.state === 'asked') stage = res.state;
   }
 
+  /**
+   * Доиграть обряд на стенде. Сервер играет бота тем же путём, каким приходит
+   * Telegram; страница после этого ничего не спрашивает — обычный опрос сам
+   * заберёт сессию следующим тактом, как если бы человек нажал «Это я» в
+   * Telegram.
+   */
+  async function playHere(yes: boolean) {
+    if (playing || !code) return;
+    playing = true;
+    try {
+      await api.telegramPlayLocally(code, yes);
+      await ask();
+    } catch {
+      /* не вышло — слово живо, часы идут, кнопка на месте */
+    } finally {
+      playing = false;
+    }
+  }
+
   function again() {
     stopPolling();
     forget();
@@ -222,30 +249,47 @@
     {:else if stage === 'waiting' || stage === 'asked'}
       <p class="door-label">{$t('authTelegramWord')}</p>
       <p class="door-word">{word}</p>
-      <a class="door-btn door-btn--go" href={link} target="_blank" rel="noopener">
-        {$t('authTelegramOpen')}
-      </a>
+      {#if local}
+        <!-- Настоящая ссылка на бота здесь не показывается вовсе: она ведёт
+             туда, где это слово неизвестно. Показывать её значит предлагать
+             тупик. -->
+        <button class="door-btn door-btn--go" onclick={() => playHere(true)} disabled={playing}>
+          {playing ? '…' : $t('authTelegramPlayHere')}
+        </button>
+        <p class="door-note door-stand">{$t('authTelegramStandNote')}</p>
+        <button class="door-again" onclick={() => playHere(false)} disabled={playing}>
+          {$t('authTelegramPlayRefuse')}
+        </button>
+      {:else}
+        <a class="door-btn door-btn--go" href={link} target="_blank" rel="noopener">
+          {$t('authTelegramOpen')}
+        </a>
 
-      <!-- Два шага вместо абзаца: первый гаснет сам, когда бот получил слово
-           (`asked`). Сервер это знал и прежде, а страница молчала — отсюда
-           «получилось у меня или нет». -->
-      <ol class="door-steps">
-        <li class:passed={stage === 'asked'}>
-          <span class="door-mark" aria-hidden="true">{stage === 'asked' ? '✓' : '1'}</span>
-          <span>{$t('authTelegramStep1')}</span>
-        </li>
-        <li class:now={stage === 'asked'}>
-          <span class="door-mark" aria-hidden="true">2</span>
-          <span>{$t('authTelegramStep2')}</span>
-        </li>
-      </ol>
+        <!-- Два шага вместо абзаца: первый гаснет сам, когда бот получил слово
+             (`asked`). Сервер это знал и прежде, а страница молчала — отсюда
+             «получилось у меня или нет». -->
+        <ol class="door-steps">
+          <li class:passed={stage === 'asked'}>
+            <span class="door-mark" aria-hidden="true">{stage === 'asked' ? '✓' : '1'}</span>
+            <span>{$t('authTelegramStep1')}</span>
+          </li>
+          <li class:now={stage === 'asked'}>
+            <span class="door-mark" aria-hidden="true">2</span>
+            <span>{$t('authTelegramStep2')}</span>
+          </li>
+        </ol>
+      {/if}
 
       <p class="door-live" role="status">
         <span class="door-pulse" aria-hidden="true"></span>
-        {$t('authTelegramWaiting')} {$t('authTelegramLives')} {clockFace}
+        <!-- «Ждём Telegram» на стенде — неправда: Telegram сюда не придёт.
+             Часы слова остаются: срок у него тот же. -->
+        {#if !local}{$t('authTelegramWaiting')} {/if}{$t('authTelegramLives')} {clockFace}
       </p>
 
-      <p class="door-note door-note--warn">{$t('authTelegramWarn')}</p>
+      {#if !local}
+        <p class="door-note door-note--warn">{$t('authTelegramWarn')}</p>
+      {/if}
       <button class="door-again" onclick={again}>{$t('authTelegramAgain')}</button>
     {:else if stage === 'done'}
       <!-- Печать держится секунду: переход на главную без единого слова о том,
@@ -267,6 +311,13 @@
 {/if}
 
 <style>
+  /* Подпись стенда. Приглушена нарочно: это не часть двери, а сообщение о том,
+     где мы находимся. */
+  .door-stand {
+    max-width: 22rem;
+    text-align: center;
+  }
+
   .door {
     display: flex;
     flex-direction: column;

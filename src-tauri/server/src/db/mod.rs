@@ -3634,6 +3634,79 @@ impl Repository {
         Ok(res.rows_affected())
     }
 
+    // === TELEGRAM-КАНАЛ ===
+
+    /// Отметить вещи, замеченные на людях. Уже отмеченные не трогаются: строка
+    /// журнала заводится один раз, поэтому скрыть и снова показать работу —
+    /// не повод объявлять её второй раз.
+    pub async fn channel_note_seen(&self, kind: &str, ids: &[Uuid], skipped: bool) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let res = sqlx::query(
+            "INSERT INTO telegram_channel_posts (kind, target_id, skipped)
+             SELECT $1, id, $3 FROM UNNEST($2::uuid[]) AS id
+             ON CONFLICT (kind, target_id) DO NOTHING",
+        )
+        .bind(kind)
+        .bind(ids)
+        .bind(skipped)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Что пора объявить: замечено не позже `grace_secs` назад, ещё не вышло и
+    /// не исчерпало попыток. Старшие первыми — канал идёт в том порядке, в
+    /// каком вещи появлялись на сайте.
+    pub async fn channel_due(
+        &self,
+        grace_secs: i64,
+        max_attempts: i32,
+        limit: i64,
+    ) -> Result<Vec<(String, Uuid)>> {
+        Ok(sqlx::query_as(
+            "SELECT kind, target_id FROM telegram_channel_posts
+              WHERE posted_at IS NULL AND NOT skipped AND attempts < $2
+                AND seen_at <= NOW() - make_interval(secs => $1)
+              ORDER BY seen_at
+              LIMIT $3",
+        )
+        .bind(grace_secs as f64)
+        .bind(max_attempts)
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn channel_mark_posted(&self, kind: &str, id: Uuid, message_id: Option<i64>) -> Result<()> {
+        sqlx::query(
+            "UPDATE telegram_channel_posts
+                SET posted_at = NOW(), message_id = $3, last_error = NULL
+              WHERE kind = $1 AND target_id = $2",
+        )
+        .bind(kind)
+        .bind(id)
+        .bind(message_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn channel_mark_failed(&self, kind: &str, id: Uuid, why: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE telegram_channel_posts
+                SET attempts = attempts + 1, last_error = $3
+              WHERE kind = $1 AND target_id = $2",
+        )
+        .bind(kind)
+        .bind(id)
+        .bind(why)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
     /// Аккаунт, заведённый через Telegram: ни почты, ни значков.
     ///
     /// Почту спрашивает дело (бронь, заказ, заявка), а не дверь, — и спрашивает
@@ -7033,10 +7106,928 @@ impl Repository {
                     (SELECT COUNT(*) FROM tale_likes k WHERE k.tale_id = l.id AND k.value = 1)::bigint AS likes,
                     (SELECT COUNT(*) FROM tale_likes k WHERE k.tale_id = l.id AND k.value = -1)::bigint AS dislikes,
                     (SELECT COUNT(*) FROM tale_comments c WHERE c.tale_id = l.id AND c.is_approved)::bigint AS comments,
-                    (SELECT COUNT(*) FROM tale_comments c WHERE c.tale_id = l.id AND NOT c.is_approved)::bigint AS pending_comments
+                    (SELECT COUNT(*) FROM tale_comments c WHERE c.tale_id = l.id AND NOT c.is_approved)::bigint AS pending_comments,
+                    l.sequel_of::text AS sequel_of,
+                    (SELECT COUNT(*) FROM tale_sequel_wishes w WHERE w.tale_id = l.id)::bigint AS sequel_wishes,
+                    (SELECT COUNT(*) FROM tale_sequel_wishes w
+                      WHERE w.tale_id = l.id AND w.email IS NOT NULL)::bigint AS sequel_letters
              FROM gazette_leaves l
              WHERE l.kind = 'tale'",
         )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    // === БАЙКИ: ЧИТАТЕЛЬ ПОСЛЕ ПОСЛЕДНЕЙ СТРОКИ ===
+
+    /// Продолжение и начало одной байки, если они на людях, и просьба этого
+    /// читателя: `None` — читатель не назван жетоном; `Some(None)` — не
+    /// просил; `Some(Some((письмо, записка)))` — просил, и ждёт ли письма и
+    /// записки в Telegram. Они отдаются вместе с просьбой, иначе вернувшийся
+    /// читатель видел бы приглашение оставить адрес, который уже оставил.
+    pub async fn tale_sequel_bits(
+        &self,
+        tale_id: Uuid,
+        visitor_token: Option<&str>,
+    ) -> Result<(
+        Option<crate::models::GazetteNeighborDto>,
+        Option<crate::models::GazetteNeighborDto>,
+        Option<Option<(bool, bool)>>,
+    )> {
+        let sequel: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT slug, title_en, title_ru FROM gazette_leaves
+              WHERE sequel_of = $1 AND kind = 'tale'
+                AND (status = 'published'
+                     OR (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()))
+              ORDER BY COALESCE(published_at, scheduled_at, created_at), id
+              LIMIT 1",
+        )
+        .bind(tale_id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        let original: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT o.slug, o.title_en, o.title_ru
+               FROM gazette_leaves l
+               JOIN gazette_leaves o ON o.id = l.sequel_of
+              WHERE l.id = $1 AND o.kind = 'tale'
+                AND (o.status = 'published'
+                     OR (o.status = 'scheduled' AND o.scheduled_at IS NOT NULL AND o.scheduled_at <= NOW()))",
+        )
+        .bind(tale_id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        let wants = match visitor_token {
+            None => None,
+            Some(token) => Some(
+                sqlx::query_as::<_, (bool, bool)>(
+                    "SELECT email IS NOT NULL, by_telegram FROM tale_sequel_wishes
+                      WHERE tale_id = $1 AND visitor_token = $2",
+                )
+                .bind(tale_id)
+                .bind(token)
+                .fetch_optional(&self.pg_pool)
+                .await?,
+            ),
+        };
+        let neighbor = |(slug, title_en, title_ru): (String, String, String)| {
+            crate::models::GazetteNeighborDto {
+                slug,
+                title_en,
+                title_ru,
+            }
+        };
+        Ok((sequel.map(neighbor), original.map(neighbor), wants))
+    }
+
+    /// Назначить «хочу продолжение». Возвращает, стоит ли просьба, ждёт ли она
+    /// письма и ждёт ли записки в Telegram.
+    ///
+    /// Вошедший поглощает свои строки с других устройств — так же, как голос
+    /// под байкой, — иначе один человек просил бы продолжение дважды. Почта и
+    /// просьба о записке не стираются повторным нажатием без них: человек,
+    /// оставивший адрес, не должен терять письмо оттого, что нажал кнопку ещё
+    /// раз. `telegram` — `None` оставляет решённое как есть.
+    pub async fn set_tale_sequel_wish(
+        &self,
+        tale_id: Uuid,
+        visitor_token: &str,
+        user_id: Option<Uuid>,
+        want: bool,
+        email: Option<&str>,
+        telegram: Option<bool>,
+        lang: &str,
+    ) -> Result<(bool, bool, bool)> {
+        let mut tx = self.pg_pool.begin().await?;
+        if !want {
+            sqlx::query(
+                "DELETE FROM tale_sequel_wishes
+                  WHERE tale_id = $1 AND (visitor_token = $2 OR ($3::uuid IS NOT NULL AND user_id = $3))",
+            )
+            .bind(tale_id)
+            .bind(visitor_token)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok((false, false, false));
+        }
+
+        // Адрес и просьба о записке с другого устройства того же человека
+        // переезжают сюда, а не пропадают вместе со строкой.
+        let carried: Vec<(Option<String>, bool)> = match user_id {
+            None => Vec::new(),
+            Some(uid) => sqlx::query_as(
+                "DELETE FROM tale_sequel_wishes
+                  WHERE tale_id = $1 AND user_id = $2 AND visitor_token <> $3
+                  RETURNING email, by_telegram",
+            )
+            .bind(tale_id)
+            .bind(uid)
+            .bind(visitor_token)
+            .fetch_all(&mut *tx)
+            .await?,
+        };
+        let email = email
+            .map(str::to_string)
+            .or_else(|| carried.iter().find_map(|(e, _)| e.clone()));
+        let telegram = telegram.or_else(|| carried.iter().any(|(_, t)| *t).then_some(true));
+
+        let (has_letter, by_telegram): (bool, bool) = sqlx::query_as(
+            "INSERT INTO tale_sequel_wishes (tale_id, visitor_token, user_id, email, by_telegram, lang)
+             VALUES ($1, $2, $3, $4, COALESCE($5, FALSE), $6)
+             ON CONFLICT (tale_id, visitor_token) DO UPDATE SET
+                 user_id = COALESCE(EXCLUDED.user_id, tale_sequel_wishes.user_id),
+                 email = COALESCE(EXCLUDED.email, tale_sequel_wishes.email),
+                 by_telegram = COALESCE($5, tale_sequel_wishes.by_telegram),
+                 lang = EXCLUDED.lang
+             RETURNING email IS NOT NULL, by_telegram",
+        )
+        .bind(tale_id)
+        .bind(visitor_token)
+        .bind(user_id)
+        .bind(email)
+        .bind(telegram)
+        .bind(lang)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((true, has_letter, by_telegram))
+    }
+
+    /// Какую байку продолжает эта. Обе обязаны быть байками — лист вестника
+    /// ничьим началом не бывает, — и цепочка не замыкается в круг: байка не
+    /// продолжает ни себя, ни ту, что уже продолжает её (прямо или через
+    /// другие). В круге каждая страница называла бы соседку разом и началом, и
+    /// продолжением, а письма уходили бы в обе стороны.
+    pub async fn set_tale_sequel_of(&self, tale_id: Uuid, of: Option<Uuid>) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE gazette_leaves SET sequel_of = $2
+              WHERE id = $1 AND kind = 'tale'
+                AND ($2::uuid IS NULL
+                     OR ($2 <> $1
+                         AND EXISTS (SELECT 1 FROM gazette_leaves o
+                                      WHERE o.id = $2 AND o.kind = 'tale')
+                         AND NOT EXISTS (
+                             WITH RECURSIVE up AS (
+                                 SELECT sequel_of AS id FROM gazette_leaves WHERE id = $2
+                                 UNION
+                                 SELECT g.sequel_of FROM gazette_leaves g JOIN up ON g.id = up.id
+                             )
+                             SELECT 1 FROM up WHERE id = $1)))",
+        )
+        .bind(tale_id)
+        .bind(of)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    // --- Голосование «о ком записать следующую» ---
+
+    pub async fn tale_poll_is_open(&self) -> Result<bool> {
+        Ok(sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM tale_polls WHERE state = 'open')")
+            .fetch_one(&self.pg_pool)
+            .await?)
+    }
+
+    /// Открыть голосование. Кандидаты — в том порядке, в каком их назвали.
+    pub async fn open_tale_poll(&self, figurine_ids: &[Uuid]) -> Result<Uuid> {
+        let mut tx = self.pg_pool.begin().await?;
+        let id: Uuid = sqlx::query_scalar("INSERT INTO tale_polls (state) VALUES ('open') RETURNING id")
+            .fetch_one(&mut *tx)
+            .await?;
+        for (position, fid) in figurine_ids.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO tale_poll_candidates (poll_id, figurine_id, position)
+                 VALUES ($1, $2, $3)",
+            )
+            .bind(id)
+            .bind(fid)
+            .bind(position as i16)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(id)
+    }
+
+    /// Голосование, которое сейчас показывается читателю: открытое, а если
+    /// его нет — закрытое с победителем, чья байка ещё не вышла (полка тогда
+    /// говорит «пишется»). Исполненное не показывается: сама байка уже на
+    /// полке и говорит за себя.
+    pub async fn current_tale_poll(&self) -> Result<Option<(Uuid, String, Option<Uuid>)>> {
+        Ok(sqlx::query_as(
+            "SELECT id, state, winner_figurine_id FROM tale_polls
+              WHERE state = 'open'
+                 OR (state = 'closed' AND winner_figurine_id IS NOT NULL AND fulfilled_leaf_id IS NULL)
+              ORDER BY (state = 'open') DESC, closed_at DESC NULLS LAST, opened_at DESC
+              LIMIT 1",
+        )
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Кандидаты голосования: лицо и имя, в назначенном порядке.
+    pub async fn tale_poll_works(
+        &self,
+        poll_id: Uuid,
+    ) -> Result<Vec<(Uuid, String, Option<String>, Option<String>)>> {
+        Ok(sqlx::query_as(
+            "SELECT f.id, f.name, f.slug, face.url
+               FROM tale_poll_candidates c
+               JOIN figurines f ON f.id = c.figurine_id
+               LEFT JOIN LATERAL (
+                   SELECT COALESCE(i.thumb_path, i.file_path) AS url FROM images i
+                    WHERE i.figurine_id = f.id AND i.image_type = 'face'
+                    ORDER BY i.sort_order LIMIT 1
+               ) face ON TRUE
+              WHERE c.poll_id = $1
+              ORDER BY c.position",
+        )
+        .bind(poll_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Выбор этого читателя и то, ждёт ли он письма.
+    pub async fn tale_poll_choice(
+        &self,
+        poll_id: Uuid,
+        visitor_token: &str,
+    ) -> Result<Option<(Uuid, bool)>> {
+        Ok(sqlx::query_as(
+            "SELECT figurine_id, email IS NOT NULL FROM tale_poll_votes
+              WHERE poll_id = $1 AND visitor_token = $2",
+        )
+        .bind(poll_id)
+        .bind(visitor_token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Отдать голос. Только пока голосование открыто и только за
+    /// выставленную работу — второе держит внешний ключ, первое проверяется
+    /// здесь же, до того как что-либо тронуто. `None` — голосование уже не
+    /// принимает.
+    ///
+    /// Проверка стоит первой и держит строку голосования общим замком до
+    /// конца сделки. Прежде голоса вошедшего с других устройств удалялись до
+    /// неё: голос из устаревшей вкладки в закрытое голосование стирал прежний
+    /// голос вместе с адресом, и закрытое голосование теряло голос уже после
+    /// итога. Замок же не даёт закрыть голосование посреди записи голоса.
+    pub async fn vote_tale_poll(
+        &self,
+        poll_id: Uuid,
+        visitor_token: &str,
+        user_id: Option<Uuid>,
+        figurine_id: Uuid,
+        email: Option<&str>,
+        lang: &str,
+    ) -> Result<Option<(Uuid, bool)>> {
+        let mut tx = self.pg_pool.begin().await?;
+        let open: bool = sqlx::query_scalar(
+            "SELECT state = 'open' FROM tale_polls WHERE id = $1 FOR SHARE",
+        )
+        .bind(poll_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or(false);
+        if !open {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+        // Вошедший голосует один раз, с какого бы устройства ни пришёл.
+        let carried: Option<String> = match user_id {
+            None => None,
+            Some(uid) => sqlx::query_scalar::<_, Option<String>>(
+                "DELETE FROM tale_poll_votes
+                  WHERE poll_id = $1 AND user_id = $2 AND visitor_token <> $3
+                  RETURNING email",
+            )
+            .bind(poll_id)
+            .bind(uid)
+            .bind(visitor_token)
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .flatten()
+            .next(),
+        };
+        let email = email.map(str::to_string).or(carried);
+        let row: (Uuid, bool) = sqlx::query_as(
+            "INSERT INTO tale_poll_votes (poll_id, visitor_token, user_id, figurine_id, email, lang)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (poll_id, visitor_token) DO UPDATE SET
+                 figurine_id = EXCLUDED.figurine_id,
+                 user_id = COALESCE(EXCLUDED.user_id, tale_poll_votes.user_id),
+                 email = COALESCE(EXCLUDED.email, tale_poll_votes.email),
+                 lang = EXCLUDED.lang
+             RETURNING figurine_id, email IS NOT NULL",
+        )
+        .bind(poll_id)
+        .bind(visitor_token)
+        .bind(user_id)
+        .bind(figurine_id)
+        .bind(email)
+        .bind(lang)
+        .fetch_one(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(row))
+    }
+
+    /// Голосование закрыто, а проголосовавший просит письмо: адрес ложится к
+    /// его голосу, выбор не трогается. Не голосовал — `None`.
+    pub async fn attach_tale_poll_letter(
+        &self,
+        poll_id: Uuid,
+        visitor_token: &str,
+        email: &str,
+        lang: &str,
+    ) -> Result<Option<(Uuid, bool)>> {
+        Ok(sqlx::query_as(
+            "UPDATE tale_poll_votes SET email = $3, lang = $4
+              WHERE poll_id = $1 AND visitor_token = $2
+              RETURNING figurine_id, email IS NOT NULL",
+        )
+        .bind(poll_id)
+        .bind(visitor_token)
+        .bind(email)
+        .bind(lang)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn tale_poll_has_candidate(&self, poll_id: Uuid, figurine_id: Uuid) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM tale_poll_candidates
+                             WHERE poll_id = $1 AND figurine_id = $2)",
+        )
+        .bind(poll_id)
+        .bind(figurine_id)
+        .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// Все голосования для стола, новые первыми.
+    pub async fn admin_tale_polls(
+        &self,
+    ) -> Result<
+        Vec<(
+            Uuid,
+            String,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )>,
+    > {
+        Ok(sqlx::query_as(
+            "SELECT p.id, p.state, p.opened_at, p.closed_at, p.winner_figurine_id,
+                    l.slug, l.title_en, l.title_ru
+               FROM tale_polls p
+               LEFT JOIN gazette_leaves l ON l.id = p.fulfilled_leaf_id
+              ORDER BY p.opened_at DESC
+              LIMIT 50",
+        )
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Кандидаты сразу нескольких голосований со счётом — это видит только
+    /// стол. Одним запросом на весь список, а не запросом на голосование:
+    /// за год еженедельных голосований их набирается полсотни.
+    pub async fn admin_tale_poll_candidates(
+        &self,
+        poll_ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, Uuid, String, Option<String>, i64, i64)>> {
+        if poll_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(sqlx::query_as(
+            "SELECT c.poll_id, f.id, f.name, face.url,
+                    COUNT(v.visitor_token)::bigint,
+                    (COUNT(v.visitor_token) FILTER (WHERE v.email IS NOT NULL))::bigint
+               FROM tale_poll_candidates c
+               JOIN figurines f ON f.id = c.figurine_id
+               LEFT JOIN LATERAL (
+                   SELECT COALESCE(i.thumb_path, i.file_path) AS url FROM images i
+                    WHERE i.figurine_id = f.id AND i.image_type = 'face'
+                    ORDER BY i.sort_order LIMIT 1
+               ) face ON TRUE
+               LEFT JOIN tale_poll_votes v
+                      ON v.poll_id = c.poll_id AND v.figurine_id = c.figurine_id
+              WHERE c.poll_id = ANY($1)
+              GROUP BY c.poll_id, c.position, f.id, f.name, face.url
+              ORDER BY c.poll_id, c.position",
+        )
+        .bind(poll_ids)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Закрыть голосование с победителем. Победитель обязан быть кандидатом,
+    /// а закрыть можно только открытое. Возвращает время открытия — по нему
+    /// ищется уже вышедшая байка о победителе.
+    pub async fn close_tale_poll(
+        &self,
+        poll_id: Uuid,
+        winner: Uuid,
+    ) -> Result<Option<DateTime<Utc>>> {
+        Ok(sqlx::query_scalar(
+            "UPDATE tale_polls SET state = 'closed', winner_figurine_id = $2, closed_at = NOW()
+              WHERE id = $1 AND state = 'open'
+                AND EXISTS (SELECT 1 FROM tale_poll_candidates
+                             WHERE poll_id = $1 AND figurine_id = $2)
+              RETURNING opened_at",
+        )
+        .bind(poll_id)
+        .bind(winner)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn delete_tale_poll(&self, poll_id: Uuid) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM tale_polls WHERE id = $1")
+            .bind(poll_id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    // --- Письма о байке ---
+
+    /// Байки, которые вышли на люди не меньше `grace_secs` назад и по которым
+    /// письма ещё не разложены. Выдержка — ради того же, ради чего она у
+    /// канала: вышедшую байку ещё правят, а письмо не поправишь.
+    pub async fn tales_awaiting_letters(&self, grace_secs: i64) -> Result<Vec<Uuid>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM gazette_leaves
+              WHERE kind = 'tale' AND letters_at IS NULL
+                AND (status = 'published'
+                     OR (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()))
+                AND COALESCE(published_at, scheduled_at, created_at) <= NOW() - make_interval(secs => $1)
+              ORDER BY COALESCE(published_at, scheduled_at, created_at)",
+        )
+        .bind(grace_secs as f64)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Разложить письма по одной байке: кто просил её продолжение, кто
+    /// выбирал её работу, кто вписан в книгу дома. Одна сделка и строка
+    /// байки под замком, поэтому два прохода разом не разложат её дважды.
+    /// Возвращает число заведённых писем.
+    pub async fn lay_out_tale_letters(&self, tale_id: Uuid) -> Result<u64> {
+        let mut tx = self.pg_pool.begin().await?;
+        let row: Option<(Option<Uuid>, Option<Uuid>, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "SELECT sequel_of, figurine_id, letters_at FROM gazette_leaves
+              WHERE id = $1 AND kind = 'tale' FOR UPDATE",
+        )
+        .bind(tale_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((sequel_of, figurine_id, None)) = row else {
+            tx.commit().await?;
+            return Ok(0);
+        };
+
+        let mut laid = 0;
+        if let Some(original) = sequel_of {
+            laid += Self::enqueue_sequel_letters_tx(&mut tx, original, tale_id).await?;
+        }
+        if let Some(work) = figurine_id {
+            laid += Self::enqueue_chosen_letters_tx(&mut tx, work, tale_id, None).await?;
+        }
+        laid += sqlx::query(
+            "INSERT INTO tale_letters (tale_id, email, lang, reason)
+             SELECT $1, s.email, CASE WHEN s.lang = 'ru' THEN 'ru' ELSE 'en' END, $2
+               FROM newsletter_subscribers s
+              WHERE s.unsubscribed_at IS NULL
+             ON CONFLICT (tale_id, lower(email)) DO NOTHING",
+        )
+        .bind(tale_id)
+        .bind(crate::tales::LetterReason::New.as_str())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+
+        sqlx::query("UPDATE gazette_leaves SET letters_at = NOW() WHERE id = $1")
+            .bind(tale_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(laid)
+    }
+
+    /// Письма и записки тем, кто просил продолжение `original`, — о байке
+    /// `sequel`. Записка заводится на имя, а не на номер чата: номер берётся
+    /// в миг отправки. Возвращает, сколько писем и записок заведено.
+    async fn enqueue_sequel_letters_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        original: Uuid,
+        sequel: Uuid,
+    ) -> Result<u64> {
+        let letters = sqlx::query(
+            "INSERT INTO tale_letters (tale_id, email, lang, reason)
+             SELECT DISTINCT ON (lower(w.email)) $2, w.email, w.lang, $3
+               FROM tale_sequel_wishes w
+              WHERE w.tale_id = $1 AND w.email IS NOT NULL
+              ORDER BY lower(w.email), w.created_at
+             ON CONFLICT (tale_id, lower(email)) DO NOTHING",
+        )
+        .bind(original)
+        .bind(sequel)
+        .bind(crate::tales::LetterReason::Sequel.as_str())
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
+        let notes = sqlx::query(
+            "INSERT INTO tale_notes (tale_id, user_id, lang)
+             SELECT DISTINCT ON (w.user_id) $2, w.user_id, w.lang
+               FROM tale_sequel_wishes w
+              WHERE w.tale_id = $1 AND w.by_telegram AND w.user_id IS NOT NULL
+              ORDER BY w.user_id, w.created_at
+             ON CONFLICT (tale_id, user_id) DO NOTHING",
+        )
+        .bind(original)
+        .bind(sequel)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
+        Ok(letters + notes)
+    }
+
+    /// Письма голосовавшим — о байке `tale` про работу `work`, которую
+    /// выбрали читатели. Пишется всем, кто оставил адрес, а не только тем, кто
+    /// выбрал победителя: голосовал каждый. Голосование отмечается
+    /// исполненным. `poll` — одно определённое голосование; `None` — всякое
+    /// закрытое с этим победителем и ещё не исполненное.
+    async fn enqueue_chosen_letters_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        work: Uuid,
+        tale: Uuid,
+        poll: Option<Uuid>,
+    ) -> Result<u64> {
+        let polls: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE tale_polls SET fulfilled_leaf_id = $2
+              WHERE state = 'closed' AND winner_figurine_id = $1 AND fulfilled_leaf_id IS NULL
+                AND ($3::uuid IS NULL OR id = $3)
+              RETURNING id",
+        )
+        .bind(work)
+        .bind(tale)
+        .bind(poll)
+        .fetch_all(&mut **tx)
+        .await?;
+        if polls.is_empty() {
+            return Ok(0);
+        }
+        Ok(sqlx::query(
+            "INSERT INTO tale_letters (tale_id, email, lang, reason)
+             SELECT DISTINCT ON (lower(v.email)) $2, v.email, v.lang, $3
+               FROM tale_poll_votes v
+              WHERE v.poll_id = ANY($1) AND v.email IS NOT NULL
+              ORDER BY lower(v.email), v.created_at
+             ON CONFLICT (tale_id, lower(email)) DO NOTHING",
+        )
+        .bind(&polls)
+        .bind(tale)
+        .bind(crate::tales::LetterReason::Chosen.as_str())
+        .execute(&mut **tx)
+        .await?
+        .rows_affected())
+    }
+
+    /// Разложены ли письма об этой байке — то есть побывала ли она на людях
+    /// дольше выдержки. Тогда её адрес уже стоит в письмах.
+    pub async fn tale_letters_laid(&self, tale_id: Uuid) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT letters_at IS NOT NULL FROM gazette_leaves WHERE id = $1 AND kind = 'tale'",
+        )
+        .bind(tale_id)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        .unwrap_or(false))
+    }
+
+    /// Сколько писем и записок завела бы раскладка этой байки сейчас:
+    /// `(разложены ли уже, писем, записок)`. Считается теми же выборками, что
+    /// и `lay_out_tale_letters`, но без записи, — адрес, попавший в два
+    /// повода, считается один раз, как его и отсеет `ON CONFLICT`.
+    pub async fn tale_letters_forecast(&self, tale_id: Uuid) -> Result<(bool, i64, i64)> {
+        let row: Option<(bool, i64, i64)> = sqlx::query_as(
+            "WITH t AS (
+                 SELECT id, sequel_of, figurine_id, letters_at IS NOT NULL AS laid
+                   FROM gazette_leaves WHERE id = $1 AND kind = 'tale'
+             ),
+             mail AS (
+                 SELECT lower(w.email) AS e FROM tale_sequel_wishes w, t
+                  WHERE w.tale_id = t.sequel_of AND w.email IS NOT NULL
+                 UNION
+                 SELECT lower(v.email) FROM tale_poll_votes v
+                   JOIN tale_polls p ON p.id = v.poll_id, t
+                  WHERE p.state = 'closed' AND p.winner_figurine_id = t.figurine_id
+                    AND p.fulfilled_leaf_id IS NULL AND v.email IS NOT NULL
+                 UNION
+                 SELECT lower(s.email) FROM newsletter_subscribers s
+                  WHERE s.unsubscribed_at IS NULL
+             )
+             SELECT t.laid,
+                    (SELECT COUNT(*) FROM mail)::bigint,
+                    (SELECT COUNT(DISTINCT w.user_id) FROM tale_sequel_wishes w
+                      WHERE w.tale_id = t.sequel_of AND w.by_telegram
+                        AND w.user_id IS NOT NULL)::bigint
+               FROM t",
+        )
+        .bind(tale_id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        row.ok_or_else(|| AppError::NotFound("Tale not found".to_string()))
+    }
+
+    /// Продолжение назначено байке, по которой письма уже разложены: те, кто
+    /// просил продолжение, получают его сейчас. Если письма ещё не
+    /// разложены — ничего: раскладка сама найдёт начало.
+    pub async fn enqueue_sequel_letters_now(&self, original: Uuid, sequel: Uuid) -> Result<u64> {
+        let mut tx = self.pg_pool.begin().await?;
+        let laid_out: bool = sqlx::query_scalar(
+            "SELECT letters_at IS NOT NULL FROM gazette_leaves WHERE id = $1 AND kind = 'tale'",
+        )
+        .bind(sequel)
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or(false);
+        let laid = if laid_out {
+            Self::enqueue_sequel_letters_tx(&mut tx, original, sequel).await?
+        } else {
+            0
+        };
+        tx.commit().await?;
+        Ok(laid)
+    }
+
+    /// Голосование закрыто, а байка о победителе уже вышла после его
+    /// открытия и разложена: письма голосовавшим уходят сейчас. Порядок, в
+    /// котором хозяин закрыл голосование и выложил байку, не должен решать,
+    /// придут ли письма.
+    pub async fn fulfil_tale_poll_now(
+        &self,
+        poll_id: Uuid,
+        work: Uuid,
+        opened_at: DateTime<Utc>,
+    ) -> Result<u64> {
+        let mut tx = self.pg_pool.begin().await?;
+        let tale: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM gazette_leaves
+              WHERE kind = 'tale' AND figurine_id = $1 AND letters_at IS NOT NULL
+                AND (status = 'published'
+                     OR (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()))
+                AND COALESCE(published_at, scheduled_at, created_at) >= $2
+              ORDER BY COALESCE(published_at, scheduled_at, created_at)
+              LIMIT 1",
+        )
+        .bind(work)
+        .bind(opened_at)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let laid = match tale {
+            Some(tale) => Self::enqueue_chosen_letters_tx(&mut tx, work, tale, Some(poll_id)).await?,
+            None => 0,
+        };
+        tx.commit().await?;
+        Ok(laid)
+    }
+
+    /// Взять созревшие письма на отправку — вместе со всем, что нужно для
+    /// текста.
+    ///
+    /// Взятие — одна инструкция: строки выбираются под `FOR UPDATE SKIP
+    /// LOCKED` и тут же помечаются `claimed_at`, поэтому вторая копия сервера
+    /// на той же базе не получит тех же писем. Взятое, но не ушедшее и не
+    /// отказавшее (процесс упал посреди прохода), возвращается в очередь через
+    /// `claim_secs`.
+    ///
+    /// Байка обязана быть на людях: снятую с полки не объявляют, а письмо о
+    /// ней ждёт, пока её не вернут. Письмо старше недели не уходит вовсе —
+    /// весть, пришедшая через месяц, уже не весть. Письмо книги дома уходит,
+    /// только если адрес всё ещё в книге: оно могло ждать в очереди, пока
+    /// человек отписывался. Дверь из книги берётся здесь же — у того, кто
+    /// просил продолжение и состоит в книге, она тоже есть.
+    pub async fn claim_tale_letters(
+        &self,
+        limit: i64,
+        max_attempts: i32,
+        claim_secs: i64,
+    ) -> Result<Vec<crate::models::TaleLetterRow>> {
+        Ok(sqlx::query_as::<_, crate::models::TaleLetterRow>(
+            "WITH due AS (
+                 SELECT t.tale_id, t.email
+                   FROM tale_letters t
+                   JOIN gazette_leaves l ON l.id = t.tale_id
+                  WHERE t.sent_at IS NULL AND t.attempts < $2
+                    AND t.created_at > NOW() - INTERVAL '7 days'
+                    AND (t.claimed_at IS NULL OR t.claimed_at <= NOW() - make_interval(secs => $3))
+                    AND (l.status = 'published'
+                         OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+                    AND (t.reason <> $4
+                         OR EXISTS (SELECT 1 FROM newsletter_subscribers s
+                                     WHERE lower(s.email) = lower(t.email) AND s.unsubscribed_at IS NULL))
+                  ORDER BY t.created_at, t.email
+                  LIMIT $1
+                  FOR UPDATE OF t SKIP LOCKED
+             ),
+             claimed AS (
+                 UPDATE tale_letters t SET claimed_at = NOW()
+                   FROM due
+                  WHERE t.tale_id = due.tale_id AND lower(t.email) = lower(due.email)
+                  RETURNING t.tale_id, t.email, t.lang, t.reason, t.created_at
+             )
+             SELECT c.tale_id, c.email, c.lang, c.reason, s.unsubscribe_token,
+                    l.slug, l.title_en, l.title_ru, l.dek_en, l.dek_ru,
+                    o.title_en AS original_title_en, o.title_ru AS original_title_ru,
+                    f.name AS figurine_name
+               FROM claimed c
+               JOIN gazette_leaves l ON l.id = c.tale_id
+               LEFT JOIN gazette_leaves o ON o.id = l.sequel_of
+               LEFT JOIN figurines f ON f.id = l.figurine_id
+               LEFT JOIN newsletter_subscribers s
+                      ON lower(s.email) = lower(c.email) AND s.unsubscribed_at IS NULL
+              ORDER BY c.created_at, c.email",
+        )
+        .bind(limit)
+        .bind(max_attempts)
+        .bind(claim_secs as f64)
+        .bind(crate::tales::LetterReason::New.as_str())
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn tale_letter_sent(&self, tale_id: Uuid, email: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE tale_letters SET sent_at = NOW(), last_error = NULL
+              WHERE tale_id = $1 AND lower(email) = lower($2)",
+        )
+        .bind(tale_id)
+        .bind(email)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Отказ почты: попытка засчитана, и письмо сразу возвращается в очередь
+    /// — следующий проход попробует снова, не дожидаясь срока взятия.
+    pub async fn tale_letter_failed(&self, tale_id: Uuid, email: &str, why: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE tale_letters SET attempts = attempts + 1, last_error = $3, claimed_at = NULL
+              WHERE tale_id = $1 AND lower(email) = lower($2)",
+        )
+        .bind(tale_id)
+        .bind(email)
+        .bind(why)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Взять созревшие записки в Telegram — тем же взятием, что и письма
+    /// (`claim_tale_letters`). Номер чата берётся из имени сейчас: пусто —
+    /// Telegram от имени отвязали, и служба отметит записку недошедшей.
+    pub async fn claim_tale_notes(
+        &self,
+        limit: i64,
+        max_attempts: i32,
+        claim_secs: i64,
+    ) -> Result<Vec<crate::models::TaleNoteRow>> {
+        Ok(sqlx::query_as::<_, crate::models::TaleNoteRow>(
+            "WITH due AS (
+                 SELECT n.tale_id, n.user_id
+                   FROM tale_notes n
+                   JOIN gazette_leaves l ON l.id = n.tale_id
+                  WHERE n.sent_at IS NULL AND n.attempts < $2
+                    AND n.created_at > NOW() - INTERVAL '7 days'
+                    AND (n.claimed_at IS NULL OR n.claimed_at <= NOW() - make_interval(secs => $3))
+                    AND (l.status = 'published'
+                         OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+                  ORDER BY n.created_at
+                  LIMIT $1
+                  FOR UPDATE OF n SKIP LOCKED
+             ),
+             claimed AS (
+                 UPDATE tale_notes n SET claimed_at = NOW()
+                   FROM due
+                  WHERE n.tale_id = due.tale_id AND n.user_id = due.user_id
+                  RETURNING n.tale_id, n.user_id, n.lang, n.created_at
+             )
+             SELECT c.tale_id, c.user_id, u.telegram_id, c.lang,
+                    l.slug, l.title_en, l.title_ru,
+                    o.title_en AS original_title_en, o.title_ru AS original_title_ru
+               FROM claimed c
+               JOIN gazette_leaves l ON l.id = c.tale_id
+               LEFT JOIN gazette_leaves o ON o.id = l.sequel_of
+               LEFT JOIN users u ON u.id = c.user_id
+              ORDER BY c.created_at",
+        )
+        .bind(limit)
+        .bind(max_attempts)
+        .bind(claim_secs as f64)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn tale_note_sent(&self, tale_id: Uuid, user_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE tale_notes SET sent_at = NOW(), last_error = NULL
+              WHERE tale_id = $1 AND user_id = $2",
+        )
+        .bind(tale_id)
+        .bind(user_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Отказ Telegram. `give_up` — ждать нечего (Telegram отвязан): попытки
+    /// исчерпываются сразу (`max_attempts`), чтобы записка не крутилась неделю.
+    pub async fn tale_note_failed(
+        &self,
+        tale_id: Uuid,
+        user_id: Uuid,
+        why: &str,
+        give_up: bool,
+        max_attempts: i32,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE tale_notes
+                SET attempts = CASE WHEN $4 THEN GREATEST(attempts + 1, $5) ELSE attempts + 1 END,
+                    last_error = $3, claimed_at = NULL
+              WHERE tale_id = $1 AND user_id = $2",
+        )
+        .bind(tale_id)
+        .bind(user_id)
+        .bind(why)
+        .bind(give_up)
+        .bind(max_attempts)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Кто ждёт продолжения этой байки — для стола рассказов, новые первыми.
+    ///
+    /// Судьба письма и записки ищется по всем вышедшим продолжениям этой байки
+    /// (у начала их может быть несколько) и называется словом: `none`,
+    /// `pending`, `sent`, `failed`. Письмо ищется по адресу, а не по поводу:
+    /// читатель, вписанный в книгу, мог получить то же продолжение письмом
+    /// «новая небылица», если продолжением его назвали после раскладки.
+    pub async fn admin_sequel_wishes(
+        &self,
+        tale_id: Uuid,
+        max_attempts: i32,
+    ) -> Result<Vec<crate::models::AdminSequelWishRow>> {
+        Ok(sqlx::query_as::<_, crate::models::AdminSequelWishRow>(
+            "WITH seq AS (
+                 SELECT id FROM gazette_leaves WHERE sequel_of = $1 AND kind = 'tale'
+             )
+             SELECT w.created_at, w.email, u.display_name AS name,
+                    u.telegram_username, w.by_telegram, w.lang,
+                    COALESCE(letter.status, 'none') AS letter,
+                    COALESCE(note.status, 'none') AS note
+               FROM tale_sequel_wishes w
+               LEFT JOIN users u ON u.id = w.user_id
+               LEFT JOIN LATERAL (
+                   SELECT CASE
+                              WHEN t.sent_at IS NOT NULL THEN 'sent'
+                              WHEN t.attempts >= $2 OR t.created_at <= NOW() - INTERVAL '7 days' THEN 'failed'
+                              ELSE 'pending'
+                          END AS status
+                     FROM tale_letters t
+                    WHERE w.email IS NOT NULL
+                      AND t.tale_id IN (SELECT id FROM seq)
+                      AND lower(t.email) = lower(w.email)
+                    ORDER BY (t.sent_at IS NOT NULL) DESC, t.created_at DESC
+                    LIMIT 1
+               ) letter ON TRUE
+               LEFT JOIN LATERAL (
+                   SELECT CASE
+                              WHEN n.sent_at IS NOT NULL THEN 'sent'
+                              WHEN n.attempts >= $2 OR n.created_at <= NOW() - INTERVAL '7 days' THEN 'failed'
+                              ELSE 'pending'
+                          END AS status
+                     FROM tale_notes n
+                    WHERE w.by_telegram
+                      AND n.tale_id IN (SELECT id FROM seq)
+                      AND n.user_id = w.user_id
+                    ORDER BY (n.sent_at IS NOT NULL) DESC, n.created_at DESC
+                    LIMIT 1
+               ) note ON TRUE
+              WHERE w.tale_id = $1
+              ORDER BY w.created_at DESC",
+        )
+        .bind(tale_id)
+        .bind(max_attempts)
         .fetch_all(&self.pg_pool)
         .await?)
     }

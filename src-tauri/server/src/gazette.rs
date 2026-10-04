@@ -130,6 +130,16 @@ pub fn valid_status(status: &str) -> bool {
     LEAF_STATUSES.contains(&status)
 }
 
+/// Адрес листа на сайте — зеркало `leafHref` на клиенте: байка живёт на
+/// полке, остальное в вестнике. Карта сайта, лента и канал берут его отсюда.
+pub fn leaf_path(kind: &str, slug: &str) -> String {
+    if kind == "tale" {
+        format!("/tales/{slug}")
+    } else {
+        format!("/gazette/{slug}")
+    }
+}
+
 /// A leaf is on the public blotter when it is published, or scheduled and due.
 pub fn leaf_is_live(status: &str, scheduled_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
     match status {

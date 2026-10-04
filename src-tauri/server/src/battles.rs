@@ -784,36 +784,104 @@ pub fn read_traits(raw: Option<&str>) -> Vec<CardTrait> {
 
 /// Words on a published card that would lie to the person who takes it.
 ///
-/// The numbers in `card_blockers` catch a body that cannot be played. These
-/// catch a card that *looks* as if it does something the engine will not do,
-/// or that has no name in the language the shelf is written in. A draft may
-/// still be unfinished; once it is published, both languages and an effect
-/// line are owed, and a trait with a rule is owed an ability or it is not
-/// a rule.
-pub fn prose_blockers(
-    status: &str,
-    title_en: &str,
-    title_ru: &str,
-    effect_en: Option<&str>,
-    effect_ru: Option<&str>,
-    traits: &[CardTrait],
-    has_abilities: bool,
-) -> Vec<&'static str> {
+/// The numbers in `card_blockers` catch a body that cannot be played. This
+/// catches a card that *looks* as if it does something the engine will not
+/// do: a trait with a rule is owed an ability, or it is not a rule. Missing
+/// words — a title or an effect in one of the languages — are not here but in
+/// `missing_fields`, because the keeper's desk refuses them on every save,
+/// draft or not.
+pub fn prose_blockers(status: &str, traits: &[CardTrait], has_abilities: bool) -> Vec<&'static str> {
     let mut out = Vec::new();
     if status != "published" {
         return out;
-    }
-    if title_en.trim().is_empty() || title_ru.trim().is_empty() {
-        out.push("noTitle");
-    }
-    if blank_line(effect_en) || blank_line(effect_ru) {
-        out.push("noEffect");
     }
     let speaks = traits
         .iter()
         .any(|t| !t.text_en.trim().is_empty() || !t.text_ru.trim().is_empty());
     if speaks && !has_abilities {
         out.push("traitsWithoutAbilities");
+    }
+    out
+}
+
+/// Без чего карту не сохраняет стол хозяина — при любом статусе.
+///
+/// Карта печатается на двух языках, и пустое поле на одном из них — это
+/// карта без имени или без голоса у половины гостей: английское не
+/// подставляется в русское и наоборот (`lineInLang`). Поэтому обязательное
+/// названо по языку (`titleEn`, `titleRu`), а не одним словом: форма ведёт
+/// ровно на ту сторону, где пусто.
+///
+/// Черта и способность необязательны, но начатое на одном языке обязано
+/// быть и на втором — по той же причине. Цена нужна хотя бы в одной монете:
+/// иначе карту нельзя взять никак.
+///
+/// Правила игры (здоровье, бюджет чина, потолок маны) сюда не входят: это не
+/// поля, а равновесие, и черновик для того и черновик, чтобы его искать.
+#[allow(clippy::too_many_arguments)]
+pub fn missing_fields(
+    title_en: &str,
+    title_ru: &str,
+    effect_en: Option<&str>,
+    effect_ru: Option<&str>,
+    traits: &[CardTrait],
+    abilities: &[CardAbility],
+    price_dust: Option<i32>,
+    price_feed: Option<i32>,
+) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if title_en.trim().is_empty() {
+        out.push("titleEn");
+    }
+    if title_ru.trim().is_empty() {
+        out.push("titleRu");
+    }
+    if blank_line(effect_en) {
+        out.push("effectEn");
+    }
+    if blank_line(effect_ru) {
+        out.push("effectRu");
+    }
+    if price_dust.is_none() && price_feed.is_none() {
+        out.push("price");
+    }
+    let half = |en: &str, ru: &str| en.trim().is_empty() != ru.trim().is_empty();
+    // Черта без имени вовсе не записывается (`normalize_traits`), поэтому
+    // спрашивается только та, у которой имя есть хотя бы на одном языке.
+    let named = traits
+        .iter()
+        .filter(|t| !t.name_en.trim().is_empty() || !t.name_ru.trim().is_empty());
+    if named.clone().any(|t| half(&t.name_en, &t.name_ru)) {
+        out.push("traitName");
+    }
+    if named.clone().any(|t| half(&t.text_en, &t.text_ru)) {
+        out.push("traitText");
+    }
+    if abilities.iter().any(|a| half(&a.name_en, &a.name_ru)) {
+        out.push("abilityName");
+    }
+    out
+}
+
+/// Обязательное — словами отказа гостя студии.
+///
+/// Гость отдаёт карту хозяину, и отдать её без имени или голоса на одном из
+/// языков нельзя — как и прежде, когда это стояло в `prose_blockers`. Слова
+/// у него прежние (`noTitle`, `noEffect`): гостю незачем знать, на какой
+/// стороне пусто по коду, он видит обе. Цену назначает хозяин, поэтому её
+/// здесь нет.
+pub fn guest_faults(missing: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for field in missing {
+        let word = match field.as_str() {
+            "titleEn" | "titleRu" => "noTitle",
+            "effectEn" | "effectRu" => "noEffect",
+            "price" => continue,
+            other => other,
+        };
+        if !out.iter().any(|w| w == word) {
+            out.push(word.to_string());
+        }
     }
     out
 }
@@ -1386,6 +1454,10 @@ pub struct FrameOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_scale_x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_scale_y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paper: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ink: Option<String>,
@@ -1499,6 +1571,22 @@ pub struct FrameOverride {
     pub power_x: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub power_y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_name_x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_name_y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_name_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_lore_x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_lore_y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_lore_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_lore_font: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_lore_ink: Option<String>,
 }
 
 /// The clamps a `FrameOverride` patch must pass however it arrives — alone or
@@ -1520,6 +1608,14 @@ fn clean_frame_override(parsed: FrameOverride) -> Option<FrameOverride> {
     let cleaned = FrameOverride {
         frame_image: text(parsed.frame_image),
         frame_mode: parsed.frame_mode.filter(|m| valid_frame_mode(m)),
+        frame_scale_x: parsed
+            .frame_scale_x
+            .filter(|v| v.is_finite())
+            .map(|v| clamp_scale(v, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
+        frame_scale_y: parsed
+            .frame_scale_y
+            .filter(|v| v.is_finite())
+            .map(|v| clamp_scale(v, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
         paper: text(parsed.paper),
         ink: text(parsed.ink),
         border: text(parsed.border),
@@ -1597,6 +1693,20 @@ fn clean_frame_override(parsed: FrameOverride) -> Option<FrameOverride> {
         cost_y: pos(parsed.cost_y),
         power_x: pos(parsed.power_x),
         power_y: pos(parsed.power_y),
+        free_name_x: pos(parsed.free_name_x),
+        free_name_y: pos(parsed.free_name_y),
+        free_name_size: parsed
+            .free_name_size
+            .filter(|v| v.is_finite())
+            .map(|v| clamp_scale(v, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
+        free_lore_x: pos(parsed.free_lore_x),
+        free_lore_y: pos(parsed.free_lore_y),
+        free_lore_size: parsed
+            .free_lore_size
+            .filter(|v| v.is_finite())
+            .map(|v| clamp_scale(v, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
+        free_lore_font: text(parsed.free_lore_font),
+        free_lore_ink: text(parsed.free_lore_ink),
     };
     if cleaned.says_nothing() {
         return None;
@@ -1613,6 +1723,8 @@ impl FrameOverride {
         let FrameOverride {
             frame_image,
             frame_mode,
+            frame_scale_x,
+            frame_scale_y,
             paper,
             ink,
             border,
@@ -1665,10 +1777,20 @@ impl FrameOverride {
             cost_y,
             power_x,
             power_y,
+            free_name_x,
+            free_name_y,
+            free_name_size,
+            free_lore_x,
+            free_lore_y,
+            free_lore_size,
+            free_lore_font,
+            free_lore_ink,
         } = self;
         [
             frame_image.is_none(),
             frame_mode.is_none(),
+            frame_scale_x.is_none(),
+            frame_scale_y.is_none(),
             paper.is_none(),
             ink.is_none(),
             border.is_none(),
@@ -1721,6 +1843,14 @@ impl FrameOverride {
             cost_y.is_none(),
             power_x.is_none(),
             power_y.is_none(),
+            free_name_x.is_none(),
+            free_name_y.is_none(),
+            free_name_size.is_none(),
+            free_lore_x.is_none(),
+            free_lore_y.is_none(),
+            free_lore_size.is_none(),
+            free_lore_font.is_none(),
+            free_lore_ink.is_none(),
         ]
         .iter()
         .all(|missing| *missing)
@@ -2232,6 +2362,16 @@ pub struct BattleFrame {
     ///             independently, rather than one picture stretched whole.
     #[serde(default)]
     pub frame_mode: String,
+    /// How large the frame's own picture is drawn, independently on each
+    /// axis — a multiplier on the 100% that exactly fills the card, same
+    /// convention as `cost_size`. Zero means "not set" (a frame saved before
+    /// this existed), read as 1 by `normalize_frame`, never as a bare zero
+    /// that would shrink the picture to nothing. `sliced` never reads either
+    /// one — its pieces already grow and slide on their own.
+    #[serde(default)]
+    pub frame_scale_x: f32,
+    #[serde(default)]
+    pub frame_scale_y: f32,
     /// A texture for the card's ground — the paper the content is written on.
     /// A cut-out frame has nothing behind it but this. Empty = flat `paper`.
     #[serde(default)]
@@ -2415,13 +2555,44 @@ pub struct BattleFrame {
     pub health_x: Option<f32>,
     #[serde(default)]
     pub health_y: Option<f32>,
+    /// `frameMode: "freeform"` only. A whole ready-made illustration (paper,
+    /// carving and window baked into one picture, worn the same way `overlay`
+    /// wears one) under which the work's photograph sits full-bleed — panned
+    /// and zoomed by the same `artFocal` a windowed card already carries, not
+    /// by a second set of fields — and over which the name and the lore stand
+    /// wherever the keeper dragged them, because a certificate's blank paper
+    /// is drawn where the artist put it, not in a band the renderer chose.
+    /// Centre of the name, % of the card. `None` = not yet dragged.
+    #[serde(default)]
+    pub free_name_x: Option<f32>,
+    #[serde(default)]
+    pub free_name_y: Option<f32>,
+    /// Кегль имени в этом режиме — множитель, как `cost_size`: своя величина у
+    /// вольного текста, а не общий `type_scale`, который красит всю карту разом.
+    #[serde(default)]
+    pub free_name_size: f32,
+    /// Centre of the lore ("Приписка"), same units as the name above.
+    #[serde(default)]
+    pub free_lore_x: Option<f32>,
+    #[serde(default)]
+    pub free_lore_y: Option<f32>,
+    #[serde(default)]
+    pub free_lore_size: f32,
+    /// Приписка не носила ни своего шрифта, ни своих чернил — в полосе
+    /// свойств она красилась общими. Здесь она стоит одна на пустой бумаге, и
+    /// молчание было бы уже не «как у карты», а «никак». Пустая строка — тот
+    /// же дом: `inherit` для шрифта, `--ink` для цвета.
+    #[serde(default)]
+    pub free_lore_font: String,
+    #[serde(default)]
+    pub free_lore_ink: String,
 }
 
 pub const LAYOUTS: &[&str] = &["corners", "plaque"];
 /// Порядок тот же, что на клиенте: «собрана из частей» первой — с неё
 /// начинают. Для проверки порядок не значит ничего, но два списка одного и того
 /// же должны выглядеть одинаково, иначе однажды разойдутся и по составу.
-pub const FRAME_MODES: &[&str] = &["sliced", "overlay", "behind"];
+pub const FRAME_MODES: &[&str] = &["sliced", "overlay", "behind", "freeform"];
 /// `none` — не шестая форма, а её отсутствие: подложка не печатается вовсе.
 pub const BADGE_SHAPES: &[&str] = &["circle", "square", "diamond", "hex", "shield", "none"];
 
@@ -2481,8 +2652,11 @@ pub struct BattleFramePresets {
 /// size of its own to respect. Raised from 24 once the drawer filled up with
 /// dresses cut off one pair of sheets: the bottom is there to stop hoarding,
 /// and a bottom that turns a save into a silent loss of seven frames stops
-/// the wrong thing.
-pub const PRESETS_MAX: usize = 32;
+/// the wrong thing. Raised again to 64 when the 33rd dress vanished the same
+/// way; since then a full drawer is REFUSED by `save_battle_frame_presets`
+/// before this truncation is ever reached, and the desk says so in words.
+/// Mirror in `battles.ts`, change together.
+pub const PRESETS_MAX: usize = 64;
 pub const PRESET_NAME_MAX: usize = 60;
 
 /// The drawer, tidied: a preset with no name or no id is not a preset, the
@@ -2525,6 +2699,14 @@ pub const DEFAULT_COST_X: f32 = 14.0;
 pub const DEFAULT_COST_Y: f32 = 12.0;
 pub const DEFAULT_POWER_X: f32 = 86.0;
 pub const DEFAULT_POWER_Y: f32 = 88.0;
+/// Where the name and the lore start in `freeform` mode, before the keeper
+/// has dragged either — the title just under the picture, the lore in the
+/// blank scroll a certificate-style upload tends to leave near the foot.
+/// Zeroed mirror in `battles.ts`, change together.
+pub const DEFAULT_FREE_NAME_X: f32 = 50.0;
+pub const DEFAULT_FREE_NAME_Y: f32 = 60.0;
+pub const DEFAULT_FREE_LORE_X: f32 = 50.0;
+pub const DEFAULT_FREE_LORE_Y: f32 = 84.0;
 
 fn painted(
     tier: i16,
@@ -2545,6 +2727,8 @@ fn painted(
         foil: foil.into(),
         frame_image: String::new(),
         frame_mode: "overlay".into(),
+        frame_scale_x: 1.0,
+        frame_scale_y: 1.0,
         paper_image: String::new(),
         back_image: String::new(),
         corner_image: String::new(),
@@ -2594,6 +2778,14 @@ fn painted(
         health_weight: 0.0,
         health_x: None,
         health_y: None,
+        free_name_x: None,
+        free_name_y: None,
+        free_name_size: 1.0,
+        free_lore_x: None,
+        free_lore_y: None,
+        free_lore_size: 1.0,
+        free_lore_font: String::new(),
+        free_lore_ink: String::new(),
     }
 }
 
@@ -2701,6 +2893,16 @@ pub fn normalize_frame(mut found: BattleFrame, fallback: BattleFrame) -> BattleF
         };
     }
     found.frame_image = found.frame_image.trim().to_string();
+    found.frame_scale_x = if found.frame_scale_x > 0.0 {
+        clamp_scale(found.frame_scale_x, BADGE_SCALE_MIN, BADGE_SCALE_MAX)
+    } else {
+        fallback.frame_scale_x
+    };
+    found.frame_scale_y = if found.frame_scale_y > 0.0 {
+        clamp_scale(found.frame_scale_y, BADGE_SCALE_MIN, BADGE_SCALE_MAX)
+    } else {
+        fallback.frame_scale_y
+    };
     found.paper_image = found.paper_image.trim().to_string();
     found.back_image = found.back_image.trim().to_string();
     found.corner_image = found.corner_image.trim().to_string();
@@ -2777,6 +2979,26 @@ pub fn normalize_frame(mut found: BattleFrame, fallback: BattleFrame) -> BattleF
     found.cost_y = Some(clamp_pos(found.cost_y, fallback.cost_y));
     found.power_x = Some(clamp_pos(found.power_x, fallback.power_x));
     found.power_y = Some(clamp_pos(found.power_y, fallback.power_y));
+    found.free_name_x = Some(clamp_pos(
+        found.free_name_x,
+        Some(fallback.free_name_x.unwrap_or(DEFAULT_FREE_NAME_X)),
+    ));
+    found.free_name_y = Some(clamp_pos(
+        found.free_name_y,
+        Some(fallback.free_name_y.unwrap_or(DEFAULT_FREE_NAME_Y)),
+    ));
+    found.free_name_size = clamp_scale(found.free_name_size, BADGE_SCALE_MIN, BADGE_SCALE_MAX);
+    found.free_lore_x = Some(clamp_pos(
+        found.free_lore_x,
+        Some(fallback.free_lore_x.unwrap_or(DEFAULT_FREE_LORE_X)),
+    ));
+    found.free_lore_y = Some(clamp_pos(
+        found.free_lore_y,
+        Some(fallback.free_lore_y.unwrap_or(DEFAULT_FREE_LORE_Y)),
+    ));
+    found.free_lore_size = clamp_scale(found.free_lore_size, BADGE_SCALE_MIN, BADGE_SCALE_MAX);
+    found.free_lore_font = found.free_lore_font.trim().to_string();
+    found.free_lore_ink = found.free_lore_ink.trim().to_string();
     found
 }
 
@@ -2869,9 +3091,14 @@ fn clamp_pair(a: f32, b: f32) -> (f32, f32) {
 /// (`BATTLE-MOTION.md` §3.3): ни одного сравнения правил на клиенте.
 pub const MOTION_OCCASIONS: &[&str] = &["blow", "spell", "mend", "arrive", "fall", "unseen"];
 
-/// Кому происходит жест. `flight` — то, что летит от бьющего к цели; у него нет
-/// тела, и `normalize_motion` обнуляет ему `body`.
-pub const GESTURE_WHOM: &[&str] = &["striker", "target", "flight", "field"];
+/// Кому происходит жест. `flight` — то, что летит от бьющего к цели; `beam` —
+/// то, что растянуто между ними (молния, нить). У обоих нет тела, и
+/// `normalize_motion` обнуляет им `body`.
+pub const GESTURE_WHOM: &[&str] = &["striker", "target", "flight", "beam", "field"];
+
+fn bodiless(whom: &str) -> bool {
+    matches!(whom, "flight" | "beam" | "field")
+}
 
 /// Что делает тело. Список ЗАКРЫТ, и это не скупость.
 ///
@@ -3105,7 +3332,7 @@ fn is_move(body: &str) -> bool {
 /// Полёт и поле без картинки — это слот, а не пустой жест: в него кладут
 /// стрелу. Телу без движения и без рисунка слот не нужен, его выбрасываем.
 fn keep_gesture(g: &MotionGesture) -> bool {
-    if g.whom == "flight" || g.whom == "field" {
+    if bodiless(&g.whom) {
         return true;
     }
     !(g.body == "none" && g.image.is_empty())
@@ -3149,7 +3376,7 @@ pub fn normalize_gesture(mut g: MotionGesture) -> MotionGesture {
     // У летящего нет тела, которое можно было бы двинуть. Не отказ, а
     // вычёркивание: так же `normalize_slices` выбрасывает копию `top` у
     // углового слота — место, которого у этой формы не бывает, не хранится.
-    if g.whom == "flight" || g.whom == "field" {
+    if bodiless(&g.whom) {
         g.body = "none".into();
     }
     g.turn = word(&g.turn, GESTURE_TURNS, "none");
@@ -3617,38 +3844,44 @@ mod tests {
     }
 
     #[test]
-    fn a_draft_may_lack_an_english_title() {
-        assert!(prose_blockers("draft", "", "Ведьма", None, None, &[], false).is_empty());
-    }
-
-    #[test]
-    fn a_published_card_owes_both_titles_and_an_effect() {
+    fn both_languages_and_a_price_are_owed_on_every_save() {
         assert_eq!(
-            prose_blockers("published", "", "Гагатыч", Some("a line"), Some("строка"), &[], false),
-            vec!["noTitle"]
+            missing_fields("", "Ведьма", None, Some("свечи"), &[], &[], None, None),
+            vec!["titleEn", "effectEn", "price"]
         );
-        assert_eq!(
-            prose_blockers(
-                "published",
-                "The Witch",
-                "Ведьма",
-                None,
-                Some("свечи"),
-                &[],
-                false
-            ),
-            vec!["noEffect"]
-        );
-        assert!(prose_blockers(
-            "published",
+        assert!(missing_fields(
             "The Witch",
             "Ведьма",
             Some("candles lean away"),
             Some("свечи отклоняются"),
             &[],
-            false
+            &[],
+            Some(10),
+            None
         )
         .is_empty());
+    }
+
+    #[test]
+    fn a_trait_begun_in_one_language_is_owed_the_other() {
+        let half = CardTrait {
+            name_en: "Wind of Soul".into(),
+            name_ru: String::new(),
+            text_en: String::new(),
+            text_ru: "игнорирует 1 урона".into(),
+        };
+        assert_eq!(
+            missing_fields("A", "А", Some("e"), Some("э"), &[half], &[], Some(1), None),
+            vec!["traitName", "traitText"]
+        );
+        // Пустая строка черты не записывается и ничего не требует.
+        let empty = CardTrait {
+            name_en: " ".into(),
+            name_ru: String::new(),
+            text_en: String::new(),
+            text_ru: String::new(),
+        };
+        assert!(missing_fields("A", "А", Some("e"), Some("э"), &[empty], &[], Some(1), None).is_empty());
     }
 
     #[test]
@@ -3660,27 +3893,10 @@ mod tests {
             text_ru: "игнорирует 1 урона".into(),
         };
         assert_eq!(
-            prose_blockers(
-                "published",
-                "The Creature",
-                "Творение",
-                Some("parts"),
-                Some("части"),
-                &[trait_.clone()],
-                false
-            ),
+            prose_blockers("published", &[trait_.clone()], false),
             vec!["traitsWithoutAbilities"]
         );
-        assert!(prose_blockers(
-            "published",
-            "The Creature",
-            "Творение",
-            Some("parts"),
-            Some("части"),
-            &[trait_],
-            true
-        )
-        .is_empty());
+        assert!(prose_blockers("published", &[trait_], true).is_empty());
     }
 
     #[test]
@@ -4800,6 +5016,30 @@ mod tests {
         assert_eq!(m.gestures.len(), 2);
         assert_eq!(m.gestures[1].whom, "flight");
         assert!(m.gestures[1].image.is_empty());
+    }
+
+    #[test]
+    fn a_beam_is_kept_and_has_no_body() {
+        // Луч (молния от мага к цели) — рисунок без тела, как полёт: сервер
+        // прежней версии не знал этого слова и превращал его в бьющего.
+        let m = normalize_motion(Motion {
+            id: "lightning".into(),
+            occasion: "blow".into(),
+            gestures: vec![MotionGesture {
+                whom: "beam".into(),
+                body: "lunge".into(),
+                image: "/battles/motion/lightning.png".into(),
+                frames: 6,
+                at: 160,
+                dur: 420,
+                ..MotionGesture::default()
+            }],
+            ..Motion::default()
+        });
+        assert_eq!(m.gestures.len(), 1);
+        assert_eq!(m.gestures[0].whom, "beam");
+        assert_eq!(m.gestures[0].body, "none");
+        assert_eq!(m.gestures[0].frames, 6);
     }
 
     #[test]

@@ -243,6 +243,11 @@
     }
   }
 
+  /* Ожидание своего мгновения: рисунок скрыт, пока время не дошло. */
+  @keyframes -global-gotiga-wait {
+    from, to { visibility: hidden; }
+  }
+
   @keyframes -global-gotiga-fade-in {
     from { opacity: 0; }
     to { opacity: 1; }

@@ -35,7 +35,9 @@
     isDressed,
     isOverlaid,
     isSliced,
+    isFreeform,
     parseFocal,
+    FOCAL_ZOOM_MIN,
     pricesOf,
     cardTransitionName,
     pickImageFile,
@@ -43,6 +45,10 @@
     DEFAULT_COST_Y,
     DEFAULT_POWER_X,
     DEFAULT_POWER_Y,
+    DEFAULT_FREE_NAME_X,
+    DEFAULT_FREE_NAME_Y,
+    DEFAULT_FREE_LORE_X,
+    DEFAULT_FREE_LORE_Y,
     type BadgeKind,
     BADGE_SHAPES,
     BADGE_FIELDS,
@@ -275,6 +281,7 @@
   );
   let overlaid = $derived(isOverlaid(frame) || bareDesk);
   let sliced = $derived(isSliced(frame) || bareDesk);
+  let freeform = $derived(isFreeform(frame));
   let hasBackArt = $derived(!!frame.backImage?.trim());
   let vars = $derived(frameVars(frame));
 
@@ -643,8 +650,27 @@
   // `translate()` lands at that exact fraction of the box regardless of the
   // zoom level, and the max pan at a given zoom is simply half of what the
   // zoom overshoots the box by.
-  let artTx = $derived(((focal.x - 0.5) * (focal.zoom - 1) * 100).toFixed(2));
-  let artTy = $derived(((focal.y - 0.5) * (focal.zoom - 1) * 100).toFixed(2));
+  //
+  // `freeform` breaks that "always covering" premise on purpose — the picture
+  // sits full-bleed on its own paper, not in a carved hole, so shrinking it
+  // below 1 is a real gesture, not clamped-away noise, and `object-fit:
+  // contain` (below, `.art--free`) is what lets that shrink show the whole
+  // photograph instead of a smaller crop of the same cover. A pan range tied
+  // to "how far zoom overshoots the box" would go to zero — or negative — the
+  // moment the photo is smaller than the window, leaving a shrunk picture
+  // nowhere to go; `FREEFORM_PAN_RANGE` is a fixed share of the window
+  // instead, so travel exists at every zoom, shrunk or not.
+  const FREEFORM_PAN_RANGE = 60;
+  let artTx = $derived(
+    freeform
+      ? ((focal.x - 0.5) * 2 * FREEFORM_PAN_RANGE).toFixed(2)
+      : ((focal.x - 0.5) * (focal.zoom - 1) * 100).toFixed(2),
+  );
+  let artTy = $derived(
+    freeform
+      ? ((focal.y - 0.5) * 2 * FREEFORM_PAN_RANGE).toFixed(2)
+      : ((focal.y - 0.5) * (focal.zoom - 1) * 100).toFixed(2),
+  );
 
   // Pointer tilt and the foil sweep. Written as two custom properties rather
   // than an inline transform so the CSS below owns the whole effect: it can be
@@ -831,10 +857,12 @@
     dragMoved = true;
     const box = event.currentTarget.getBoundingClientRect();
     if (!box.width || !box.height) return;
-    // How far the photo can be pushed off-centre at this zoom, in percent of
-    // the window — zero at zoom 1, where `object-fit: cover` already has no
-    // slack to move into on either axis.
-    const maxPercent = 50 * (focal.zoom - 1);
+    // How far the photo can be pushed off-centre, in percent of the window.
+    // Windowed: zero at zoom 1, where `object-fit: cover` already has no
+    // slack to move into on either axis, growing only as zoom overshoots the
+    // box. `freeform`: a fixed share of the window regardless of zoom — see
+    // `FREEFORM_PAN_RANGE` above.
+    const maxPercent = freeform ? FREEFORM_PAN_RANGE : 50 * (focal.zoom - 1);
     if (maxPercent <= 0) return;
     const tx = (focal.x - 0.5) * 2 * maxPercent + (event.movementX / box.width) * 100;
     const ty = (focal.y - 0.5) * 2 * maxPercent + (event.movementY / box.height) * 100;
@@ -855,7 +883,8 @@
   function aimZoom(event: WheelEvent) {
     if (!editable) return;
     event.preventDefault();
-    const zoom = Math.min(3, Math.max(1, focal.zoom - event.deltaY * 0.002));
+    const min = freeform ? FOCAL_ZOOM_MIN : 1;
+    const zoom = Math.min(3, Math.max(min, focal.zoom - event.deltaY * 0.002));
     card.artFocal = JSON.stringify({ ...focal, zoom });
   }
 
@@ -1363,6 +1392,61 @@
     };
     badgePopoverOpen = kind;
   }
+
+  // ── Вольный текст `freeform`: имя и приписка, взятые там, где напечатаны ──
+  //
+  // То же устройство, что у значков выше — точка на карте, а не строка
+  // формы, — но без всплывающей панели: у текста нет второго числа вроде
+  // формы или заливки, редактируется он в боковой колонке стола рамок, а
+  // здесь только его место.
+
+  type FreeTextKind = 'name' | 'lore';
+  const FREE_TEXT_FIELDS: Record<FreeTextKind, { x: 'freeNameX' | 'freeLoreX'; y: 'freeNameY' | 'freeLoreY' }> = {
+    name: { x: 'freeNameX', y: 'freeNameY' },
+    lore: { x: 'freeLoreX', y: 'freeLoreY' },
+  };
+  const FREE_TEXT_HOME: Record<FreeTextKind, { x: number; y: number }> = {
+    name: { x: DEFAULT_FREE_NAME_X, y: DEFAULT_FREE_NAME_Y },
+    lore: { x: DEFAULT_FREE_LORE_X, y: DEFAULT_FREE_LORE_Y },
+  };
+
+  function freeTextAt(kind: FreeTextKind): { x: number; y: number } {
+    const { x, y } = FREE_TEXT_FIELDS[kind];
+    const home = FREE_TEXT_HOME[kind];
+    return { x: frame[x] ?? home.x, y: frame[y] ?? home.y };
+  }
+
+  let freeTextDragKind = $state<FreeTextKind | null>(null);
+
+  function freeTextDragStart(kind: FreeTextKind, event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!frameEditable) return;
+    onEditStart?.();
+    event.preventDefault();
+    event.stopPropagation();
+    freeTextDragKind = kind;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function freeTextDragMove(event: PointerEvent) {
+    if (!freeTextDragKind || !cardEl) return;
+    const rect = cardEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const { x, y } = FREE_TEXT_FIELDS[freeTextDragKind];
+    const target = rankFrame();
+    const at = freeTextAt(freeTextDragKind);
+    const dx = (event.movementX / rect.width) * 100;
+    const dy = (event.movementY / rect.height) * 100;
+    target[x] = Math.min(100, Math.max(0, at.x + dx));
+    target[y] = Math.min(100, Math.max(0, at.y + dy));
+  }
+
+  function freeTextDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
+    freeTextDragKind = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    onEditEnd?.();
+  }
 </script>
 
 <article
@@ -1392,7 +1476,44 @@
    style:clip-path={torn}
  >
   <div class="content" bind:this={contentEl}>
-  {#if owned}
+  {#if owned && freeform}
+    <!-- `freeform`: готовая иллюстрация уже несёт бумагу и резьбу, но НЕ
+         несёт согласия между собой и вот этой конкретной картинкой работы —
+         где именно в ней вырезана дыра, знает только тот, кто рисовал раму, и
+         врезки (§ overlay) — единственный язык, на котором это можно сказать.
+         Поэтому окно здесь то же самое, что у обычной рамы «поверх»: те же
+         четыре врезки, те же рукоятки прямо на карте, — а полос внутри него
+         нет ни одной, фотография занимает его целиком, тем же прицелом
+         (`aimDown`/`aimMove`), которым целится окошко обычной рамы. Имя и
+         приписка стоят НАД этим слоем, в собственном `.free-text-layer` — см.
+         ниже, рядом с `.badges-layer`, по той же причине: слою, который
+         таскают по всей карте, нужна ЕЁ стопка наложения, а не стопка
+         `.content`. -->
+    <div
+      class="art art--free"
+      class:art--editable={editable}
+      class:art--dragging={dragging}
+      style="--art-tx:{artTx}%;--art-ty:{artTy}%;--art-zoom:{focal.zoom}"
+      onpointerdown={aimDown}
+      onpointermove={aimMove}
+      onpointerup={aimUp}
+      onpointercancel={aimUp}
+      onwheel={aimZoom}
+      ondragstart={(e) => e.preventDefault()}
+      role={editable ? 'button' : undefined}
+      tabindex={editable ? 0 : undefined}
+      aria-label={editable ? $t('adminBattlesAim') : undefined}
+    >
+      {#if card.artUrl}
+        <AppImage src={card.artUrl} alt={copy.title} class="art-image" sizes="(max-width: 640px) 45vw, 260px" />
+      {:else}
+        <div class="art--absent" aria-hidden="true"></div>
+      {/if}
+      {#if struck}
+        <i class="struck struck--{struck}" aria-hidden="true"></i>
+      {/if}
+    </div>
+  {:else if owned}
     <!-- Опись. Один `{#each}` на полосу: что стоит в шапке, что в свойствах,
          в каком порядке и с какой величины видно — это строки рамы, а не
          разметка. Обёртка каждой строки — `display: contents`, то есть своей
@@ -1940,6 +2061,51 @@
       <span class="carving" aria-hidden="true"></span>
     {/if}
   {/if}
+
+  {#if freeform && owned}
+    <!-- Имя и приписка «сертификата»: стоят там, куда их перетащил хранитель,
+         а не в измеренной полосе, — бумага под ними уже нарисована в самой
+         иллюстрации, и полосы здесь не существует. Тот же приём, что у
+         значков стоимости и силы выше: слой над всей картой, глухой к
+         указателю везде, кроме двух собственных меток, потому что метка,
+         которую тащат за пределы своего блока, не может собирать нажатия
+         только внутри него. -->
+    {@const nameAt = freeTextAt('name')}
+    {@const loreAt = freeTextAt('lore')}
+    {@const freeLive = frameEditable && !frameEditTarget}
+    <div class="free-text-layer">
+      {#if copy.title || freeLive}
+        {#if freeLive}
+          <button
+            type="button"
+            class="free-text free-title"
+            style="left:{nameAt.x}%; top:{nameAt.y}%"
+            onpointerdown={(e) => freeTextDragStart('name', e)}
+            onpointermove={freeTextDragMove}
+            onpointerup={freeTextDragEnd}
+            onpointercancel={freeTextDragEnd}
+          >{copy.title || $t('adminBattlesFreeName')}</button>
+        {:else}
+          <h3 class="free-text free-title" style="left:{nameAt.x}%; top:{nameAt.y}%">{copy.title}</h3>
+        {/if}
+      {/if}
+      {#if copy.lore || freeLive}
+        {#if freeLive}
+          <button
+            type="button"
+            class="free-text free-lore"
+            style="left:{loreAt.x}%; top:{loreAt.y}%"
+            onpointerdown={(e) => freeTextDragStart('lore', e)}
+            onpointermove={freeTextDragMove}
+            onpointerup={freeTextDragEnd}
+            onpointercancel={freeTextDragEnd}
+          >{copy.lore || $t('adminBattlesLore')}</button>
+        {:else}
+          <p class="free-text free-lore" style="left:{loreAt.x}%; top:{loreAt.y}%">{copy.lore}</p>
+        {/if}
+      {/if}
+    </div>
+  {/if}
  </div>
 
  <!-- Куда сядет строка. Черта меряется по соседям, а не считается вторым
@@ -2042,20 +2208,31 @@
      it, where laying it on top would simply cover the card. */
   .card--dressed:not(.card--overlaid) {
     background-image: var(--frame-image);
-    background-size: 100% 100%;
+    background-size: calc(var(--frame-scale-x, 1) * 100%) calc(var(--frame-scale-y, 1) * 100%);
+    background-position: 50% 50%;
     background-repeat: no-repeat;
   }
 
   /* Worn ON TOP. The card is a plain rectangle of paper; the carving is a
      separate layer above everything, and the paper shows through its hole.
      Stretched rather than fitted: the keeper sets the card's ratio from the
-     picture on upload, so the two already agree. */
+     picture on upload, so the two already agree — `--frame-scale-x/y` is a
+     deliberate zoom past that agreement, not a second way to reach it, so it
+     defaults to exactly 1 (the size that already agrees) and only moves when
+     the keeper drags it there. Centred rather than anchored at a corner: a
+     background past 100% has to grow from SOMEWHERE, and growing from the
+     centre is the only choice that keeps both edges equally spared, since a
+     keeper enlarging one axis to fix a stray sliver of paper on one side does
+     not mean the other side was wrong too. The card's own box still clips
+     whatever that growth pushes past its edges — a background image is
+     always cut to its element's box, never a second overflow to manage. */
   .carving {
     position: absolute;
     inset: 0;
     z-index: 3;
     background-image: var(--frame-image);
-    background-size: 100% 100%;
+    background-size: calc(var(--frame-scale-x, 1) * 100%) calc(var(--frame-scale-y, 1) * 100%);
+    background-position: 50% 50%;
     background-repeat: no-repeat;
     /* Chrome, not a surface: it must never take a click, a hover or a
        text selection away from the card underneath. */
@@ -2215,6 +2392,63 @@
 
   .badges-layer .corner {
     pointer-events: auto;
+  }
+
+  /* `freeform`'s name and lore — same idea as `.badges-layer` right above:
+     a layer over the whole card, deaf to the pointer except the two labels
+     themselves, so a label dragged past its own footprint keeps collecting
+     the drag instead of losing it to the carving underneath. */
+  .free-text-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+  }
+
+  .free-text {
+    position: absolute;
+    max-width: 90%;
+    margin: 0;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    color: inherit;
+    cursor: inherit;
+  }
+
+  .free-title {
+    font-family: var(--title-face, inherit);
+    color: var(--title-ink, var(--ink));
+    font-size: calc(7cqi * var(--free-name-size, 1) * var(--type-scale, 1));
+    line-height: 1.15;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+  }
+
+  .free-lore {
+    font-family: var(--free-lore-face, inherit);
+    color: var(--free-lore-ink, var(--ink));
+    font-size: calc(4.4cqi * var(--free-lore-size, 1) * var(--type-scale, 1));
+    line-height: 1.4;
+    font-style: italic;
+  }
+
+  button.free-text {
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+    /* An empty label still needs a place to grab — a hairline box says
+       "put something here", the same job `.corner--editable.corner--unfilled`
+       does for a badge with no plate under it yet. */
+    outline: 1px dashed color-mix(in oklab, var(--ink) 35%, transparent);
+    outline-offset: 4px;
+  }
+
+  button.free-text:active {
+    cursor: grabbing;
   }
 
   /* The paper the card is written on, under everything. A cut-out frame has
@@ -2871,6 +3105,13 @@
     background: color-mix(in oklab, var(--ink) 8%, var(--paper));
   }
 
+  /* `freeform`: no bands to share the window with — the picture fills all of
+     it, and the window's own four insets (below) are what the keeper drags
+     to match wherever THIS illustration's hole actually is. */
+  .art--free {
+    flex: 1 1 auto;
+  }
+
   /* A picture to grab and slide, not just a button to press — the cursor
      says so before the keeper even touches it. */
   .art--editable {
@@ -2895,6 +3136,16 @@
        Pan and zoom both live in the transform below instead. */
     object-position: 50% 50%;
     transform: translate(var(--art-tx, 0%), var(--art-ty, 0%)) scale(var(--art-zoom, 1));
+  }
+
+  /* `freeform` shrinks on purpose (see `FREEFORM_PAN_RANGE` above), and
+     `cover` would answer a shrink by cropping a smaller piece of the same
+     fill rather than revealing the rest of the photograph — the opposite of
+     what a shrink is FOR here. `contain` is what a full-bleed picture on its
+     own paper wants instead: the whole photograph, free to end up smaller
+     than its window with the illustration showing at the edges. */
+  .art--free :global(.app-image-main) {
+    object-fit: contain;
   }
 
   /* An <img> is natively draggable — without this, the first move of a drag

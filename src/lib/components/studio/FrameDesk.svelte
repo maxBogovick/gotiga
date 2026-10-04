@@ -15,6 +15,8 @@
   import { onMount } from "svelte";
   import { t, lang, type TranslationKey } from "$lib/i18n";
   import {
+    BADGE_SCALE_MIN,
+    BADGE_SCALE_MAX,
     CARD_WIDTHS,
     DEFAULT_ASPECT,
     FRAME_MODES,
@@ -28,6 +30,7 @@
     SLICE_SLOTS,
     SLICE_TURNS,
     applyInsetDelta,
+    clampScale,
     cardTallAt,
     defaultSlices,
     dressWindowMissing,
@@ -180,18 +183,37 @@
       // The card's ratio is fixed game-wide; the picture is stretched to fit
       // it, not the other way around, so different frame uploads can never
       // leave cards different shapes. The aspect slider still overrides it.
-      if (art.hasAlpha) {
-        frame.frameMode = "overlay";
-      } else {
-        // No hole in it: worn on top it would cover the card completely.
-        frame.frameMode = "behind";
-        flash($t("adminBattlesFrameNoAlpha"), 8000);
+      //
+      // `freeform` is a mode the keeper picked on purpose, before uploading
+      // anything — the whole point of it is one ready-made illustration, and
+      // guessing `overlay`/`behind` from the file's own alpha would silently
+      // undo that choice on the very next re-upload.
+      if (frame.frameMode !== "freeform") {
+        if (art.hasAlpha) {
+          frame.frameMode = "overlay";
+        } else {
+          // No hole in it: worn on top it would cover the card completely.
+          frame.frameMode = "behind";
+          flash($t("adminBattlesFrameNoAlpha"), 8000);
+        }
       }
     } catch (e) {
       flash(String(e), 6000);
     } finally {
       uploading = false;
     }
+  }
+
+  /** The same picture, taken off the shelf instead of uploaded fresh — a
+   *  frame illustration is often reused across ranks or presets, and
+   *  re-uploading the same file each time would just pile up copies of it.
+   *  Unlike `uploadFrameArt`, this never guesses `frameMode` from the file's
+   *  alpha: a shelf asset carries no such flag, and the keeper picking one
+   *  has already chosen a mode on purpose. */
+  function pickFrameArt() {
+    pickFromStore("art", (url) => {
+      frames[frameIndex].frameImage = url;
+    });
   }
 
   /** The paper under the card. An ordinary photograph — no transparency needed. */
@@ -1601,10 +1623,7 @@
                 >
               {/if}
               <button
-                onclick={() => {
-                beginNewFrame?.();
-                shutDrawer();
-              }}
+                onclick={() => beginNewFrame?.()}
                 title={$t("adminBattlesFrameNewHint")}
                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 hover:bg-[#34251c]/5"
                 ><BattleIcon name="plus" />{$t("adminBattlesFrameNew")}</button
@@ -1705,6 +1724,7 @@
                   owned={true}
                   transition={false}
                   interactive={false}
+                  editable={true}
                   frameEditable={true}
                   rowsEditable={true}
                   hurt={stageInMatch ? stageHurt : 1}
@@ -1977,7 +1997,9 @@
                       ? $t("adminBattlesFrameOverlay")
                       : mode === "behind"
                         ? $t("adminBattlesFrameBehind")
-                        : $t("adminBattlesFrameSliced")}</button
+                        : mode === "sliced"
+                          ? $t("adminBattlesFrameSliced")
+                          : $t("adminBattlesFrameFreeform")}</button
                   >
                 {/each}
               </div>
@@ -1991,6 +2013,18 @@
                     class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
                   >
                     {$t("adminBattlesFrameSlicedHint")}
+                  </p>
+                </details>
+              {:else if frames[frameIndex].frameMode === "freeform"}
+                <details class="mt-2" open>
+                  <summary
+                    class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                    >{$t("adminBattlesHintOpen")}</summary
+                  >
+                  <p
+                    class="mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                  >
+                    {$t("adminBattlesFrameFreeformHint")}
                   </p>
                 </details>
               {/if}
@@ -2101,17 +2135,24 @@
                     >
                       {$t("adminBattlesFrameWindowHint")}
                     </p>
-                    <p
-                      class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-                    >
-                      {$t("adminBattlesBandsHint")}
-                    </p>
+                    {#if frames[frameIndex].frameMode !== "freeform"}
+                      <p
+                        class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                      >
+                        {$t("adminBattlesBandsHint")}
+                      </p>
+                    {/if}
                   </details>
                   <!-- В один столбец, а не в два по 160 px: у ползунка в
                        колонке 432 px нет причин быть шириной в треть её, а
                        подпись при такой ширине обрезалась на «ВРЕЗКА СВЕ…».
                        Имя слева, число справа — по числам эти ручки и ищут. -->
                   <div class="space-y-3">
+                    <!-- `freeform`: та же самая рама, что у «поверх» — своя
+                         дыра в своём месте на КАЖДОЙ загруженной картинке, и
+                         врезки — единственный язык, на котором место дыры
+                         вообще можно назвать. Три доли полос ниже ничего не
+                         значат — полос в этом режиме нет ни одной. -->
                     <!-- Четыре врезки одним списком: разница между ними — одно
                          слово и одна ось, и четыре списанных друг с друга блока
                          расходились бы по одному. Рядом с процентом стоят
@@ -2161,54 +2202,56 @@
                         class="w-full"
                       />
                     </label>
-                    <label class="block">
-                      <span
-                        class="block mb-1 text-[11px] text-[#8a6a55]"
-                        >{$t("adminBattlesHeaderShare")} · {(
-                          frames[frameIndex].headerShare * 100
-                        ).toFixed(0)}%</span
-                      >
-                      <input
-                        type="range"
-                        min="0"
-                        max="0.3"
-                        step="0.005"
-                        bind:value={frames[frameIndex].headerShare}
-                        class="w-full"
-                      />
-                    </label>
-                    <label class="block">
-                      <span
-                        class="block mb-1 text-[11px] text-[#8a6a55]"
-                        >{$t("adminBattlesArtShare")} · {(
-                          frames[frameIndex].artShare * 100
-                        ).toFixed(0)}%</span
-                      >
-                      <input
-                        type="range"
-                        min="0.12"
-                        max="0.85"
-                        step="0.01"
-                        bind:value={frames[frameIndex].artShare}
-                        class="w-full"
-                      />
-                    </label>
-                    <label class="block">
-                      <span
-                        class="block mb-1 text-[11px] text-[#8a6a55]"
-                        >{$t("adminBattlesFootShare")} · {(
-                          frames[frameIndex].footShare * 100
-                        ).toFixed(0)}%</span
-                      >
-                      <input
-                        type="range"
-                        min="0"
-                        max="0.3"
-                        step="0.005"
-                        bind:value={frames[frameIndex].footShare}
-                        class="w-full"
-                      />
-                    </label>
+                    {#if frames[frameIndex].frameMode !== "freeform"}
+                      <label class="block">
+                        <span
+                          class="block mb-1 text-[11px] text-[#8a6a55]"
+                          >{$t("adminBattlesHeaderShare")} · {(
+                            frames[frameIndex].headerShare * 100
+                          ).toFixed(0)}%</span
+                        >
+                        <input
+                          type="range"
+                          min="0"
+                          max="0.3"
+                          step="0.005"
+                          bind:value={frames[frameIndex].headerShare}
+                          class="w-full"
+                        />
+                      </label>
+                      <label class="block">
+                        <span
+                          class="block mb-1 text-[11px] text-[#8a6a55]"
+                          >{$t("adminBattlesArtShare")} · {(
+                            frames[frameIndex].artShare * 100
+                          ).toFixed(0)}%</span
+                        >
+                        <input
+                          type="range"
+                          min="0.12"
+                          max="0.85"
+                          step="0.01"
+                          bind:value={frames[frameIndex].artShare}
+                          class="w-full"
+                        />
+                      </label>
+                      <label class="block">
+                        <span
+                          class="block mb-1 text-[11px] text-[#8a6a55]"
+                          >{$t("adminBattlesFootShare")} · {(
+                            frames[frameIndex].footShare * 100
+                          ).toFixed(0)}%</span
+                        >
+                        <input
+                          type="range"
+                          min="0"
+                          max="0.3"
+                          step="0.005"
+                          bind:value={frames[frameIndex].footShare}
+                          class="w-full"
+                        />
+                      </label>
+                    {/if}
                   </div>
                 </div>
               </div>
@@ -2273,6 +2316,12 @@
                         ? "…"
                         : $t("adminBattlesFrameArtUpload")}</button
                     >
+                    <button
+                      onclick={pickFrameArt}
+                      disabled={uploading}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                      >{$t("adminAssetsPick")}</button
+                    >
                     <label class="block flex-1 min-w-[12rem]">
                       <span
                         class="block mb-1 text-[11px] text-[#8a6a55]"
@@ -2294,6 +2343,71 @@
                         >{$t("adminBattlesFrameArtClear")}</button
                       >
                     {/if}
+                  </div>
+                  <details class="mt-3">
+                    <summary
+                      class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                      >{$t("adminBattlesHintOpen")}</summary
+                    >
+                    <p
+                      class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesFrameScaleHint")}
+                    </p>
+                  </details>
+                  <div class="grid grid-cols-2 gap-3 mt-3">
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
+                        >{$t("adminBattlesFrameScaleX")} · {clampScale(
+                          frames[frameIndex].frameScaleX,
+                          BADGE_SCALE_MIN,
+                          BADGE_SCALE_MAX,
+                        ).toFixed(2)}×</span
+                      >
+                      <input
+                        type="range"
+                        min={BADGE_SCALE_MIN}
+                        max={BADGE_SCALE_MAX}
+                        step="0.01"
+                        value={clampScale(
+                          frames[frameIndex].frameScaleX,
+                          BADGE_SCALE_MIN,
+                          BADGE_SCALE_MAX,
+                        )}
+                        oninput={(e) =>
+                          (frames[frameIndex].frameScaleX = Number(
+                            e.currentTarget.value,
+                          ))}
+                        class="w-full"
+                      />
+                    </label>
+                    <label class="block">
+                      <span
+                        class="block mb-1 text-[11px] text-[#8a6a55]"
+                        >{$t("adminBattlesFrameScaleY")} · {clampScale(
+                          frames[frameIndex].frameScaleY,
+                          BADGE_SCALE_MIN,
+                          BADGE_SCALE_MAX,
+                        ).toFixed(2)}×</span
+                      >
+                      <input
+                        type="range"
+                        min={BADGE_SCALE_MIN}
+                        max={BADGE_SCALE_MAX}
+                        step="0.01"
+                        value={clampScale(
+                          frames[frameIndex].frameScaleY,
+                          BADGE_SCALE_MIN,
+                          BADGE_SCALE_MAX,
+                        )}
+                        oninput={(e) =>
+                          (frames[frameIndex].frameScaleY = Number(
+                            e.currentTarget.value,
+                          ))}
+                        class="w-full"
+                      />
+                    </label>
                   </div>
                 {/if}
 
@@ -2380,6 +2494,112 @@
               </div>
             </details>
 
+            {#if frames[frameIndex].frameMode === "freeform"}
+              <!-- Место имени и приписки задаётся не здесь: их берут в руку
+                   прямо на карте рядом (тот же приём, что у значков стоимости
+                   и силы) и тащат, куда нужно, на пустую бумагу иллюстрации.
+                   Здесь — только то, что каскадом не перетащишь: начертание,
+                   чернила, кегль. -->
+              <details open class="border-b border-[#34251c]/10">
+                <summary
+                  class="px-4 py-2.5 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                  >{$t("adminBattlesFreeText")}</summary
+                >
+                <div class="px-4 pb-4">
+                  <div class="pt-5 border-t border-[#34251c]/10">
+                    <details class="mb-3">
+                      <summary
+                        class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                        >{$t("adminBattlesHintOpen")}</summary
+                      >
+                      <p
+                        class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+                      >
+                        {$t("adminBattlesFreeTextHint")}
+                      </p>
+                    </details>
+                    <p
+                      class="mb-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesFreeName")}
+                    </p>
+                    <div class="flex flex-wrap items-end gap-4 mb-5">
+                      <label class="block">
+                        <span
+                          class="block mb-1 text-[11px] text-[#8a6a55]"
+                          >{$t("adminBattlesFreeNameSize")} · {frames[
+                            frameIndex
+                          ].freeNameSize.toFixed(2)}×</span
+                        >
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="3"
+                          step="0.05"
+                          bind:value={frames[frameIndex].freeNameSize}
+                          class="w-full"
+                        />
+                      </label>
+                    </div>
+                    <p
+                      class="mb-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                    >
+                      {$t("adminBattlesFreeLoreFont")}
+                    </p>
+                    <div class="flex flex-wrap items-end gap-4">
+                      <label class="block">
+                        <span
+                          class="block mb-1 text-[11px] text-[#8a6a55]"
+                          >{$t("adminBattlesFreeLoreFont")}</span
+                        >
+                        <select
+                          bind:value={frames[frameIndex].freeLoreFont}
+                          class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
+                        >
+                          <option value=""
+                            >{$t("adminBattlesTitleFontDefault")}</option
+                          >
+                          {#each SITE_FONTS as font (font.id)}
+                            <option value={font.id}>{font.name}</option>
+                          {/each}
+                        </select>
+                      </label>
+                      <label class="block">
+                        <span
+                          class="block mb-1 text-[11px] text-[#8a6a55]"
+                          >{$t("adminBattlesFreeLoreInk")}</span
+                        >
+                        <input
+                          type="color"
+                          value={frames[frameIndex].freeLoreInk ||
+                            frames[frameIndex].ink}
+                          oninput={(e) =>
+                            (frames[frameIndex].freeLoreInk =
+                              e.currentTarget.value)}
+                          class="w-12 h-8 bg-transparent border border-[#34251c]/15"
+                        />
+                      </label>
+                      <label class="block flex-1 min-w-[14rem]">
+                        <span
+                          class="block mb-1 text-[11px] text-[#8a6a55]"
+                          >{$t("adminBattlesFreeLoreSize")} · {frames[
+                            frameIndex
+                          ].freeLoreSize.toFixed(2)}×</span
+                        >
+                        <input
+                          type="range"
+                          min="0.5"
+                          max="3"
+                          step="0.05"
+                          bind:value={frames[frameIndex].freeLoreSize}
+                          class="w-full"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            {/if}
 
             <!-- Кто это носит. Справка, а не настройка: стояла ПЕРВОЙ и своими
                  десятью строками толкала вниз всё, чем работают. Оставлена на

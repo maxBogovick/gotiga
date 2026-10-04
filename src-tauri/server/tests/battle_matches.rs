@@ -35,6 +35,7 @@ fn config() -> Config {
         telegram_login_bot_token: None,
         telegram_login_bot_username: None,
         telegram_webhook_secret: None,
+        telegram_channel_id: None,
         telegram_chat_id: None,
         smtp_host: None,
         smtp_port: None,
@@ -1696,4 +1697,41 @@ fn notes_warn_without_refusing() {
             .iter()
             .any(|n| n == "lendableNotFirstTier"),
     );
+}
+
+#[sqlx::test]
+async fn the_desk_refuses_a_card_without_its_required_words(pool: PgPool) {
+    // Стол хозяина не сохраняет карту без обязательного даже черновиком — и
+    // отказывает словом, а не падением базы (прежде это был 500 на
+    // `battle_cards_title_ru_check`).
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let mut draft = card("odno-imya", 6, 3, 1);
+    draft.status = "draft".into();
+    draft.title_ru = String::new();
+    let refused = service
+        .admin_create_battle_card(draft.clone())
+        .await
+        .expect_err("черновик без русского названия");
+    assert!(
+        refused.to_string().contains("card:missing:titleRu"),
+        "отказ называет поле: {refused}"
+    );
+
+    // Студия кладёт карту гостя черновиком как есть: гость пишет на своём
+    // языке, переводит хозяин. Таблица это принимает.
+    let saved = service
+        .admin_create_battle_card_signed(draft.clone(), Some("Гость"))
+        .await
+        .expect("черновик из студии на одном языке");
+    assert_eq!(saved.title_ru, "");
+
+    // А на люди — ни одним путём.
+    let mut shown = draft;
+    shown.slug = Some("odno-imya-2".into());
+    shown.status = "published".into();
+    let refused = service
+        .admin_create_battle_card_signed(shown, Some("Гость"))
+        .await
+        .expect_err("опубликованной карте нужны оба названия");
+    assert!(refused.to_string().contains("card:missing:titleRu"));
 }

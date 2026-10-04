@@ -24,6 +24,10 @@ pub struct Config {
     /// Секрет, которым Telegram доказывает, что обновление пришло от него:
     /// стоит и в адресе webhook, и в заголовке `X-Telegram-Bot-Api-Secret-Token`.
     pub telegram_webhook_secret: Option<String>,
+    /// Канал, куда дом сам объявляет новые работы и листы (`@имя` или
+    /// `-100…`). Пишет в него бот уведомлений (`telegram_bot_token`), и он
+    /// должен быть администратором канала. Пусто — объявлений нет.
+    pub telegram_channel_id: Option<String>,
     pub smtp_host: Option<String>,
     pub smtp_port: Option<u16>,
     pub smtp_user: Option<String>,
@@ -144,6 +148,10 @@ impl Config {
             telegram_webhook_secret: dotenvy::var("TELEGRAM_WEBHOOK_SECRET")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            telegram_channel_id: dotenvy::var("TELEGRAM_CHANNEL_ID")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
             smtp_host: dotenvy::var("SMTP_HOST").ok(),
             smtp_port: dotenvy::var("SMTP_PORT").ok().and_then(|v| v.parse().ok()),
             smtp_user: dotenvy::var("SMTP_USER").ok(),

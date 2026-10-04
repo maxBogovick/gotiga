@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { untrack } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { api, resolveLargestImageUrl } from '$lib/api';
@@ -8,21 +8,22 @@
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
   import { leafCopy, leafCoverUrl, neighborTitle, workHref } from '$lib/gazette';
-  import { renderTale, taleMorphNames, ORNAMENT } from '$lib/tales';
+  import { renderTale, taleMorph, taleMorphNames } from '$lib/tales';
+  import { siteRefKey } from '$lib/siteLinks';
   import { visitorToken } from '$lib/visitorToken';
-  import type { GazetteLeaf, TaleVote } from '$lib/types/api';
+  import { markTaleRead, readTales } from '$lib/talesRead';
+  import type { GazetteLeaf, GazetteNeighbor, TaleVote } from '$lib/types/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import ArchClip from '$lib/components/ArchClip.svelte';
   import CommentsThread from '$lib/components/CommentsThread.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
+  import TaleAfterword from '$lib/components/TaleAfterword.svelte';
+  import TaleProse from '$lib/components/TaleProse.svelte';
 
   let { data } = $props();
 
   let copy = $derived(data.leaf ? leafCopy(data.leaf, $lang) : null);
   let blocks = $derived(renderTale(copy?.body));
-  // The drop cap belongs to the first paragraph, which need not be the first
-  // block — a tale may open on an ornament.
-  let firstPara = $derived(blocks.findIndex((b) => b.kind === 'p'));
   let byline = $derived(data.leaf?.author?.trim() ?? '');
   let plate = $derived(data.leaf ? leafCoverUrl(data.leaf) : '');
   let work = $derived(data.leaf ? workHref(data.leaf, 'tale') : null);
@@ -52,9 +53,41 @@
   let myVote = $state<TaleVote>(0);
   let voting = $state(false);
 
-  onMount(() => {
+  /**
+   * После последней строки: просил ли читатель продолжение, вышло ли оно,
+   * что эта байка продолжает, и стоит ли на ней печать «прочитано».
+   */
+  let wantsSequel = $state(false);
+  let sequelLetter = $state(false);
+  let sequelTelegram = $state(false);
+  let sequel = $state<GazetteNeighbor | null>(null);
+  let sequelOf = $state<GazetteNeighbor | null>(null);
+  let read = $state(false);
+  let fresh = $state(false);
+  let shelfAsked = false;
+
+  /**
+   * Всё, что страница спрашивает о байке сама, спрашивается по её id, а не
+   * один раз при монтировании: между байками SvelteKit страницу не
+   * пересобирает, и переход «дальше на полке» оставлял бы под новой байкой
+   * числа прежней, а её просмотр не засчитывал бы вовсе.
+   */
+  $effect(() => {
     const id = data.leaf?.id;
-    if (id) {
+    const hasNext = !!data.leaf?.next;
+    if (!id) return;
+    untrack(() => {
+      views = 0;
+      likes = 0;
+      myVote = 0;
+      wantsSequel = false;
+      sequelLetter = false;
+      sequelTelegram = false;
+      sequel = null;
+      sequelOf = null;
+      read = readTales().has(id);
+      fresh = false;
+
       const token = visitorToken();
       // Просмотр отмечается один раз в сутки на читателя — это решает сервер.
       // Числа спрашиваются ПОСЛЕ отметки, а не рядом с ней: посчитанные
@@ -62,22 +95,29 @@
       // байку первым, видел бы под ней ноль.
       void api.recordTaleView(id, token).then(() =>
         api.getTaleStats(id, token).then((stats) => {
-          if (!stats) return;
+          // Пока спрашивали, читатель мог уйти к следующей байке.
+          if (!stats || data.leaf?.id !== id) return;
           views = stats.views;
           likes = stats.likes;
           myVote = stats.myVote ?? 0;
+          wantsSequel = stats.wantsSequel ?? false;
+          sequelLetter = stats.sequelLetter ?? false;
+          sequelTelegram = stats.sequelTelegram ?? false;
+          sequel = stats.sequel ?? null;
+          sequelOf = stats.sequelOf ?? null;
         }),
       );
-    }
 
-    if (data.leaf?.next) {
-      void api
-        .getTales()
-        .then((list) => (shelf = list))
-        // The invitation simply arrives without its arch. A tale that cannot
-        // reach the shelf is still a tale.
-        .catch(() => (shelf = []));
-    }
+      if (hasNext && !shelfAsked) {
+        shelfAsked = true;
+        void api
+          .getTales()
+          .then((list) => (shelf = list))
+          // The invitation simply arrives without its arch. A tale that cannot
+          // reach the shelf is still a tale.
+          .catch(() => (shelf = []));
+      }
+    });
   });
 
   /**
@@ -132,26 +172,70 @@
   // arch at the foot of the thread shows the same photograph, and naming both
   // would be the duplicate this map exists to prevent.
   let nextMorph = $derived(nextLeaf ? morphs.get(nextLeaf.id) ?? '' : '');
+  /**
+   * Names for the photographs of the cards set into the prose, so a card to a
+   * work morphs into that work's page. Same rule as the rest of the page: a
+   * name already worn here (the plate, the invitation) or worn by two cards is
+   * dropped, because one duplicate aborts the transition for everything.
+   */
+  let cardMorphs = $derived.by(() => {
+    const taken = new Set([morph, nextMorph].filter(Boolean));
+    const count = new Map<string, number>();
+    const named: (string | null)[] = blocks.map((b) => {
+      if (b.kind !== 'card') return null;
+      const info = data.links?.[siteRefKey(b.ref)];
+      if (!info) return null;
+      const name = info.room === 'work' ? `figurine-${info.id}` : taleMorph(info);
+      count.set(name, (count.get(name) ?? 0) + 1);
+      return name;
+    });
+    return named.map((n) => (n && count.get(n) === 1 && !taken.has(n) ? n : ''));
+  });
   let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
 
   /**
-   * Пыль за прочитанную небылицу — тому, кто дочитал до конца, а не тому, кто
-   * открыл. Конец засчитывается буквально: последняя строка попала на экран.
+   * Дочитано — тому, кто дочитал до конца, а не тому, кто открыл. Конец
+   * засчитывается буквально: последняя строка попала на экран.
    *
    * Действие на самом низе текста, а не таймер: небылицы разной длины, и
    * секунды сказали бы про длинную то же, что про короткую.
+   *
+   * Дочитавший получает печать на арке полки — всякий, и гость тоже; пыль за
+   * чтение — только вошедший игрок. Действие взводится заново на каждой
+   * байке: страница между байками не пересобирается.
    */
-  function lastLine(node: HTMLElement) {
+  function lastLine(node: HTMLElement, id: string | undefined) {
+    let current = id;
+    let watcher: IntersectionObserver | null = null;
+    const arm = () => {
+      watcher?.disconnect();
+      watcher = null;
+      if (!current) return;
+      const armedFor = current;
+      watcher = new IntersectionObserver((entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        watcher?.disconnect();
+        finished(armedFor);
+      });
+      watcher.observe(node);
+    };
+    arm();
+    return {
+      update(next: string | undefined) {
+        if (next === current) return;
+        current = next;
+        arm();
+      },
+      destroy: () => watcher?.disconnect(),
+    };
+  }
+
+  function finished(id: string) {
+    if (data.leaf?.id !== id) return;
+    fresh = markTaleRead(id);
+    read = true;
     const token = authStore.token;
-    const id = data.leaf?.id;
-    if (!token || !id) return;
-    const watcher = new IntersectionObserver((entries) => {
-      if (!entries.some((e) => e.isIntersecting)) return;
-      watcher.disconnect();
-      void api.grantBattleAttention(token, 'read', id);
-    });
-    watcher.observe(node);
-    return { destroy: () => watcher.disconnect() };
+    if (token) void api.grantBattleAttention(token, 'read', id);
   }
 
   let taleUrl = $derived(data.leaf ? `${SITE_URL}/tales/${data.leaf.slug}` : SITE_URL);
@@ -297,6 +381,14 @@
             <span class="byline-name">{byline}</span>
           </p>
         {/if}
+        <!-- Продолжение называет своё начало до первой строки: пришедший
+             прямо сюда должен знать, что история началась раньше. -->
+        {#if sequelOf}
+          <p class="continues" in:fade={{ duration: 400 }}>
+            {$t('talesContinues')}
+            <a href="/tales/{sequelOf.slug}?src=tale_sequel">{$t('talesQuoteOpen')}{neighborTitle(sequelOf, $lang)}{$t('talesQuoteClose')}</a>
+          </p>
+        {/if}
       </header>
 
       <div class="leaf" in:fade={{ duration: 700, delay: 160 }}>
@@ -318,13 +410,8 @@
             {/if}
           </aside>
         {/if}
-        {#each blocks as block, i}
-          {#if block.kind === 'ornament'}
-            <p class="ornament" aria-hidden="true">{ORNAMENT}</p>
-          {:else}
-            <p class="para" class:opening={i === firstPara}>{block.text}</p>
-          {/if}
-
+        <TaleProse {blocks} links={data.links ?? {}} {cardMorphs}>
+          {#snippet after(i)}
           {#if i === 0 && plate}
             <!-- Pinned in the margin on a wide screen, and dropped into the
                  prose right here once the margin is gone. -->
@@ -335,14 +422,15 @@
                 href={work || undefined}
                 style={morph ? `view-transition-name: ${morph}` : undefined}
               >
-                <AppImage src={plate} alt={data.leaf.figurineName ?? ''} class="margin-img" sizes="168px" />
+                <AppImage src={plate} alt={data.leaf?.figurineName ?? ''} class="margin-img" sizes="168px" />
               </svelte:element>
-              {#if data.leaf.figurineName}
+              {#if data.leaf?.figurineName}
                 <p class="margin-name">{data.leaf.figurineName}</p>
               {/if}
             </aside>
           {/if}
-        {/each}
+          {/snippet}
+        </TaleProse>
 
         {#if plate && blocks.length === 0}
           <aside class="margin">
@@ -359,7 +447,7 @@
       </div>
 
       <!-- Дно текста. Ничего не показывает — только отмечает, что дочитано. -->
-      <span class="bottom" use:lastLine aria-hidden="true"></span>
+      <span class="bottom" use:lastLine={data.leaf.id} aria-hidden="true"></span>
 
       <!-- Отклик читателя. Числа приходят с сервера; минус здесь не печатается
            намеренно: он сказан дому, а не остальным читателям. -->
@@ -384,12 +472,32 @@
             {$t('talesDislikeAction')}
           </button>
         </div>
-        <p class="response-counts">
-          <span class="count"><b>{views}</b> {$t('talesViews')}</span>
-          <span class="count-rule" aria-hidden="true"></span>
-          <span class="count"><b>{likes}</b> {$t('talesLikes')}</span>
-        </p>
+        <!-- Число печатается, только когда оно не ноль. «0 откликов» под
+             только что дочитанной байкой говорит одно — «здесь никого», —
+             и это то же правило, по которому числа спрашиваются после
+             отметки просмотра: открывший первым не видит нуля. -->
+        {#if views > 0 || likes > 0}
+          <p class="response-counts">
+            {#if views > 0}<span class="count"><b>{views}</b> {$t('talesViews')}</span>{/if}
+            {#if views > 0 && likes > 0}<span class="count-rule" aria-hidden="true"></span>{/if}
+            {#if likes > 0}<span class="count"><b>{likes}</b> {$t('talesLikes')}</span>{/if}
+          </p>
+        {/if}
       </section>
+
+      <!-- Ключ — байка: между байками страница не пересобирается, а просьба,
+           листок с адресом и печать принадлежат одной байке. -->
+      {#key data.leaf.id}
+        <TaleAfterword
+          taleId={data.leaf.id}
+          bind:wants={wantsSequel}
+          bind:letter={sequelLetter}
+          bind:telegram={sequelTelegram}
+          {sequel}
+          {read}
+          {fresh}
+        />
+      {/key}
 
       {#if work}
         <footer class="stands" in:fade={{ duration: 500, delay: 220 }}>
@@ -549,6 +657,21 @@
     color: var(--ink, #34251c);
   }
 
+  .continues {
+    margin: 14px 0 0;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: clamp(15px, 1.5vw, 17px);
+    font-style: italic;
+    color: var(--muted, #5f4636);
+  }
+  .continues a {
+    color: var(--deep, #6f3b24);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(198, 95, 60, 0.35);
+    transition: color 0.25s, border-color 0.25s;
+  }
+  .continues a:hover { color: var(--copper, #c65f3c); border-color: var(--copper, #c65f3c); }
+
   /* ── The tale ──────────────────────────────────────────────────────────────
      One grid: the prose walks down column one, the work stands in column two
      and stays there while you read. Below 1100px the second column is gone and
@@ -568,37 +691,11 @@
     view-timeline-axis: block;
   }
 
-  .para,
-  .ornament { grid-column: 2; }
-
-  .para {
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: clamp(18px, 1.9vw, 21px);
-    font-weight: 400;
-    line-height: 1.72;
-    color: var(--ink, #34251c);
-    max-width: 62ch;
-    margin: 0 0 1.15em;
-  }
-
-  .para.opening::first-letter {
-    float: left;
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: 3.5em;
-    line-height: 0.82;
-    padding: 0.06em 0.09em 0 0;
-    color: var(--deep, #6f3b24);
-  }
-
-  .ornament {
-    max-width: 62ch;
-    margin: 0.5em 0 1.4em;
-    text-align: center;
-    font-size: 13px;
-    letter-spacing: 0.5em;
-    color: var(--copper, #c65f3c);
-    opacity: 0.55;
-  }
+  /* Набор прозы — в TaleProse; здесь только место в сетке. */
+  .leaf :global(.para),
+  .leaf :global(.subhead),
+  .leaf :global(.ornament),
+  .leaf :global(.tipped) { grid-column: 2; }
 
   .margin {
     grid-column: 3;
@@ -915,8 +1012,10 @@
     .page { --spine: 0px; --spine-gap: 0px; }
     .leaf { grid-template-columns: 1fr; column-gap: 0; }
     .spine { display: none; }
-    .para,
-    .ornament,
+    .leaf :global(.para),
+    .leaf :global(.subhead),
+    .leaf :global(.ornament),
+    .leaf :global(.tipped),
     .margin { grid-column: auto; }
     .margin {
       grid-row: auto;

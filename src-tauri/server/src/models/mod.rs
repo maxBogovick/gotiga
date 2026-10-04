@@ -1906,6 +1906,11 @@ pub struct TelegramCodeStatus {
 pub struct TelegramLoginConfig {
     pub enabled: bool,
     pub bot_username: Option<String>,
+    /// Стенд на своей машине: Telegram сюда не достучится никогда, и дверь
+    /// доигрывается здесь же (`telegram_play_locally`). Страница обязана это
+    /// знать, иначе она показывает кнопку в Telegram, за которой бот отвечает
+    /// «слово остыло», — то есть ведёт в тупик и молчит об этом.
+    pub local: bool,
 }
 
 /// One icon in a challenge grid step — token replaces real ID
@@ -3607,6 +3612,218 @@ pub struct TaleStatsDto {
     /// Голос этого читателя, когда он назвал себя жетоном посетителя.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub my_vote: Option<i16>,
+    /// Просил ли этот читатель продолжение. Как и голос — только когда он
+    /// назвал себя жетоном.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wants_sequel: Option<bool>,
+    /// Ждёт ли его просьба письма. Отдаётся вместе с просьбой: без него
+    /// вернувшийся читатель видел бы приглашение оставить адрес, который уже
+    /// оставил.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequel_letter: Option<bool>,
+    /// Ждёт ли его просьба записки в Telegram.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequel_telegram: Option<bool>,
+    /// Вышедшее продолжение. Спрашивается живым, а не лежит на листе: лист
+    /// пререндерится, и продолжение, вышедшее после сборки, иначе не
+    /// появилось бы под началом до следующей выкладки.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequel: Option<GazetteNeighborDto>,
+    /// Начало, которое эта байка продолжает.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequel_of: Option<GazetteNeighborDto>,
+}
+
+/// Двери, через которые следующая байка приходит сама: письмо и канал.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleDoorsDto {
+    /// Есть ли чем отправить письмо. Нет — форма не печатается: обещать
+    /// письмо, которое не уйдёт, хуже, чем не обещать.
+    pub letters: bool,
+    /// Публичная ссылка на канал. Пусто — канала нет или он без имени.
+    pub telegram: Option<String>,
+    /// Может ли сайт написать вошедшему через Telegram: бот входа назван.
+    pub telegram_notes: bool,
+}
+
+/// «Хочу продолжение». Назначается, а не переключается, как голос под
+/// байкой: удвоенный запрос не снимает то, что сам же поставил.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleSequelWishRequest {
+    pub visitor_token: String,
+    pub want: bool,
+    /// Куда написать, когда продолжение выйдет. Пусто — просьба без письма.
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub lang: Option<String>,
+    #[serde(default)]
+    pub age_confirmed: bool,
+    /// Сообщить в Telegram. Только вошедшему, у чьего имени Telegram
+    /// привязан; `None` — не трогать то, что уже решено.
+    #[serde(default)]
+    pub telegram: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleSequelWishResponse {
+    pub wants: bool,
+    /// Придёт ли письмо, когда продолжение выйдет.
+    pub letter: bool,
+    /// Придёт ли записка в Telegram.
+    pub telegram: bool,
+}
+
+/// Работа в голосовании — то, что читатель видит: лицо и имя.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TalePollWorkDto {
+    pub figurine_id: String,
+    pub name: String,
+    pub slug: Option<String>,
+    pub image_url: Option<String>,
+}
+
+/// Голосование «о ком записать следующую», каким его видит читатель. Чисел
+/// здесь нет намеренно: голосов мало, и счёт при малых числах говорит о
+/// случае, а не о выборе; видит его только стол рассказов.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TalePollDto {
+    pub id: String,
+    /// `open` — выбирают; `closed` — выбрали, и байка пишется.
+    pub state: String,
+    pub candidates: Vec<TalePollWorkDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub my_choice: Option<String>,
+    /// Придёт ли этому читателю письмо, когда байка выйдет.
+    pub my_letter: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub winner: Option<TalePollWorkDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TalePollVoteRequest {
+    pub visitor_token: String,
+    pub figurine_id: Uuid,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub lang: Option<String>,
+    #[serde(default)]
+    pub age_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TalePollVoteResponse {
+    pub my_choice: String,
+    pub my_letter: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTalePollCandidateDto {
+    pub figurine_id: String,
+    pub name: String,
+    pub image_url: Option<String>,
+    pub votes: i64,
+    /// Сколько из голосовавших за неё ждут письма.
+    pub letters: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminTalePollDto {
+    pub id: String,
+    pub state: String,
+    pub opened_at: String,
+    pub closed_at: Option<String>,
+    pub winner_figurine_id: Option<String>,
+    /// Байка, которой обещание исполнено.
+    pub fulfilled: Option<GazetteNeighborDto>,
+    pub candidates: Vec<AdminTalePollCandidateDto>,
+    /// Сколько всех голосовавших ждут письма — оно уйдёт каждому, не только
+    /// тем, кто выбрал победителя.
+    pub letters: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenTalePollRequest {
+    pub figurine_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseTalePollRequest {
+    pub winner_figurine_id: Uuid,
+}
+
+/// Какую байку продолжает эта. `None` — никакую.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTaleSequelRequest {
+    #[serde(default)]
+    pub of: Option<Uuid>,
+}
+
+/// Читатель, ждущий продолжения, — строка списка на столе рассказов. Судьба
+/// письма и записки названа словом: `none` — не просил или продолжения ещё
+/// нет, `pending` — ждёт отправки, `sent` — ушло, `failed` — не дошло за все
+/// попытки или за неделю.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSequelWishRow {
+    pub created_at: DateTime<Utc>,
+    /// Адрес, оставленный для письма.
+    pub email: Option<String>,
+    /// Имя на сайте, если читатель вошёл.
+    pub name: Option<String>,
+    /// `@имя` в Telegram, если оно есть у вошедшего.
+    pub telegram_username: Option<String>,
+    /// Просил ли записку в Telegram.
+    pub by_telegram: bool,
+    pub lang: String,
+    pub letter: String,
+    pub note: String,
+}
+
+/// Созревшая записка в Telegram о продолжении. `telegram_id` берётся из
+/// имени в миг отправки: пусто — Telegram от имени отвязали.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TaleNoteRow {
+    pub tale_id: Uuid,
+    pub user_id: Uuid,
+    pub telegram_id: Option<i64>,
+    pub lang: String,
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub original_title_en: Option<String>,
+    pub original_title_ru: Option<String>,
+}
+
+/// Созревшее письмо о байке со всем, что нужно для его текста.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TaleLetterRow {
+    pub tale_id: Uuid,
+    pub email: String,
+    pub lang: String,
+    pub reason: String,
+    pub unsubscribe_token: Option<String>,
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub dek_en: Option<String>,
+    pub dek_ru: Option<String>,
+    pub original_title_en: Option<String>,
+    pub original_title_ru: Option<String>,
+    pub figurine_name: Option<String>,
 }
 
 /// Строка свода по байкам в столе рассказов: сколько прочли, сколько
@@ -3620,6 +3837,33 @@ pub struct AdminTaleStatRow {
     pub dislikes: i64,
     pub comments: i64,
     pub pending_comments: i64,
+    /// Какую байку продолжает эта. Лежит здесь, а не в форме листа, по той же
+    /// причине, по которой у полки своя ручка порядка: это дело полки, а не
+    /// содержимого листа.
+    pub sequel_of: Option<String>,
+    /// Сколько читателей просили продолжение.
+    pub sequel_wishes: i64,
+    /// Сколько из них ждут письма.
+    pub sequel_letters: i64,
+}
+
+/// Что уйдёт людям, если байку выложить сейчас. Стол печатает это рядом с
+/// кнопкой «Опубликовать»: письмо назад не вернёшь, и знать число надо до
+/// нажатия, а не из журнала после.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleLettersForecast {
+    /// Письма по этой байке уже разложены — второй раз они не уйдут.
+    pub laid: bool,
+    /// Разных адресов, которым уйдёт письмо (книга, просившие продолжение,
+    /// голосовавшие за работу), — столько же, сколько строк заведёт раскладка.
+    pub letters: i64,
+    /// Записок в Telegram просившим продолжение.
+    pub notes: i64,
+    /// Есть ли чем отправить письмо. Нет — письма лягут в очередь и не уйдут.
+    pub mail: bool,
+    /// Через сколько секунд после выхода раскладываются письма.
+    pub grace_secs: i64,
 }
 
 // ============================================================
@@ -4034,6 +4278,9 @@ pub struct BattleWeighDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CardReadinessDto {
+    /// Обязательные поля, которых нет (`titleEn`, `effectRu`, `price`…).
+    /// Пока непусто — стол хозяина карту не сохраняет вовсе, даже черновиком.
+    pub missing: Vec<String>,
     /// Пока непусто — карту нельзя опубликовать.
     pub blocking: Vec<String>,
     /// Так можно, но стоит знать.

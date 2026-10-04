@@ -177,6 +177,50 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background: объявления в Telegram-канале. Тик — пять минут: вместе с
+    // выдержкой в десять минут работа выходит в канал через десять–пятнадцать
+    // минут после того, как появилась на сайте. Первый тик — через минуту
+    // после запуска, чтобы не толкаться с миграциями и прогревом.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                tick.tick().await;
+                match svc.announce_to_channel().await {
+                    Ok(n) if n > 0 => tracing::info!("Telegram channel: {n} posts out"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Telegram channel round failed: {e}"),
+                }
+            }
+        });
+    }
+
+    // Background: письма и записки в Telegram о вышедших небылицах. Тик тот же, что у канала, и по
+    // той же причине: вместе с выдержкой в десять минут письмо уходит через
+    // десять–пятнадцать минут после того, как байка вышла на люди.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                tick.tick().await;
+                match svc.send_tale_letters().await {
+                    Ok(n) if n > 0 => tracing::info!("Tale letters: {n} sent"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Tale letters round failed: {e}"),
+                }
+                match svc.send_tale_notes().await {
+                    Ok(n) if n > 0 => tracing::info!("Tale notes: {n} sent to Telegram"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Tale notes round failed: {e}"),
+                }
+            }
+        });
+    }
+
     // Background: prune login attempts past the retention window (runs now, then daily).
     {
         let svc = service.clone();

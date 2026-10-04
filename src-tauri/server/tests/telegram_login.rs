@@ -47,6 +47,7 @@ async fn spawn(pool: PgPool) -> String {
         telegram_login_bot_token: Some("123456:poddelnyj-token".into()),
         telegram_login_bot_username: Some("gotiga_test_bot".into()),
         telegram_webhook_secret: Some(SECRET.into()),
+        telegram_channel_id: None,
         smtp_host: None,
         smtp_port: None,
         smtp_user: None,

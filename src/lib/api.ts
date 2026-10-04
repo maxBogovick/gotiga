@@ -1608,6 +1608,17 @@ export const api = {
     },
 
     /**
+     * Доиграть вход за Telegram — только на стенде своей машины. Маршрута
+     * снаружи не существует вовсе, поэтому зовётся он лишь тогда, когда сервер
+     * сам назвался местным (`TelegramLoginConfig.local`).
+     */
+    async telegramPlayLocally(code: string, yes = true): Promise<void> {
+        await webFetch(`/auth/telegram/local/${code}${yes ? '' : '?answer=no'}`, {
+            headers: { Accept: 'text/html' },
+        });
+    },
+
+    /**
      * Начать вход. С `sessionToken` это привязка Telegram к уже вошедшему
      * аккаунту: ручка одна, потому что обряд один.
      */
@@ -2100,6 +2111,109 @@ export const api = {
     /** Свод по всем байкам разом: просмотры, голоса, отклик. */
     async adminTaleStats(): Promise<import('./types/api').AdminTaleStat[]> {
         return webFetch('/admin/tales/stats', { headers: authHeaders() });
+    },
+
+    // === БАЙКИ: ПОСЛЕ ПОСЛЕДНЕЙ СТРОКИ ===
+
+    /** Есть ли у дома письмо и канал. Не дозвонились — дверей нет, и это
+     *  честнее, чем обещать письмо, которое не уйдёт.
+     *
+     *  Одно и то же для всех страниц и меняется только с настройками почты
+     *  или канала, поэтому спрашивается раз в пять минут, а не на каждой
+     *  байке: переход по полке иначе стоил бы лишнего запроса на страницу. */
+    async getTaleDoors(): Promise<import('./types/api').TaleDoors> {
+        try {
+            return await dedupeRead('tales:doors', 5 * 60_000, () =>
+                webFetch<import('./types/api').TaleDoors>('/tales/doors'),
+            );
+        } catch {
+            return { letters: false, telegram: null, telegramNotes: false };
+        }
+    },
+
+    /** «Хочу продолжение». Назначается, а не переключается. */
+    async setTaleSequelWish(
+        taleId: string,
+        req: import('./types/api').TaleSequelWishRequest,
+        sessionToken?: string | null,
+    ): Promise<import('./types/api').TaleSequelWishResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
+        return webFetch(`/tales/${taleId}/sequel`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(req),
+        });
+    },
+
+    /** Голосование, которое сейчас стоит на полке, или `null`. */
+    async getTalePoll(visitorToken?: string | null): Promise<import('./types/api').TalePoll | null> {
+        try {
+            const qs = visitorToken ? `?visitorToken=${encodeURIComponent(visitorToken)}` : '';
+            return await webFetch(`/tales/poll${qs}`);
+        } catch {
+            return null;
+        }
+    },
+
+    async voteTalePoll(
+        pollId: string,
+        req: import('./types/api').TalePollVoteRequest,
+        sessionToken?: string | null,
+    ): Promise<import('./types/api').TalePollVoteResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
+        return webFetch(`/tales/poll/${pollId}/vote`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(req),
+        });
+    },
+
+    async adminTalePolls(): Promise<import('./types/api').AdminTalePoll[]> {
+        return webFetch('/admin/tales/polls', { headers: authHeaders() });
+    },
+
+    async adminOpenTalePoll(figurineIds: string[]): Promise<void> {
+        await webFetch('/admin/tales/polls', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ figurineIds }),
+        });
+    },
+
+    async adminCloseTalePoll(pollId: string, winnerFigurineId: string): Promise<void> {
+        await webFetch(`/admin/tales/polls/${pollId}/close`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ winnerFigurineId }),
+        });
+    },
+
+    async adminDeleteTalePoll(pollId: string): Promise<void> {
+        await webFetch(`/admin/tales/polls/${pollId}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+    },
+
+    /** Кто ждёт продолжения этой байки и дошло ли до него известие. */
+    async adminTaleWaiting(taleId: string): Promise<import('./types/api').AdminSequelWish[]> {
+        return webFetch(`/admin/tales/${taleId}/waiting`, { headers: authHeaders() });
+    },
+
+    /** Сколько писем и записок уйдёт, если выложить байку сейчас. */
+    async adminTaleLettersForecast(taleId: string): Promise<import('./types/api').TaleLettersForecast> {
+        return webFetch(`/admin/tales/${taleId}/letters`, { headers: authHeaders() });
+    },
+
+    /** Какую байку продолжает эта; `null` — никакую. */
+    async adminSetTaleSequel(taleId: string, of: string | null): Promise<void> {
+        await webFetch(`/admin/tales/${taleId}/sequel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ of }),
+        });
     },
 
     // === IMPRESSIONS ("Book of Impressions") ===

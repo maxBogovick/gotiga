@@ -85,6 +85,14 @@ export const DEFAULT_COST_X = 14;
 export const DEFAULT_COST_Y = 12;
 export const DEFAULT_POWER_X = 86;
 export const DEFAULT_POWER_Y = 88;
+/** Где встают имя и приписка в `freeform` до первого перетаскивания — имя под
+ *  фотографией, приписка в пустом развороте у подножия, там, где его обычно
+ *  оставляет готовая иллюстрация в духе сертификата. Зеркало в `battles.rs`,
+ *  менять вместе. */
+export const DEFAULT_FREE_NAME_X = 50;
+export const DEFAULT_FREE_NAME_Y = 60;
+export const DEFAULT_FREE_LORE_X = 50;
+export const DEFAULT_FREE_LORE_Y = 84;
 
 export const SLICE_SLOTS: SliceSlot[] = [
   "corner",
@@ -1700,6 +1708,8 @@ function painted(
     foil,
     frameImage: "",
     frameMode: "overlay",
+    frameScaleX: 1,
+    frameScaleY: 1,
     paperImage: "",
     backImage: "",
     cornerImage: "",
@@ -1748,6 +1758,14 @@ function painted(
     healthWeight: 0,
     healthX: null,
     healthY: null,
+    freeNameX: null,
+    freeNameY: null,
+    freeNameSize: 1,
+    freeLoreX: null,
+    freeLoreY: null,
+    freeLoreSize: 1,
+    freeLoreFont: "",
+    freeLoreInk: "",
   };
 }
 
@@ -1795,7 +1813,12 @@ export const LAYOUTS: BattleLayout[] = ["corners", "plaque"];
  *  «Собрана из частей» стоит первой, потому что это единственный способ, в
  *  котором раму ДЕЛАЮТ: два других надевают готовую картинку целиком. Первый в
  *  списке — то, с чего начинают, и новая рама начинается именно с него. */
-export const FRAME_MODES: BattleFrameMode[] = ["sliced", "overlay", "behind"];
+export const FRAME_MODES: BattleFrameMode[] = [
+  "sliced",
+  "overlay",
+  "behind",
+  "freeform",
+];
 export const BADGE_SHAPES: BattleBadgeShape[] = [
   "circle",
   "square",
@@ -1985,6 +2008,16 @@ export function isOverlaid(frame: BattleFrame): boolean {
   return isDressed(frame) && frame.frameMode !== "behind";
 }
 
+/** A whole ready-made illustration — paper, carving and window baked into one
+ *  picture — under which the photograph sits full-bleed and over which the
+ *  name and the lore stand wherever the keeper dragged them. Reuses the same
+ *  cut-out carving `isOverlaid` already draws; what changes is `.content`,
+ *  which stops being four measured bands and becomes one full-bleed picture
+ *  plus two free-standing labels. */
+export function isFreeform(frame: BattleFrame): boolean {
+  return frame.frameMode === "freeform";
+}
+
 /**
  * Every value the card's CSS reads, in one place.
  *
@@ -2009,6 +2042,12 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     "--edge": frame.border,
     "--foil": frame.foil || "transparent",
     "--frame-image": image ? `url("${cssUrl(image)}")` : "none",
+    // Множитель, не размер — та же причина, что у `--type-scale`: рамка не
+    // назначает пиксели, а масштабирует уже нарисованную картинку вокруг её
+    // же центра. `sliced` эти два не читает — читает грамматика CSS-класса
+    // `.carving`, которого у нарезанной рамы просто нет.
+    "--frame-scale-x": String(clampScale(frame.frameScaleX, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
+    "--frame-scale-y": String(clampScale(frame.frameScaleY, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
     "--back-image": backArt ? `url("${cssUrl(backArt)}")` : "none",
     "--corner-image": cornerArt ? `url("${cssUrl(cornerArt)}")` : "none",
     "--side-image-h": sideHArt ? `url("${cssUrl(sideHArt)}")` : "none",
@@ -2022,6 +2061,9 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     "--side-mid-v-image": sideMidVArt
       ? `url("${cssUrl(sideMidVArt)}")`
       : "none",
+    // `freeform` читает те же врезки, что и `overlay`: готовая иллюстрация
+    // несёт своё окно, но где именно оно вырезано в ЭТОЙ картинке, знает
+    // только тот, кто её рисовал, — а не число, общее для всех.
     "--pad-top": `${frame.insetTop || 0}%`,
     "--pad-right": `${frame.insetRight || 0}%`,
     "--pad-bottom": `${frame.insetBottom || 0}%`,
@@ -2040,12 +2082,24 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     // ровно то, ради чего она их считает.
     "--type-scale": String(clampScale(frame.typeScale, 0.75, 1.5)),
     "--ink-fade": String(clampScale(frame.inkFade, 0.5, 1.6)),
+    // `freeform` — вольный текст. Место читает сама разметка (это доли
+    // карты, не CSS), а здесь только то, что можно выразить каскадом: шрифт,
+    // чернила, кегль. Пустая приписка — тот же дом, что и у имени: обычный
+    // шрифт карты, цвет `--ink`.
+    "--free-name-size": String(clampScale(frame.freeNameSize, 0.5, 4)),
+    "--free-lore-face": frame.freeLoreFont ? fontStack(frame.freeLoreFont) : "inherit",
+    "--free-lore-ink": frame.freeLoreInk?.trim() || frame.ink,
+    "--free-lore-size": String(clampScale(frame.freeLoreSize, 0.5, 4)),
   };
 }
 
 /** Множитель рамки, приведённый к делу. Ноль и мусор — это «не назначено»,
- *  а не «стереть текст»: рамка, сохранённая до кегля, несёт ноль. */
-function clampScale(
+ *  а не «стереть текст»: рамка, сохранённая до кегля, несёт ноль. Экспортирован
+ *  ради стола рамок: тот же самый разбор нужен и там, где число не в CSS-строку
+ *  идёт, а печатается словом рядом с ползунком, — второй, более наивный разбор
+ *  там однажды упал бы на `undefined`, которого сервер до своей пересборки не
+ *  посылал вовсе. */
+export function clampScale(
   given: number | undefined,
   min: number,
   max: number,
@@ -2184,6 +2238,15 @@ export interface Focal {
 
 const CENTRED: Focal = { x: 0.5, y: 0.5, zoom: 1 };
 
+/** The floor `zoom` sanitizes to. A windowed card never asks for less than 1
+ *  — the photograph must always cover the hole in the carving — but
+ *  `freeform`'s picture sits full-bleed on its own paper, and there shrinking
+ *  it on purpose (to see the whole photograph, matted by the illustration
+ *  around it) is the point, not a mistake to clamp away. One shared floor,
+ *  loose enough for both: the windowed aim only ever asks above 1 anyway, so
+ *  loosening the sanitizer's floor doesn't hand it a value it would use. */
+export const FOCAL_ZOOM_MIN = 0.2;
+
 /** A card with a broken focus is centred, never blank. */
 export function parseFocal(raw: string | null | undefined): Focal {
   if (!raw) return CENTRED;
@@ -2196,7 +2259,7 @@ export function parseFocal(raw: string | null | undefined): Focal {
     return {
       x: num(parsed.x, 0.5, 0, 1),
       y: num(parsed.y, 0.5, 0, 1),
-      zoom: num(parsed.zoom, 1, 1, 3),
+      zoom: num(parsed.zoom, 1, FOCAL_ZOOM_MIN, 3),
     };
   } catch {
     return CENTRED;
@@ -2990,6 +3053,7 @@ export const GESTURE_WHOMS: GestureWhom[] = [
   "striker",
   "target",
   "flight",
+  "beam",
   "field",
 ];
 export const GESTURE_BODIES: GestureBody[] = [
@@ -3025,9 +3089,12 @@ export const isLight = (body: GestureBody) => GESTURE_LIGHTS.includes(body);
 export const isMove = (body: GestureBody) =>
   body !== "none" && !GESTURE_LIGHTS.includes(body);
 
-/** Полёт и поле без картинки — слот под стрелу, не пустой жест. */
-export const isSlot = (g: MotionGesture) =>
-  (g.whom === "flight" || g.whom === "field") && !g.image;
+/** Полёт, луч и поле — рисунок без тела: двигать там некого. */
+export const isBodiless = (whom: GestureWhom) =>
+  whom === "flight" || whom === "beam" || whom === "field";
+
+/** Полёт, луч и поле без картинки — слот под стрелу, не пустой жест. */
+export const isSlot = (g: MotionGesture) => isBodiless(g.whom) && !g.image;
 
 /**
  * Два замаха на одном теле не сложатся — победит последний. Свет складывается
@@ -3060,6 +3127,8 @@ export const MOTION_MS_MAX = 1200;
 export const MOTION_FRAMES_MAX = 24;
 export const GESTURES_MAX = 12;
 export const MOTIONS_MAX = 48;
+/** Сколько нарядов держит ящик. Зеркало `PRESETS_MAX` в `battles.rs`. */
+export const PRESETS_MAX = 64;
 export const GESTURE_SIZE_MAX = 300;
 export const GESTURE_NUDGE_MAX = 200;
 export const GESTURE_LAYERS = 12;
@@ -3073,7 +3142,7 @@ const CELL_TALL = 4 / 3;
 export function newGesture(whom: GestureWhom = "striker"): MotionGesture {
   return {
     whom,
-    body: whom === "flight" || whom === "field" ? "none" : "lunge",
+    body: isBodiless(whom) ? "none" : "lunge",
     image: "",
     frames: 1,
     size: 60,
@@ -3113,7 +3182,7 @@ function gesture(
 
 /** Слот под картинку. Без неё ничего не рисуется, но место живёт в записи. */
 export function newSlot(
-  whom: "flight" | "field",
+  whom: "flight" | "beam" | "field",
   at = 80,
   dur = 320,
 ): MotionGesture {
@@ -3123,7 +3192,7 @@ export function newSlot(
     dur,
     image: "",
     body: "none",
-    size: whom === "flight" ? 45 : 80,
+    size: whom === "flight" ? 45 : whom === "beam" ? 60 : 80,
     fade: "inOut",
   };
 }
@@ -3957,7 +4026,23 @@ export function stage(
     const parts: string[] = ["position:absolute"];
     const anims: string[] = [];
 
-    if (g.whom === "field") {
+    if (g.whom === "beam") {
+      // Луч — рисунок, растянутый от бьющего до цели: молния, нить, взгляд.
+      // Начинается в середине бьющего, ширина — расстояние до середины цели
+      // на ЭКРАНЕ (клетка 3:4, как у угла), поворот — вокруг левого края.
+      // Высота — величина жеста в процентах клетки, как у всех.
+      if (!a || !b) continue;
+      const cx = ((a.x + 0.5) / spanX) * 100;
+      const cy = ((a.y + 0.5) / spanY) * 100;
+      const reach = Math.hypot(b.x - a.x, (b.y - a.y) * CELL_TALL);
+      parts.push(
+        `left:${cx.toFixed(3)}%`,
+        `top:${(cy - h / 2).toFixed(3)}%`,
+        `width:${((reach / spanX) * 100).toFixed(3)}%`,
+        `height:${h.toFixed(3)}%`,
+        "transform-origin:0 50%",
+      );
+    } else if (g.whom === "field") {
       parts.push("inset:0");
     } else if (!spot) {
       // Некому и не над кем: жест просто не выходит. Не ошибка — обычный урон
@@ -3984,7 +4069,7 @@ export function stage(
     }
 
     const turn =
-      g.turn === "toTarget"
+      g.whom === "beam" || g.turn === "toTarget"
         ? `${angle.toFixed(2)}deg`
         : g.turn === "mirror"
           ? "180deg"
@@ -4016,6 +4101,12 @@ export function stage(
 
     const fading = fadeName(g.fade);
     if (fading) anims.push(`${fading} ${dur}ms linear ${lag(at)}ms both`);
+    // До своего мгновения рисунка нет. `both` заполняет и время до начала
+    // нулевым кадром, и рисунок без проявления (`hold`, `out`) иначе стоял бы
+    // на клетке с первой миллисекунды: вспышка на цели раньше, чем к ней
+    // полетел шар. Ожидание — своя анимация длиной `at` без заливки: пока она
+    // идёт, рисунок скрыт, кончилась — виден. Остановка времени сдвигает и её.
+    if (at > 0) anims.push(`gotiga-wait ${at}ms linear ${lag(0)}ms`);
 
     const layer = Math.max(1, Math.min(GESTURE_LAYERS, g.layer || 1));
     parts.push(`z-index:${layer}`);
@@ -4069,6 +4160,188 @@ export const STRIKE_STRIPS = {
   mace: "/battles/motion/mace.png",
 } as const;
 
+/** Молнии мага. Рисует `tools/spell_strips.py`: разряд — луч (`beam`),
+ *  растянутый от середины мага до середины цели; на цели остаётся подпалина
+ *  — отдельная полоса, потому что луч тянется вдоль, а подпалина обязана
+ *  оставаться круглой. Цветов пять, рисунок один; чёрная — не цвет того же
+ *  света, а его изнанка, и кадров у неё восемь, а не шесть. */
+type LightningTone = "" | "red" | "violet" | "green" | "black";
+
+const lightningArt = (tone: LightningTone) => {
+  const suffix = tone ? `-${tone}` : "";
+  return {
+    beam: `/battles/motion/lightning${suffix}.png`,
+    scorch: `/battles/motion/scorch${suffix}.png`,
+  };
+};
+
+/** Светлая молния: маг собирается и затепливается, разряд идёт от него к
+ *  цели, цель содрогается, на ней остаётся подпалина. */
+function brightLightning(
+  tone: LightningTone,
+  nameEn: string,
+  nameRu: string,
+): (typeof STOCK_MOTIONS)[number] {
+  const art = lightningArt(tone);
+  return {
+    nameEn,
+    nameRu,
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "sway", 0, 460),
+      gesture("striker", "kindle", 0, 600),
+      {
+        ...newGesture("beam"),
+        image: art.beam,
+        frames: STRIP_FRAMES,
+        size: 70,
+        at: 160,
+        dur: 420,
+        fade: "hold",
+        layer: 9,
+      },
+      { ...strikeArt(art.scorch, 230, 520), size: 90, fade: "out" },
+      gesture("target", "kindle", 230, 360),
+      gesture("target", "shudder", 230, 300),
+    ],
+  };
+}
+
+/** Остальная магия. Рисует `tools/magic_strips.py`; полосы клеток там
+ *  нарисованы в настоящих пропорциях клетки 3:4 и сохранены сжатыми, поэтому
+ *  круглое ложится на карту круглым. */
+const MAGIC_ART = {
+  fireball: "/battles/motion/fireball.png",
+  fireburst: "/battles/motion/fireburst.png",
+  ravens: "/battles/motion/ravens.png",
+  ravensStrike: "/battles/motion/ravens-strike.png",
+  iceLances: "/battles/motion/ice-lances.png",
+  frost: "/battles/motion/frost.png",
+  soulVortex: "/battles/motion/soul-vortex.png",
+  soulStream: "/battles/motion/soul-stream.png",
+  soulGlow: "/battles/motion/soul-glow.png",
+  poisonGlob: "/battles/motion/poison-glob.png",
+  poisonCloud: "/battles/motion/poison-cloud.png",
+  ghostArm: "/battles/motion/ghost-arm.png",
+  ghostHand: "/battles/motion/ghost-hand.png",
+} as const;
+
+/** Тяжёлые удары оружием. Рисует `tools/melee_strips.py`: одна полоса на
+ *  цели — замах (три кадра), удар, и что от него осталось (четыре). Меч,
+ *  секира и булава не поворачиваются к цели: у разреза нет верха и низа, а
+ *  секира, перевёрнутая вверх ногами, рубила бы снизу. Кулак поворачивается. */
+const MELEE_ART = {
+  sword: "/battles/motion/sword-cut.png",
+  axe: "/battles/motion/axe-chop.png",
+  fist: "/battles/motion/fist-blow.png",
+  mace: "/battles/motion/mace-crush.png",
+} as const;
+
+/** Магия посильнее и моменты боя, которые не удары: лечение, выход карты,
+ *  гибель, наложенный щит. Рисует `tools/arcana_strips.py`. Гибель лежит в
+ *  коробке ровно 1.3 клетки: прожжённое там высчитано по карте внутри неё. */
+const ARCANA_ART = {
+  meteor: "/battles/motion/meteor.png",
+  chains: "/battles/motion/chains.png",
+  reaper: "/battles/motion/reaper.png",
+  shadowSpikes: "/battles/motion/shadow-spikes.png",
+  bats: "/battles/motion/bats.png",
+  batsSwarm: "/battles/motion/bats-swarm.png",
+  healing: "/battles/motion/healing.png",
+  summoning: "/battles/motion/summoning.png",
+  death: "/battles/motion/death.png",
+  ward: "/battles/motion/ward.png",
+} as const;
+const DEATH_SIZE = 130;
+
+/** Рисунок, который летит от бьющего к цели. */
+const flying = (
+  image: string,
+  frames: number,
+  size: number,
+  at: number,
+  dur: number,
+  extra: Partial<MotionGesture> = {},
+): MotionGesture => ({
+  ...newGesture("flight"),
+  image,
+  frames,
+  size,
+  at,
+  dur,
+  fade: "hold",
+  layer: 9,
+  ...extra,
+});
+
+/** Рисунок на цели (или на бьющем) — полоса кадров на его клетке. */
+const lying = (
+  whom: "striker" | "target",
+  image: string,
+  frames: number,
+  size: number,
+  at: number,
+  dur: number,
+  extra: Partial<MotionGesture> = {},
+): MotionGesture => ({
+  ...newGesture(whom),
+  body: "none",
+  image,
+  frames,
+  size,
+  at,
+  dur,
+  fade: "hold",
+  layer: 8,
+  ...extra,
+});
+
+/** Рисунок, растянутый от бьющего до цели. */
+const reaching = (
+  image: string,
+  frames: number,
+  size: number,
+  at: number,
+  dur: number,
+): MotionGesture => ({
+  ...newGesture("beam"),
+  image,
+  frames,
+  size,
+  at,
+  dur,
+  fade: "hold",
+  layer: 9,
+});
+
+/** Чёрная молния: маг не затепливается, а темнеет и вырастает; разряд
+ *  длиннее (восемь кадров) и толще, цель не вспыхивает, а меркнет. */
+function blackLightning(): (typeof STOCK_MOTIONS)[number] {
+  const art = lightningArt("black");
+  return {
+    nameEn: "Black lightning",
+    nameRu: "Чёрная молния",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "loom", 0, 520),
+      gesture("striker", "wither", 0, 760),
+      {
+        ...newGesture("beam"),
+        image: art.beam,
+        frames: 8,
+        size: 80,
+        at: 200,
+        dur: 600,
+        fade: "hold",
+        layer: 9,
+      },
+      { ...strikeArt(art.scorch, 300, 620), size: 100, fade: "out" },
+      gesture("target", "wither", 300, 520),
+      gesture("target", "shudder", 300, 360),
+    ],
+  };
+}
+
 function strikeArt(image: string, at: number, dur: number): MotionGesture {
   return {
     ...newGesture("target"),
@@ -4120,6 +4393,54 @@ export const STOCK_MOTIONS: {
     ],
   },
   {
+    // Клинок проходит по диагонали, за ним серп света; разрез горит,
+    // брызжет искрами и темнеет.
+    nameEn: "A sword slash",
+    nameRu: "Рассечение мечом",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "lunge", 0, 500),
+      lying("target", MELEE_ART.sword, 8, 135, 120, 640),
+      gesture("target", "recoil", 360, 260),
+    ],
+  },
+  {
+    // Секира падает сверху и врубается; расщелина, трещины, щепки, пыль.
+    nameEn: "An axe chop",
+    nameRu: "Удар секирой",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "heave", 0, 620),
+      lying("target", MELEE_ART.axe, 8, 140, 160, 680),
+      gesture("target", "shudder", 415, 320),
+    ],
+  },
+  {
+    // Латная перчатка в профиль, костяшки раскалены; линии удара, две
+    // ударные волны, кратер с отпечатком четырёх костяшек. Единственный из
+    // ударов оружием, что поворачивается к цели: кулак в профиль обязан
+    // прийти оттуда, где стоит бьющий.
+    nameEn: "A fist blow",
+    nameRu: "Удар кулаком",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "lunge", 0, 480),
+      lying("target", MELEE_ART.fist, 8, 150, 120, 620, { turn: "toTarget" }),
+      gesture("target", "recoil", 350, 300),
+    ],
+  },
+  {
+    // Булава по дуге; кратер, искры металла, обломки, пыль.
+    nameEn: "A mace crush",
+    nameRu: "Удар булавой",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "heave", 0, 640),
+      lying("target", MELEE_ART.mace, 8, 140, 180, 680),
+      gesture("target", "shudder", 435, 340),
+    ],
+  },
+  {
     nameEn: "A heavy blow",
     nameRu: "Тяжёлый удар",
     occasion: "blow",
@@ -4140,6 +4461,220 @@ export const STOCK_MOTIONS: {
       // а не заводят жест. След удара в комнате рисуется отдельно.
       newSlot("flight", 80, 340),
       gesture("target", "flinch", 400, 160),
+    ],
+  },
+  // Молнии. Повод `blow` — так маг бьёт обычным ударом; на чару их
+  // надевают тем же ящиком.
+  brightLightning("", "Lightning", "Молния"),
+  brightLightning("red", "Red lightning", "Красная молния"),
+  brightLightning("violet", "Violet lightning", "Фиолетовая молния"),
+  brightLightning("green", "Green lightning", "Зелёная молния"),
+  blackLightning(),
+  {
+    // Шар летит с пылающим хвостом; на цели вспыхивает пламя, карта
+    // обугливается и тлеет.
+    nameEn: "A fireball",
+    nameRu: "Огненный шар",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "draw", 0, 380),
+      gesture("striker", "kindle", 0, 520),
+      // Гаснет в миг удара: с `hold` шар оставался висеть на цели поверх
+      // взрыва (полёт лежит слоем выше) до конца движения.
+      flying(MAGIC_ART.fireball, 6, 95, 150, 340, { fade: "inOut" }),
+      lying("target", MAGIC_ART.fireburst, 8, 130, 470, 640),
+      gesture("target", "kindle", 480, 400),
+      gesture("target", "recoil", 480, 300),
+    ],
+  },
+  {
+    // Вороны летят стаей, не поворачиваясь: нарисованы со спины, и стая,
+    // развёрнутая к цели слева, летела бы вверх ногами. Налетают, бьют,
+    // разлетаются; падают перья.
+    nameEn: "A flock of ravens",
+    nameRu: "Стая воронов",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "rise", 0, 420),
+      gesture("striker", "wither", 0, 500),
+      flying(MAGIC_ART.ravens, 6, 85, 120, 420, { turn: "none", fade: "inOut" }),
+      lying("target", MAGIC_ART.ravensStrike, 8, 140, 480, 700),
+      gesture("target", "blanch", 540, 500),
+      gesture("target", "shiver", 540, 300),
+    ],
+  },
+  {
+    // Залп из трёх сосулек; по цели расползается иней, трескается и
+    // осыпается.
+    nameEn: "Ice lances",
+    nameRu: "Ледяные копья",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "draw", 0, 400),
+      gesture("striker", "blanch", 0, 480),
+      flying(MAGIC_ART.iceLances, 6, 75, 140, 300, { fade: "inOut" }),
+      lying("target", MAGIC_ART.frost, 8, 130, 420, 720),
+      gesture("target", "blanch", 430, 600),
+      gesture("target", "flinch", 430, 220),
+    ],
+  },
+  {
+    // Над целью раскрывается воронка, из карты к магу тянется струя, цель
+    // меркнет, маг разгорается.
+    nameEn: "Soul drain",
+    nameRu: "Похищение души",
+    occasion: "blow",
+    gestures: [
+      lying("target", MAGIC_ART.soulVortex, 8, 125, 0, 900, { layer: 7 }),
+      gesture("target", "wither", 120, 760),
+      gesture("target", "shiver", 160, 320),
+      reaching(MAGIC_ART.soulStream, 8, 55, 260, 640),
+      lying("striker", MAGIC_ART.soulGlow, 6, 120, 700, 460),
+      gesture("striker", "kindle", 720, 440),
+      gesture("striker", "rise", 720, 420),
+    ],
+  },
+  {
+    // Капля яда летит и лопается над целью; облако расползается, капает,
+    // рассеивается медленно.
+    nameEn: "Poison mist",
+    nameRu: "Ядовитый туман",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "sway", 0, 440),
+      flying(MAGIC_ART.poisonGlob, 6, 48, 120, 340, { fade: "inOut" }),
+      lying("target", MAGIC_ART.poisonCloud, 8, 155, 440, 760),
+      gesture("target", "wither", 470, 640),
+      gesture("target", "shiver", 480, 280),
+    ],
+  },
+  {
+    // От мага тянется призрачная рука и сжимает цель; по карте идут
+    // трещины, рука рассыпается дымом. Кисть повёрнута к цели вместе с рукой.
+    nameEn: "A ghostly hand",
+    nameRu: "Призрачная рука",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "loom", 0, 500),
+      gesture("striker", "blanch", 0, 800),
+      reaching(MAGIC_ART.ghostArm, 8, 45, 100, 820),
+      lying("target", MAGIC_ART.ghostHand, 8, 125, 140, 820, { turn: "toTarget", layer: 10 }),
+      gesture("target", "blanch", 480, 460),
+      gesture("target", "shudder", 520, 360),
+    ],
+  },
+  {
+    // Маг поднимает руки — сверху падает пылающий камень; взрыв, оплавленный
+    // кратер, обломки, столб дыма.
+    nameEn: "A meteor",
+    nameRu: "Метеор",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "rise", 0, 420),
+      gesture("striker", "kindle", 0, 520),
+      lying("target", ARCANA_ART.meteor, 8, 165, 120, 720),
+      gesture("target", "kindle", 390, 400),
+      gesture("target", "shudder", 390, 340),
+    ],
+  },
+  {
+    // Из разлома на карте вырываются цепи, сковывают её крест-накрест,
+    // затягиваются и уходят обратно. Чара: к оцепенению, немоте, разоружению.
+    nameEn: "Chains of the abyss",
+    nameRu: "Цепи из бездны",
+    occasion: "spell",
+    gestures: [
+      gesture("striker", "loom", 0, 500),
+      gesture("striker", "wither", 0, 600),
+      lying("target", ARCANA_ART.chains, 8, 140, 100, 800),
+      gesture("target", "shudder", 480, 360),
+    ],
+  },
+  {
+    // Призрачная коса проходит серпом холодного света; душа выдёргивается
+    // из карты и уходит обратно.
+    nameEn: "The reaper's scythe",
+    nameRu: "Коса жнеца",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "sway", 0, 460),
+      gesture("striker", "blanch", 0, 600),
+      lying("target", ARCANA_ART.reaper, 8, 150, 120, 760),
+      gesture("target", "blanch", 380, 520),
+      gesture("target", "shiver", 380, 260),
+    ],
+  },
+  {
+    // Из лужи тени под картой вырастают обсидиановые шипы и рассыпаются.
+    nameEn: "Shadow spikes",
+    nameRu: "Теневые шипы",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "loom", 0, 420),
+      gesture("striker", "wither", 0, 520),
+      lying("target", ARCANA_ART.shadowSpikes, 8, 145, 100, 720),
+      gesture("target", "shudder", 290, 340),
+    ],
+  },
+  {
+    // Рой летучих мышей: летит стаей, кружит над целью, кусает, рассеивается.
+    nameEn: "A swarm of bats",
+    nameRu: "Рой летучих мышей",
+    occasion: "blow",
+    gestures: [
+      gesture("striker", "rise", 0, 400),
+      gesture("striker", "wither", 0, 500),
+      flying(ARCANA_ART.bats, 6, 95, 120, 380, { turn: "none", fade: "inOut" }),
+      lying("target", ARCANA_ART.batsSwarm, 8, 150, 440, 700),
+      gesture("target", "blanch", 520, 500),
+      gesture("target", "shiver", 520, 300),
+    ],
+  },
+  {
+    // Столб золотого света, руны и перья, трещины затягиваются золотом.
+    nameEn: "Healing light",
+    nameRu: "Исцеление",
+    occasion: "mend",
+    gestures: [
+      gesture("striker", "bow", 0, 400),
+      gesture("striker", "kindle", 0, 520),
+      lying("target", ARCANA_ART.healing, 8, 140, 80, 900),
+      gesture("target", "kindle", 320, 600),
+      gesture("target", "rise", 320, 400),
+    ],
+  },
+  {
+    // Огненный круг призыва рисует себя, встаёт столп пламени — и в нём
+    // появляется карта. Повод `arrive` ложится на саму выходящую карту.
+    nameEn: "Rising from the flame",
+    nameRu: "Явление из пламени",
+    occasion: "arrive",
+    gestures: [
+      lying("striker", ARCANA_ART.summoning, 8, 145, 0, 900),
+      gesture("striker", "swell", 300, 320),
+    ],
+  },
+  {
+    // Карта горит с краёв, обугленное рассыпается пеплом, вверх уходит душа.
+    // Саму карту гасит `sink` — полоса кладёт ожог поверх.
+    nameEn: "Burning away",
+    nameRu: "Гибель в огне",
+    occasion: "fall",
+    gestures: [
+      lying("target", ARCANA_ART.death, 8, DEATH_SIZE, 0, 1000),
+      gesture("target", "sink", 150, 850),
+    ],
+  },
+  {
+    // Рунический щит распускается перед картой, удар расходится по нему
+    // рябью, щит ложится на карту. Чара — так играется наложенный щит.
+    nameEn: "A rune shield",
+    nameRu: "Рунический щит",
+    occasion: "spell",
+    gestures: [
+      gesture("striker", "kindle", 0, 500),
+      lying("target", ARCANA_ART.ward, 8, 150, 60, 900),
+      gesture("target", "kindle", 300, 500),
     ],
   },
   {

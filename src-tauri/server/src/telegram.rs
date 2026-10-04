@@ -134,10 +134,56 @@ pub fn webhook_url(public_url: &str, secret: &str) -> String {
     )
 }
 
+/// Тот же адрес, но без секрета — для журнала.
+///
+/// Секрет стоит в самом пути, и журнал запуска печатал его целиком: в терминал,
+/// в файл и в админский просмотрщик (`logs.rs`), то есть туда, где его читают
+/// походя. А это единственное место во всём замысле, где чужой запрос напрямую
+/// превращается в сессию (§ 16.2).
+pub fn webhook_url_for_the_journal(public_url: &str) -> String {
+    format!("{}/api/v1/telegram/webhook/…", public_url.trim_end_matches('/'))
+}
+
 /// Экранирование для `parse_mode: HTML`. Слово придумываем мы, а вот браузер и
 /// город приходят из заголовков запроса — то есть снаружи.
 pub fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+// ============================================================
+// КАНАЛ
+// ============================================================
+
+/// Сколько знаков Telegram принимает в подписи к фотографии. Считаются
+/// видимые знаки, без разметки.
+pub const CAPTION_MAX: usize = 1024;
+
+/// Подпись объявления: заглавие жирным и под ним одна-две фразы.
+///
+/// Урезается вводка, а не заглавие, и урезается по слову: подпись, оборванная
+/// посреди слова, выглядит как ошибка, а не как «читать дальше».
+pub fn announcement_caption(title: &str, lead: Option<&str>) -> String {
+    let title = title.trim();
+    let title: String = title.chars().take(CAPTION_MAX / 4).collect();
+    let lead = lead.map(str::trim).filter(|l| !l.is_empty() && *l != title);
+    let Some(lead) = lead else {
+        return format!("<b>{}</b>", esc(&title));
+    };
+    // Две строки перевода между заглавием и вводкой — тоже знаки.
+    let room = CAPTION_MAX - title.chars().count() - 2;
+    format!("<b>{}</b>\n\n{}", esc(&title), esc(&clip_words(lead, room)))
+}
+
+fn clip_words(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let cut: String = s.chars().take(max.saturating_sub(1)).collect();
+    let cut = match cut.rfind(char::is_whitespace) {
+        Some(i) if i > cut.len() / 2 => &cut[..i],
+        _ => cut.as_str(),
+    };
+    format!("{}…", cut.trim_end_matches(|c: char| c.is_whitespace() || c == ',' || c == '.'))
 }
 
 pub struct Bot {
@@ -162,28 +208,36 @@ impl Bot {
     /// без записки), но теперь она **видна**: `warn` попадает в админский
     /// просмотрщик журналов вместе со всем остальным.
     async fn call(&self, method: &str, body: serde_json::Value) -> Option<serde_json::Value> {
-        let res = match self.client.post(self.url(method)).json(&body).send().await {
-            Ok(res) => res,
-            Err(e) => {
-                tracing::warn!("Telegram {method} failed: {e}");
-                return None;
+        match self.call_why(method, body).await {
+            Ok(value) => Some(value),
+            Err(why) => {
+                tracing::warn!("Telegram {method}: {why}");
+                None
             }
-        };
-        let value: serde_json::Value = match res.json().await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("Telegram {method} gave an unreadable answer: {e}");
-                return None;
-            }
-        };
+        }
+    }
+
+    /// То же, но причина отказа достаётся вызывающему: журнал канала хранит
+    /// её в строке объявления, чтобы было видно, почему пост не вышел.
+    async fn call_why(&self, method: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+        let res = self
+            .client
+            .post(self.url(method))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("failed: {e}"))?;
+        let value: serde_json::Value = res
+            .json()
+            .await
+            .map_err(|e| format!("gave an unreadable answer: {e}"))?;
         if value["ok"].as_bool() != Some(true) {
             // Причину называет сам Telegram: «chat not found», «bot was blocked
             // by the user», «Unauthorized». Угадывать её по коду нечем.
             let why = value["description"].as_str().unwrap_or("no reason given");
-            tracing::warn!("Telegram {method} refused: {why}");
-            return None;
+            return Err(format!("refused: {why}"));
         }
-        Some(value)
+        Ok(value)
     }
 
     /// Записка с двумя кнопками. Возвращает её `message_id`, чтобы после
@@ -262,6 +316,46 @@ impl Bot {
             .to_string())
     }
 
+    /// Объявление в канале с фотографией. Ссылка на сайт — кнопкой под постом:
+    /// в подписи она заняла бы строку, а кнопка переживает пересылку.
+    /// Возвращает `message_id` поста.
+    pub async fn post_photo(
+        &self,
+        chat: &str,
+        photo: &str,
+        caption: &str,
+        button: &str,
+        url: &str,
+    ) -> Result<i64, String> {
+        let body = serde_json::json!({
+            "chat_id": chat,
+            "photo": photo,
+            "caption": caption,
+            "parse_mode": "HTML",
+            "reply_markup": { "inline_keyboard": [[ { "text": button, "url": url } ]] },
+        });
+        let value = self.call_why("sendPhoto", body).await?;
+        value["result"]["message_id"]
+            .as_i64()
+            .ok_or_else(|| "answer without message_id".to_string())
+    }
+
+    /// Объявление без фотографии — или когда Telegram фотографию не взял.
+    /// Превью ссылки Telegram строит сам по странице.
+    pub async fn post_text(&self, chat: &str, text: &str, button: &str, url: &str) -> Result<i64, String> {
+        let body = serde_json::json!({
+            "chat_id": chat,
+            "text": text,
+            "parse_mode": "HTML",
+            "link_preview_options": { "url": url, "prefer_large_media": true },
+            "reply_markup": { "inline_keyboard": [[ { "text": button, "url": url } ]] },
+        });
+        let value = self.call_why("sendMessage", body).await?;
+        value["result"]["message_id"]
+            .as_i64()
+            .ok_or_else(|| "answer without message_id".to_string())
+    }
+
     /// Обязательный ответ на нажатие — без него в Telegram кнопка «думает»
     /// до таймаута.
     pub async fn ack(&self, callback_id: &str, text: &str) {
@@ -333,6 +427,27 @@ mod tests {
         // Косая черта в конце PUBLIC_URL — обычное дело, и вторая подряд дала
         // бы адрес, по которому Telegram получал бы 404 молча.
         assert_eq!(webhook_url("https://ritunia.com/", "s3cret"), plain);
+    }
+
+    #[test]
+    fn a_caption_is_a_bold_title_over_its_lead() {
+        assert_eq!(
+            announcement_caption("Страж <северной> двери", Some("Бронза & воск")),
+            "<b>Страж &lt;северной&gt; двери</b>\n\nБронза &amp; воск"
+        );
+        // Вводки нет или она повторяет заглавие — остаётся одно заглавие.
+        assert_eq!(announcement_caption("Ворон", None), "<b>Ворон</b>");
+        assert_eq!(announcement_caption("Ворон", Some("  ")), "<b>Ворон</b>");
+        assert_eq!(announcement_caption("Ворон", Some("Ворон")), "<b>Ворон</b>");
+    }
+
+    #[test]
+    fn a_long_lead_is_cut_by_the_word_and_fits_telegram() {
+        let lead = "слово ".repeat(400);
+        let caption = announcement_caption("Байка", Some(&lead));
+        let visible = caption.replace("<b>", "").replace("</b>", "");
+        assert!(visible.chars().count() <= CAPTION_MAX);
+        assert!(caption.ends_with("слово…"));
     }
 
     #[test]

@@ -4,6 +4,7 @@
   import { t, lang } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { visitorBook } from '$lib/stores/visitor-book.svelte';
+  import { knownReaderEmail } from '$lib/readerEmail';
   import { workHref, sketchLaidOut } from '$lib/gazette';
   import type { GazetteLeaf } from '$lib/types/api';
 
@@ -30,7 +31,7 @@
 
   let laid = $derived(sketchLaidOut(leaf));
   let work = $derived(workHref(leaf, compact ? 'gazette' : 'gazette_leaf'));
-  let known = $derived(!!(authStore.user?.email || visitorBook.signed));
+  let known = $derived(!!knownReaderEmail());
 
   function readToken(): string | null {
     try {
@@ -75,25 +76,15 @@
   async function leaveName() {
     if (busy) return;
     error = '';
-    const sessionEmail = authStore.user?.email?.trim() ?? '';
-    const bookEmail = visitorBook.email.trim();
-    const addr = (email.trim() || sessionEmail || bookEmail).trim();
+    const addr = email.trim() || knownReaderEmail();
     if (!addr) {
-      if (known) {
-        /* still need a stored email */
-      } else {
-        error = $t('gazetteWatchNeedEmail');
-        open = true;
-        return;
-      }
+      error = $t('gazetteWatchNeedEmail');
+      open = true;
+      return;
     }
     if (!known && !ageConfirmed) {
       error = $t('formAgeConfirmRequired');
       open = true;
-      return;
-    }
-    if (!addr) {
-      error = $t('gazetteWatchNeedEmail');
       return;
     }
     busy = true;

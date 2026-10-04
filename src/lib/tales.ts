@@ -5,6 +5,7 @@
 // hand instead of by date, and prose broken into paragraphs and ornaments.
 
 import type { GazetteLeaf } from '$lib/types/api';
+import { SITE_LINK_RE, parseSiteLink, trimLink, type SiteRef } from '$lib/siteLinks';
 
 export const TALE_KIND = 'tale';
 
@@ -33,13 +34,69 @@ export function leadTale(tales: GazetteLeaf[]): GazetteLeaf | null {
   return tales.find((t) => t.pinned) ?? tales[0] ?? null;
 }
 
-export type TaleBlock = { kind: 'p'; text: string } | { kind: 'ornament' };
+/** A paragraph is text with links to this house threaded through it. */
+export type TaleRun = ({ kind: 'text'; text: string } | { kind: 'link'; ref: SiteRef }) & {
+  /** Inside `**…**`. */
+  bold?: boolean;
+};
+
+export type TaleBlock =
+  | { kind: 'p'; text: string; runs: TaleRun[] }
+  /** A line opening with `#`: a heading inside the tale. */
+  | { kind: 'heading'; text: string; runs: TaleRun[] }
+  /** A link on a line of its own: the author set it apart, so it stands apart. */
+  | { kind: 'card'; ref: SiteRef }
+  | { kind: 'ornament' };
 
 /** A lone ✦ on its own line: a turn in the tale, not just a new paragraph. */
 export const ORNAMENT = '✦';
 
 function isOrnament(line: string): boolean {
   return line === ORNAMENT || line === '*' || line === '***';
+}
+
+/** The whole line is one link to this house, and nothing else. */
+function lineLink(line: string): SiteRef | null {
+  const m = [...line.matchAll(SITE_LINK_RE)];
+  if (m.length !== 1 || m[0][0] !== line) return null;
+  const { link, tail } = trimLink(line);
+  // A trailing full stop is the sentence's, not the link's; anything more
+  // than punctuation after it means the line was prose after all.
+  if (tail.replace(/[.,;:!?…]/g, '')) return null;
+  return parseSiteLink(link);
+}
+
+/**
+ * Cut a paragraph at every `**…**` and at every link to this house.
+ *
+ * A `**` without its pair stays two literal asterisks: better a stray mark
+ * on the page than half a paragraph turned bold.
+ */
+export function taleRuns(text: string): TaleRun[] {
+  const runs: TaleRun[] = [];
+  // With a capturing group, `split` puts every bold piece at an odd index.
+  text.split(/\*\*(?=\S)(.+?)(?<=\S)\*\*/).forEach((piece, i) => {
+    const bold = i % 2 === 1 ? true : undefined;
+    let at = 0;
+    const say = (bit: string) => {
+      if (!bit) return;
+      const last = runs[runs.length - 1];
+      if (last?.kind === 'text' && last.bold === bold) last.text += bit;
+      else runs.push({ kind: 'text', text: bit, bold });
+    };
+    for (const m of piece.matchAll(SITE_LINK_RE)) {
+      const start = m.index ?? 0;
+      const { link, tail } = trimLink(m[0]);
+      const ref = parseSiteLink(link);
+      say(piece.slice(at, start));
+      if (ref) runs.push({ kind: 'link', ref, bold });
+      else say(link);
+      say(tail);
+      at = start + m[0].length;
+    }
+    say(piece.slice(at));
+  });
+  return runs;
 }
 
 /**
@@ -50,9 +107,12 @@ function isOrnament(line: string): boolean {
  * written without blank lines around it sits *inside* a paragraph chunk, and
  * splitting on blank lines first would hoist it above the prose it divides.
  *
- * Deliberately not markdown and deliberately not HTML: the body is written by
+ * Not markdown as a whole and deliberately not HTML — only `# heading` and
+ * `**bold**`, the two things the author actually types. Otherwise: the body is written by
  * one person in one house and rendered as text, so nothing here can carry
  * markup into the page — which is why the reading room needs no sanitizer.
+ * Links to this house are the one thing recognised inside the text, and they
+ * come out as data (`TaleRun`), not as markup: the page builds the anchor.
  */
 export function renderTale(body: string | null | undefined): TaleBlock[] {
   const blocks: TaleBlock[] = [];
@@ -60,18 +120,28 @@ export function renderTale(body: string | null | undefined): TaleBlock[] {
 
   const flush = () => {
     const text = held.join(' ').replace(/\s+/g, ' ').trim();
-    if (text) blocks.push({ kind: 'p', text });
+    if (text) blocks.push({ kind: 'p', text, runs: taleRuns(text) });
     held = [];
   };
 
   for (const raw of (body ?? '').replace(/\r\n?/g, '\n').split('\n')) {
     const line = raw.trim();
+    const card = line ? lineLink(line) : null;
+    const heading = line.match(/^#{1,6}\s+(.+?)(?:\s+#+)?$/);
     if (!line) {
       flush();
+    } else if (heading) {
+      flush();
+      blocks.push({ kind: 'heading', text: heading[1], runs: taleRuns(heading[1]) });
     } else if (isOrnament(line)) {
       flush();
       // Two ornaments in a row divide nothing between them.
       if (blocks[blocks.length - 1]?.kind !== 'ornament') blocks.push({ kind: 'ornament' });
+    } else if (card) {
+      // Same reading as the ornament: a line of its own ends the paragraph
+      // above it, whether or not a blank line was left.
+      flush();
+      blocks.push({ kind: 'card', ref: card });
     } else {
       held.push(line);
     }

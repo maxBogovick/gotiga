@@ -8,9 +8,13 @@
   import { jsonLdSafe } from '$lib/jsonld';
   import { leafCopy, leafCoverUrl, leafHref } from '$lib/gazette';
   import { leadTale, minutesKey, readingMinutes, taleMorphNames } from '$lib/tales';
+  import { readTales } from '$lib/talesRead';
+  import { api } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import ArchClip from '$lib/components/ArchClip.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
+  import TalePoll from '$lib/components/TalePoll.svelte';
+  import TaleSeal from '$lib/components/TaleSeal.svelte';
 
   let { data } = $props();
 
@@ -28,7 +32,15 @@
   // Picked after the page is alive, never during load: this room prerenders,
   // so a build-time pick would freeze one tale as "random" forever.
   let randomHref = $state('');
+  /**
+   * Прочитанное — печать на арке. Читается после монтирования: полка
+   * пререндерится, а что прочёл этот читатель, знает только его браузер.
+   */
+  let read = $state<Set<string>>(new Set());
+  let letters = $state(false);
   onMount(() => {
+    read = readTales();
+    void api.getTaleDoors().then((doors) => (letters = doors.letters));
     if (arcade.length < 2) return;
     randomHref = leafHref(arcade[Math.floor(Math.random() * arcade.length)], 'tales_random');
   });
@@ -199,6 +211,11 @@
                 {/if}
               </span>
               <span class="arch-plinth">
+                <!-- Печать на цоколе, а не в арке: арка вырезана из
+                     фотографии, и всё, что лежит внутри, обрезается по ней. -->
+                {#if read.has(tale.id)}
+                  <span class="arch-seal"><TaleSeal size={30} label={$t('talesReadSeal')} /></span>
+                {/if}
                 <span class="arch-title">{copy.title}</span>
                 {#if copy.dek}<span class="arch-dek">{copy.dek}</span>{/if}
                 {#if mins}<span class="arch-meta">{mins}&nbsp;{$t(minutesKey(mins))}</span>{/if}
@@ -214,6 +231,10 @@
         </p>
       {/if}
     {/if}
+
+    <!-- Голосование «о ком следующая» стоит и под пустой полкой: выбрать, с
+         кого начать, — тоже выбор. -->
+    <TalePoll place="shelf" {letters} />
   </div>
 </div>
 {/if}
@@ -366,11 +387,21 @@
   /* The plinth the arch stands on. Heavier than a hairline on purpose — a
      1px rule under a cut shape reads as the edge of the photograph. */
   .arch-plinth {
+    position: relative;
     display: block;
     margin-top: 13px;
     padding-top: 10px;
     border-top: 2px solid var(--brown, #6f3b24);
   }
+
+  /* Печать лежит на черте цоколя, как сургуч на краю листа, — чуть набок. */
+  .arch-seal {
+    position: absolute;
+    top: -16px;
+    right: 8px;
+    transform: rotate(-9deg);
+  }
+  .arch-plinth:has(.arch-seal) .arch-title { padding-right: 34px; }
 
   .arch-title {
     display: block;

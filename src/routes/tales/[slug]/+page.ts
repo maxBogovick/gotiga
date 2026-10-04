@@ -3,6 +3,7 @@ import { redirect } from '@sveltejs/kit';
 import { api } from '$lib/api';
 import { isGazetteReservedSlug } from '$lib/gazette';
 import { isTale } from '$lib/tales';
+import { resolveSiteRefs, siteRefsIn, type SiteRefInfo } from '$lib/siteLinks';
 import type { GazetteLeaf } from '$lib/types/api';
 
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
@@ -24,7 +25,7 @@ export const load = async ({
   fetch: typeof globalThis.fetch;
 }) => {
   if (isGazetteReservedSlug(params.slug)) {
-    return { leaf: null, loadError: false };
+    return { leaf: null, loadError: false, links: {} };
   }
 
   let leaf: GazetteLeaf | null = null;
@@ -46,5 +47,18 @@ export const load = async ({
   // rather than dressing an announcement up as a tale.
   if (leaf && !isTale(leaf)) redirect(308, `/gazette/${leaf.slug}`);
 
-  return { leaf, loadError };
+  // Names for the links to this house written into the prose — both languages
+  // at once, because the reader switches language without a new load.
+  let links: Record<string, SiteRefInfo> = {};
+  if (leaf) {
+    const refs = siteRefsIn(`${leaf.bodyEn ?? ''}\n${leaf.bodyRu ?? ''}`);
+    if (refs.length) {
+      links = await resolveSiteRefs(refs, {
+        getFigurine: (handle) => api.getFigurine(handle, fetch),
+        getGazetteLeaf: (slug) => api.getGazetteLeaf(slug, fetch),
+      });
+    }
+  }
+
+  return { leaf, loadError, links };
 };

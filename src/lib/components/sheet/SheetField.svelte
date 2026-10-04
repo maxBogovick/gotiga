@@ -10,6 +10,9 @@
   // Перечислены типы поимённо: флажок и цвет — не строки, и общая рамка с
   // отступом превратила бы галочку в пустую коробку.
   import type { Snippet } from 'svelte';
+  import { t } from '$lib/i18n';
+
+  type Side = 'en' | 'ru';
 
   let {
     label,
@@ -18,6 +21,9 @@
     fault = false,
     faultNote,
     anchor,
+    required = false,
+    langs,
+    onlang,
     children,
   } = $props<{
     label?: string;
@@ -32,13 +38,55 @@
     faultNote?: string;
     /** Имя якоря — по нему отказ снизу приводит сюда и наводит курсор. */
     anchor?: string;
+    /** Звёздочка у подписи. Решает не поле: что обязательно, называет сервер
+     *  (`readiness.missing`), а поле только носит метку, чтобы это было видно
+     *  до первого отказа. */
+    required?: boolean;
+    /** Поле на двух языках, а правится одна сторона за раз. Метки EN / RU у
+     *  подписи говорят, где пусто, не переключая языка, — иначе пустая
+     *  сторона видна только тому, кто догадался туда заглянуть. */
+    langs?: { en: boolean; ru: boolean; current: Side };
+    /** Нажатие на метку языка. */
+    onlang?: (side: Side) => void;
     children: Snippet;
   }>();
+
+  const SIDES: Side[] = ['en', 'ru'];
+
+  function pick(e: Event, side: Side) {
+    // Метка стоит внутри `<label>`, и нажатие дойдёт до поля само — оно и
+    // нужно: язык сменился, курсор уже в поле той стороны.
+    onlang?.(side);
+    if (e instanceof KeyboardEvent) e.preventDefault();
+  }
 </script>
 
 <label class="field" class:field--wide={wide} class:field--fault={fault} id={anchor}>
   {#if label}
-    <span class="cap">{label}</span>
+    <span class="cap">
+      {label}
+      {#if required}
+        <span class="req" title={$t('adminBattlesRequired')}>*</span>
+        <span class="sr-only">{$t('adminBattlesRequired')}</span>
+      {/if}
+      {#if langs}
+        <span class="langs">
+          {#each SIDES as side (side)}
+            <span
+              role="button"
+              tabindex="0"
+              class="lang"
+              class:lang--on={langs.current === side}
+              class:lang--empty={!langs[side]}
+              title={`${side.toUpperCase()} · ${langs[side] ? $t('adminBattlesLangFilled') : $t('adminBattlesLangEmpty')}`}
+              onclick={(e) => pick(e, side)}
+              onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && pick(e, side)}
+              >{side.toUpperCase()}</span
+            >
+          {/each}
+        </span>
+      {/if}
+    </span>
   {/if}
   {@render children()}
   {#if fault && faultNote}
@@ -64,6 +112,50 @@
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: #8a6a55;
+  }
+
+  /* Звёздочка — акцентом дома, а не красным: обязательное ещё не ошибка. */
+  .req {
+    margin-left: 0.15em;
+    color: #c65f3c;
+    font-weight: 600;
+  }
+
+  .langs {
+    display: inline-flex;
+    gap: 0.35rem;
+    margin-left: 0.5rem;
+    vertical-align: baseline;
+  }
+  .lang {
+    cursor: pointer;
+    padding: 0 0.15rem;
+    border-bottom: 1px solid transparent;
+    color: #8a6a55;
+  }
+  .lang:hover,
+  .lang:focus-visible {
+    color: #34251c;
+    outline: none;
+  }
+  .lang--on {
+    color: #34251c;
+    border-bottom-color: #34251c;
+  }
+  /* Пустая сторона — с точкой перед меткой: цвет один не различает «пусто» и
+     «не выбрано» тому, кто цвета не различает. */
+  .lang--empty {
+    color: #8f2f22;
+  }
+  .lang--empty::before {
+    content: '';
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    margin-right: 0.25em;
+    border-radius: 50%;
+    background: currentColor;
+    vertical-align: 0.15em;
   }
 
   /* Отказ виден и подписью, и рамкой поля: одна подпись цветом теряется у

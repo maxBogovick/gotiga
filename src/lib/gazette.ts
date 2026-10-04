@@ -56,7 +56,10 @@ export function decodeEntities(s: string): string {
 }
 
 /** Pick the language the visitor is reading, falling back to English. */
-export function leafCopy(leaf: GazetteLeaf, lang: Lang): { title: string; dek: string; body: string } {
+export function leafCopy(
+  leaf: Pick<GazetteLeaf, 'titleEn' | 'titleRu' | 'dekEn' | 'dekRu' | 'bodyEn' | 'bodyRu'>,
+  lang: Lang,
+): { title: string; dek: string; body: string } {
   const ru = lang === 'ru';
   const titleEn = (leaf.titleEn ?? '').trim();
   const titleRu = (leaf.titleRu ?? '').trim();

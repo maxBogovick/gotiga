@@ -2256,7 +2256,7 @@ pub async fn sitemap_xml(
             let lastmod: String = stamp.chars().take(10).collect();
             urls.push_str(&format!(
                 "  <url><loc>{base}{}</loc><lastmod>{}</lastmod></url>\n",
-                xml_escape(&leaf_public_path(&leaf.kind, &leaf.slug)),
+                xml_escape(&crate::gazette::leaf_path(&leaf.kind, &leaf.slug)),
                 xml_escape(&lastmod),
             ));
         }
@@ -2515,14 +2515,6 @@ fn rss_rfc2822(raw: &str) -> Option<String> {
 /// A tale lives on the shelf and `/gazette/<slug>` only redirects there, so a
 /// feed or a sitemap built on the gazette path would hand every reader — and
 /// every crawler — a 308. Kept next to the two builders that need it.
-fn leaf_public_path(kind: &str, slug: &str) -> String {
-    if kind == "tale" {
-        format!("/tales/{slug}")
-    } else {
-        format!("/gazette/{slug}")
-    }
-}
-
 pub async fn gazette_feed_rss(
     State(service): State<AppService>,
     headers: HeaderMap,
@@ -2547,7 +2539,7 @@ pub async fn gazette_feed_rss(
         if title.is_empty() {
             continue;
         }
-        let link = format!("{base}{}", leaf_public_path(&leaf.kind, &leaf.slug));
+        let link = format!("{base}{}", crate::gazette::leaf_path(&leaf.kind, &leaf.slug));
         let desc = gazette_rss_dek(leaf, &title);
         let pub_date = rss_rfc2822(gazette_rss_stamp(leaf)).unwrap_or_else(|| now.to_rfc2822());
         let enclosure = match absolute_media_url(&base, gazette_rss_cover(leaf)) {
@@ -2599,6 +2591,123 @@ pub async fn gazette_feed_rss(
          \x20   <atom:link href=\"{base_esc}/gazette/feed.xml\" rel=\"self\" type=\"application/rss+xml\" />\n\
          \x20   <description>Notes the house has set down: arrivals, tales, openings, and cuttings pinned from farther away.</description>\n\
          \x20   <language>en</language>\n\
+         \x20   <lastBuildDate>{last_build}</lastBuildDate>\n\
+         {items}\
+         \x20 </channel>\n\
+         </rss>\n"
+    );
+
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/rss+xml; charset=utf-8",
+        )],
+        body,
+    ))
+}
+
+/// Живая лента небылиц — для своей доски в Pinterest.
+///
+/// Отдельно от `/feed.xml` (доска работ) и от `/gazette/feed.xml` (весь
+/// вестник): доска небылиц должна быть доской небылиц, а не всего, что дом
+/// записал. Устроена как лента работ, которую Pinterest уже читает:
+/// `enclosure` и `media:content` с одной и той же картинкой. Картинка —
+/// крупнейшая версия фотографии: лист хранит миниатюру, и пин из неё вышел бы
+/// мутным. Байку без фотографии Pinterest не приколет, поэтому её здесь нет.
+pub async fn tales_feed_rss(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse> {
+    let host = headers
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost");
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("https");
+    let base = format!("{proto}://{host}");
+    let now = chrono::Utc::now();
+
+    // Полка расставлена руками, а лента читается по времени: новые первыми.
+    let mut tales = service.list_tales_public().await?;
+    tales.sort_by(|a, b| gazette_rss_stamp(b).cmp(gazette_rss_stamp(a)));
+
+    // Pinterest режет описание пина около пятисот знаков.
+    const MAX_DESCRIPTION: usize = 480;
+
+    let mut items = String::new();
+    for tale in &tales {
+        let title = gazette_rss_title(tale);
+        if title.is_empty() {
+            continue;
+        }
+        let Some(image) = absolute_media_url(
+            &base,
+            gazette_rss_cover(tale)
+                .map(crate::tales::largest_rendition)
+                .as_deref(),
+        ) else {
+            continue;
+        };
+        let link = format!("{base}/tales/{}", tale.slug);
+        let pick = |en: &Option<String>, ru: &Option<String>| -> Option<String> {
+            [en, ru]
+                .into_iter()
+                .flatten()
+                .map(|s| s.trim())
+                .find(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        let dek = pick(&tale.dek_en, &tale.dek_ru);
+        let body = pick(&tale.body_en, &tale.body_ru);
+        let mut desc = crate::tales::pin_description(dek.as_deref(), body.as_deref(), MAX_DESCRIPTION);
+        if desc.is_empty() {
+            desc = title.clone();
+        }
+        let creator = tale
+            .author
+            .as_deref()
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .unwrap_or("Ritunia");
+        let pub_date = rss_rfc2822(gazette_rss_stamp(tale)).unwrap_or_else(|| now.to_rfc2822());
+        items.push_str(&format!(
+            "    <item>\n\
+             \x20     <title>{title}</title>\n\
+             \x20     <link>{link}</link>\n\
+             \x20     <guid isPermaLink=\"true\">{link}</guid>\n\
+             \x20     <pubDate>{pub_date}</pubDate>\n\
+             \x20     <dc:creator>{creator}</dc:creator>\n\
+             \x20     <description>{desc}</description>\n\
+             \x20     <enclosure url=\"{img}\" type=\"{mime}\" length=\"0\" />\n\
+             \x20     <media:content url=\"{img}\" type=\"{mime}\" medium=\"image\" />\n\
+             \x20   </item>\n",
+            title = xml_escape(&title),
+            link = xml_escape(&link),
+            pub_date = pub_date,
+            creator = xml_escape(creator),
+            desc = xml_escape(&desc),
+            img = xml_escape(&image),
+            mime = rss_image_mime(&image),
+        ));
+    }
+
+    let last_build = tales
+        .first()
+        .and_then(|tale| rss_rfc2822(gazette_rss_stamp(tale)))
+        .unwrap_or_else(|| now.to_rfc2822());
+    let base_esc = xml_escape(&base);
+    let body = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <rss version=\"2.0\" xmlns:media=\"http://search.yahoo.com/mrss/\" xmlns:atom=\"http://www.w3.org/2005/Atom\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n\
+         \x20 <channel>\n\
+         \x20   <title>Ritunia — tall tales</title>\n\
+         \x20   <link>{base_esc}/tales</link>\n\
+         \x20   <atom:link href=\"{base_esc}/tales/feed.xml\" rel=\"self\" type=\"application/rss+xml\" />\n\
+         \x20   <description>Everything in this house remembers something. Here it is written down: short stories about the house's gothic miniatures.</description>\n\
+         \x20   <language>en</language>\n\
+         \x20   <ttl>60</ttl>\n\
          \x20   <lastBuildDate>{last_build}</lastBuildDate>\n\
          {items}\
          \x20 </channel>\n\
@@ -2923,6 +3032,43 @@ pub async fn telegram_unlink(
     let user = service.get_user_from_session(token).await?;
     Ok(Json(service.telegram_unlink(&user).await?))
 }
+
+/// Что сыграть за Telegram на своей машине: «это я» по умолчанию, `answer=no`
+/// — «не я», `id` — другое число, то есть другой человек.
+#[derive(serde::Deserialize)]
+pub struct LocalPlay {
+    pub answer: Option<String>,
+    pub id: Option<i64>,
+}
+
+/// Доиграть вход за Telegram — только на своей машине.
+///
+/// Маршрут существует, лишь когда `PUBLIC_URL` локальный (`api::router`):
+/// снаружи его нет вовсе. `GET`, а не `POST`, потому что ссылку на него
+/// печатает журнал, и её оттуда нажимают.
+pub async fn telegram_play_locally(
+    State(service): State<AppService>,
+    Path(code): Path<String>,
+    Query(q): Query<LocalPlay>,
+) -> Result<axum::response::Html<String>> {
+    let yes = q.answer.as_deref() != Some("no");
+    service
+        .telegram_play_locally(&code, yes, q.id.unwrap_or(LOCAL_TELEGRAM_ID))
+        .await?;
+    let said = if yes {
+        "Сыграно: «Это я». Вкладка, которая ждёт это слово, войдёт сама."
+    } else {
+        "Сыграно: «Не я». Слово погашено."
+    };
+    Ok(axum::response::Html(format!(
+        "<!doctype html><meta charset=utf-8><title>Telegram</title>\
+         <body style=\"font:16px/1.5 Georgia,serif;color:#2C1710;background:#FAF6EE;padding:3rem\">{said}"
+    )))
+}
+
+/// Выдуманный человек в Telegram для местной разработки. Число постоянно,
+/// поэтому второй заход приводит в тот же аккаунт: узнают по числу (§ 16.2).
+const LOCAL_TELEGRAM_ID: i64 = 900_000_001;
 
 /// Единственное место, где чужой запрос превращается во вход, — поэтому
 /// доказательств два: секрет в адресе и секрет в заголовке, который Telegram
@@ -3437,6 +3583,115 @@ pub async fn get_tale_stats(
 ) -> Result<Json<crate::models::TaleStatsDto>> {
     let token = params.get("visitorToken").map(String::as_str);
     Ok(Json(service.get_tale_stats(id, token, false).await?))
+}
+
+// === БАЙКИ: ЧИТАТЕЛЬ ПОСЛЕ ПОСЛЕДНЕЙ СТРОКИ ===
+
+/// Кто этот человек, если он вошёл. Сессия не обязательна: байку читают и
+/// гостем, и недействительный жетон здесь просто значит «гость».
+async fn reader_user(service: &AppService, headers: &HeaderMap) -> Option<crate::models::User> {
+    let token = bearer_token(headers)?;
+    service.get_user_from_session(token).await.ok()
+}
+
+async fn reader_user_id(service: &AppService, headers: &HeaderMap) -> Option<Uuid> {
+    reader_user(service, headers).await.map(|u| u.id)
+}
+
+pub async fn get_tale_doors(
+    State(service): State<AppService>,
+) -> Json<crate::models::TaleDoorsDto> {
+    Json(service.tale_doors().await)
+}
+
+pub async fn set_tale_sequel_wish(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::TaleSequelWishRequest>,
+) -> Result<Json<crate::models::TaleSequelWishResponse>> {
+    service
+        .check_rate_limit("tale_sequel", &extract_ip(&headers), 60, 3600)
+        .await?;
+    let user = reader_user(&service, &headers).await;
+    Ok(Json(service.set_tale_sequel_wish(id, &req, user.as_ref()).await?))
+}
+
+pub async fn get_tale_poll(
+    State(service): State<AppService>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Option<crate::models::TalePollDto>>> {
+    let token = params.get("visitorToken").map(String::as_str);
+    Ok(Json(service.current_tale_poll(token).await?))
+}
+
+pub async fn vote_tale_poll(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::TalePollVoteRequest>,
+) -> Result<Json<crate::models::TalePollVoteResponse>> {
+    service
+        .check_rate_limit("tale_poll", &extract_ip(&headers), 60, 3600)
+        .await?;
+    let user_id = reader_user_id(&service, &headers).await;
+    Ok(Json(service.vote_tale_poll(id, &req, user_id).await?))
+}
+
+pub async fn admin_tale_polls(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::models::AdminTalePollDto>>> {
+    Ok(Json(service.admin_tale_polls().await?))
+}
+
+pub async fn admin_open_tale_poll(
+    State(service): State<AppService>,
+    Json(req): Json<crate::models::OpenTalePollRequest>,
+) -> Result<StatusCode> {
+    service.admin_open_tale_poll(req.figurine_ids).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_close_tale_poll(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::CloseTalePollRequest>,
+) -> Result<StatusCode> {
+    service
+        .admin_close_tale_poll(id, req.winner_figurine_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_delete_tale_poll(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_tale_poll(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_sequel_wishes(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::models::AdminSequelWishRow>>> {
+    Ok(Json(service.admin_sequel_wishes(id).await?))
+}
+
+pub async fn admin_tale_letters_forecast(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::models::TaleLettersForecast>> {
+    Ok(Json(service.admin_tale_letters_forecast(id).await?))
+}
+
+pub async fn admin_set_tale_sequel(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::SetTaleSequelRequest>,
+) -> Result<StatusCode> {
+    service.admin_set_tale_sequel(id, req.of).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn admin_list_tale_comments(
@@ -5482,7 +5737,7 @@ pub async fn weigh_studio_card(
     Json(body): Json<crate::models::SaveBattleCardRequest>,
 ) -> Result<Json<crate::models::BattleWeighDto>> {
     current_user(&service, &headers).await?;
-    Ok(Json(AppService::weigh_battle_card(&body)))
+    Ok(Json(AppService::weigh_studio_card(&body)))
 }
 
 // ── Свои движения ───────────────────────────────────────────────────────────

@@ -7,18 +7,25 @@
   // face it will be read in, the body in the measure it will be read at, and
   // the work stands in the margin exactly where the visitor will meet it.
   import { onMount, onDestroy, tick } from 'svelte';
-  import { api } from '$lib/api';
+  import { api, ApiError } from '$lib/api';
   import { t, lang, type Lang } from '$lib/i18n';
-  import { TITLE_MAX, DEK_MAX, BODY_MAX, AUTHOR_MAX } from '$lib/gazette';
-  import { ORNAMENT } from '$lib/tales';
+  import { TITLE_MAX, DEK_MAX, BODY_MAX, AUTHOR_MAX, workFrameUrls, leafHref } from '$lib/gazette';
+  import { ORNAMENT, readingMinutes, minutesKey, renderTale } from '$lib/tales';
+  import { resolveSiteRefs, siteRefsIn, type SiteRefInfo } from '$lib/siteLinks';
+  import TaleProse from '../TaleProse.svelte';
+  import TalePollDesk from './TalePollDesk.svelte';
   import type {
+    AdminSequelWish,
     AdminTaleCommentDto,
     AdminTaleStat,
+    TaleNoticeStatus,
+    Figurine,
     FigurineListItem,
     GazetteLeaf,
     GazetteSeed,
     GazetteStatus,
     SaveGazetteLeafRequest,
+    TaleLettersForecast,
   } from '$lib/types/api';
 
   let {
@@ -68,6 +75,9 @@
   let figQuery = $state('');
   let figOpen = $state(false);
   let restorable = $state<Record<string, unknown> | null>(null);
+  // Full figurine detail, fetched for its photo gallery — the list row only
+  // carries the face photo, and the picker below needs the whole set.
+  let extraFig = $state<Figurine | null>(null);
 
   /**
    * Отклик читателя. Свод приходит одним запросом на все байки: строка списка
@@ -81,6 +91,53 @@
   let replyFor = $state<string | null>(null);
   let replyText = $state('');
 
+  /** Стол голосования «о ком следующая» стоит на месте бумаги, пока открыт. */
+  let pollDesk = $state(false);
+
+  /**
+   * Кто ждёт продолжения открытой байки и дошло ли до него известие. Грузится
+   * по нажатию: список нужен, когда продолжение пишут или только что выложили,
+   * а не на каждом открытии байки.
+   */
+  let waitingOpen = $state(false);
+  let waiting = $state<AdminSequelWish[]>([]);
+  let waitingLoading = $state(false);
+
+  /**
+   * Листок перед выходом: что с байкой не так и что уйдёт людям. Выход —
+   * единственное действие стола, которое нельзя забрать назад: через десять
+   * минут байка уходит письмом всей книге дома. Поэтому число писем и
+   * замечания показываются до нажатия, а не находятся потом на сайте.
+   */
+  let preflight = $state<{
+    target: 'published' | 'scheduled';
+    at: string | null;
+    warnings: string[];
+    forecast: TaleLettersForecast | null;
+  } | null>(null);
+  let preflightBusy = $state(false);
+  /** «Запланировано» нажато, дата ещё не выбрана — статус пока прежний. */
+  let scheduling = $state(false);
+  /** Подсказка о том, что понимает тело байки. */
+  let markupOpen = $state(false);
+
+  /**
+   * Бумага «как у читателя»: тот же TaleProse, что на странице байки, вместо
+   * полей ввода. Названия ссылок спрашиваются так же, как их спрашивает
+   * загрузчик страницы, — иначе предпросмотр печатал бы адрес там, где
+   * читатель увидит название.
+   */
+  let reading = $state(false);
+  let readingLinks = $state<Record<string, SiteRefInfo>>({});
+
+  /**
+   * Адрес байки закреплён, когда о ней ушли письма: он стоит в этих письмах.
+   * Сервер держит то же правило сам, здесь — чтобы не предлагать правку,
+   * которую он не примет.
+   */
+  let addressFixed = $state(false);
+  let slugDraft = $state('');
+
   let bodyBox = $state<HTMLTextAreaElement | null>(null);
   let secondBox = $state<HTMLTextAreaElement | null>(null);
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -92,6 +149,7 @@
 
   let selectedFig = $derived(figurines.find((f) => f.id === figurineId) ?? null);
   let plate = $derived(imageUrls[0] ?? '');
+  let frames = $derived(selectedFig ? workFrameUrls(selectedFig, extraFig) : []);
   let titleNow = $derived(editLang === 'ru' ? titleRu : titleEn);
   let dekNow = $derived(editLang === 'ru' ? dekRu : dekEn);
   let bodyNow = $derived(editLang === 'ru' ? bodyRu : bodyEn);
@@ -103,6 +161,16 @@
   let tooLong = $derived(chars > LITTLE);
   let open = $derived(selectedId !== null || titleEn !== '' || titleRu !== '');
   let mine = $derived(selectedId ? stats[selectedId] ?? null : null);
+  let minutes = $derived(readingMinutes(bodyNow));
+  /** Какая половина сайта осталась без текста. */
+  let bodyMissing = $derived<Record<Lang, boolean>>({ en: !bodyEn.trim(), ru: !bodyRu.trim() });
+  /** Адрес на сайте. Ссылка открывается только у байки, которая на людях. */
+  let siteHref = $derived(selectedId && slug ? leafHref({ kind: 'tale', slug } as GazetteLeaf) : '');
+  /** На людях ли байка сейчас: опубликована или её час уже наступил. */
+  let onDisplay = $derived(
+    status === 'published' || (status === 'scheduled' && !!scheduledAt && new Date(scheduledAt) <= new Date()),
+  );
+  let slugEditable = $derived(!!selectedId && !onDisplay && !addressFixed);
 
   let visible = $derived.by(() => {
     const q = listQuery.trim().toLowerCase();
@@ -181,6 +249,27 @@
     }
   }
 
+  async function toggleWaiting() {
+    waitingOpen = !waitingOpen;
+    if (!waitingOpen || !selectedId) return;
+    waitingLoading = true;
+    try {
+      waiting = await api.adminTaleWaiting(selectedId);
+    } catch (e) {
+      flash(String(e), 6000);
+      waiting = [];
+    } finally {
+      waitingLoading = false;
+    }
+  }
+
+  const NOTICE_WORD: Record<TaleNoticeStatus, string> = {
+    none: 'adminTalesWaitingNone',
+    pending: 'adminTalesWaitingPending',
+    sent: 'adminTalesWaitingSent',
+    failed: 'adminTalesWaitingFailed',
+  };
+
   /** Одобрить, спрятать или ответить. Ответ уходит вместе с одобрением. */
   async function moderate(c: AdminTaleCommentDto, isApproved: boolean, adminReply?: string | null) {
     try {
@@ -231,9 +320,16 @@
     savedAt = null;
     figQuery = '';
     restorable = null;
+    extraFig = null;
     comments = [];
     talkOpen = false;
     replyFor = null;
+    waitingOpen = false;
+    waiting = [];
+    preflight = null;
+    scheduling = false;
+    addressFixed = false;
+    slugDraft = '';
     snapshot = fieldsKey();
   }
 
@@ -259,11 +355,17 @@
 
   function openTale(leaf: GazetteLeaf) {
     if (dirty && !confirm($t('adminTalesUnsavedLeave'))) return;
+    pollDesk = false;
+    preflight = null;
+    scheduling = false;
     apply(leaf);
     savedAt = null;
     comments = [];
     replyFor = null;
+    waitingOpen = false;
+    waiting = [];
     void loadComments(leaf.id);
+    void loadAddressFixed(leaf.id);
     // A crash, a closed tab, a browser that went away mid-sentence: whatever is
     // in this browser wins only if it is newer than what the server holds.
     restorable = null;
@@ -288,6 +390,10 @@
     bodyEn = (d.bodyEn as string) ?? bodyEn;
     bodyRu = (d.bodyRu as string) ?? bodyRu;
     author = (d.author as string) ?? author;
+    // Работа и фотография — тоже часть написанного: восстановленный текст
+    // без них вернул бы байку к чужой обложке.
+    figurineId = (d.figurineId as string) ?? figurineId;
+    if (Array.isArray(d.imageUrls)) imageUrls = d.imageUrls as string[];
     restorable = null;
   }
 
@@ -299,7 +405,98 @@
   function startNew() {
     if (dirty && !confirm($t('adminTalesUnsavedLeave'))) return;
     blank();
+    pollDesk = false;
   }
+
+  /** Читатели выбрали работу — стол открывается с ней, как из формы работы. */
+  function writeChosen(id: string) {
+    if (dirty && !confirm($t('adminTalesUnsavedLeave'))) return;
+    blank();
+    figurineId = id;
+    const face = figurines.find((f) => f.id === id)?.faceImageUrl;
+    if (face) imageUrls = [face];
+    pollDesk = false;
+  }
+
+  /**
+   * Какую байку продолжает эта. Ручка своя, а не поле формы, как у порядка
+   * полки: это отношение между байками, и автосохранение листа его не трогает.
+   * Если продолжение уже вышло, просившие получат письмо сразу — это решает
+   * сервер.
+   */
+  async function setSequel(select: HTMLSelectElement) {
+    if (!selectedId) return;
+    const of = select.value || null;
+    try {
+      await api.adminSetTaleSequel(selectedId, of);
+      await loadStats();
+      flash(of ? $t('adminTalesSequelSaved') : $t('adminTalesSequelCleared'));
+    } catch (e) {
+      // Не сохранилось — список возвращается к тому, что лежит на сервере:
+      // `value` у него не менялся, и сам Svelte его не вернёт, а список,
+      // показывающий несохранённый выбор, хуже неизменившегося.
+      select.value = mine?.sequelOf ?? '';
+      flash(
+        e instanceof ApiError && e.status === 400 ? $t('adminTalesSequelRefused') : String(e),
+        6000,
+      );
+    }
+  }
+
+  async function loadAddressFixed(id: string) {
+    addressFixed = false;
+    try {
+      const f = await api.adminTaleLettersForecast(id);
+      if (selectedId === id) addressFixed = f.laid;
+    } catch {
+      // Не узнали — правку разрешает сервер или молча отклоняет.
+    }
+  }
+
+  /**
+   * Адрес правится отдельным полем и уходит по выходу из него, а не с
+   * автосохранением: сервер приводит адрес к виду слага (срезает дефис на
+   * конце, заменяет пробелы), и ответ, пришедший посреди набора, переписывал
+   * бы поле под пальцами.
+   */
+  async function commitSlug() {
+    const next = slugDraft.trim();
+    if (!next || next === slug) {
+      slugDraft = slug;
+      return;
+    }
+    slug = next;
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    if (await save()) {
+      slugDraft = slug;
+      if (slug !== next) flash($t('adminTalesSlugAdjusted').replace('{slug}', slug));
+    }
+  }
+
+  $effect(() => {
+    // Поле показывает сохранённый адрес, пока его не трогают.
+    if (document.activeElement?.classList.contains('slug-input')) return;
+    slugDraft = slug;
+  });
+
+  $effect(() => {
+    if (!reading) return;
+    const refs = siteRefsIn(`${bodyEn}\n${bodyRu}`);
+    if (!refs.length) {
+      readingLinks = {};
+      return;
+    }
+    let live = true;
+    void resolveSiteRefs(refs, {
+      getFigurine: (handle) => api.getFigurine(handle),
+      getGazetteLeaf: (s) => api.getGazetteLeaf(s),
+    }).then((found) => {
+      if (live) readingLinks = found;
+    });
+    return () => {
+      live = false;
+    };
+  });
 
   // ── Saving ─────────────────────────────────────────────────────────────────
 
@@ -371,7 +568,7 @@
       } else {
         tales = tales.map((tale) =>
           tale.id === saved.id
-            ? { ...tale, titleEn: saved.titleEn, titleRu: saved.titleRu, status: saved.status, pinned: saved.pinned, figurineName: saved.figurineName }
+            ? { ...tale, titleEn: saved.titleEn, titleRu: saved.titleRu, bodyEn: saved.bodyEn, bodyRu: saved.bodyRu, status: saved.status, pinned: saved.pinned, figurineName: saved.figurineName }
             : tale,
         );
       }
@@ -384,29 +581,119 @@
     }
   }
 
-  async function publish() {
+  /** Замечания перед выходом. Не запрещают — называют. */
+  function releaseWarnings(): string[] {
+    const out: string[] = [];
+    for (const code of ['en', 'ru'] as Lang[]) {
+      const other = code === 'en' ? 'ru' : 'en';
+      if (bodyMissing[code]) {
+        out.push($t('adminTalesCheckOneLang').replace('{lang}', code.toUpperCase()).replace('{other}', other.toUpperCase()));
+      } else if (!(code === 'en' ? titleEn : titleRu).trim()) {
+        out.push($t('adminTalesCheckNoTitle').replace('{lang}', code.toUpperCase()).replace('{other}', other.toUpperCase()));
+      }
+    }
+    if (!plate) out.push($t('adminTalesCheckNoPhoto'));
+    return out;
+  }
+
+  /**
+   * Первый шаг выхода: сохранить (у новой байки ещё нет id, по которому
+   * спросить число писем), спросить сервер и показать листок. Статус не
+   * меняется, пока листок не подтвердили.
+   */
+  async function beginRelease(target: 'published' | 'scheduled', at: string | null) {
     if (!titleEn.trim() && !titleRu.trim()) {
       flash($t('adminTalesNeedTitle'));
       return;
     }
-    status = 'published';
-    if (await save()) {
-      await loadTales();
-      sealed = true;
-      if (sealTimer) clearTimeout(sealTimer);
-      sealTimer = setTimeout(() => (sealed = false), 2600);
+    // Пустое тело — не замечание, а отказ: письмо «вышла новая байка» о
+    // байке без единой строки уйти не должно.
+    if (!bodyEn.trim() && !bodyRu.trim()) {
+      flash($t('adminTalesCheckNoBody'));
+      return;
+    }
+    preflightBusy = true;
+    try {
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      if (!(await save()) || !selectedId) return;
+      let forecast: TaleLettersForecast | null = null;
+      try {
+        forecast = await api.adminTaleLettersForecast(selectedId);
+      } catch {
+        forecast = null;
+      }
+      preflight = { target, at, warnings: releaseWarnings(), forecast };
+    } finally {
+      preflightBusy = false;
     }
   }
 
+  async function confirmRelease() {
+    const p = preflight;
+    if (!p) return;
+    preflight = null;
+    scheduling = false;
+    status = p.target;
+    if (p.target === 'scheduled') scheduledAt = p.at;
+    if (await save()) {
+      await loadTales();
+      if (p.target === 'published') {
+        sealed = true;
+        if (sealTimer) clearTimeout(sealTimer);
+        sealTimer = setTimeout(() => (sealed = false), 2600);
+      }
+    }
+  }
+
+  function cancelRelease() {
+    preflight = null;
+  }
+
+  function publish() {
+    void beginRelease('published', null);
+  }
+
   async function setStatus(next: GazetteStatus) {
+    // Выход на люди идёт только через листок: кнопка статуса «Опубликовано»
+    // была обходом той самой проверки, ради которой листок заведён.
+    if (next === 'published') return publish();
+    // «Запланировано» без даты — не статус, а намерение: байка остаётся
+    // прежней, пока не выбрана дата, и тогда проходит тот же листок.
+    if (next === 'scheduled') {
+      scheduling = true;
+      return;
+    }
+    scheduling = false;
     status = next;
     if (await save()) await loadTales();
+  }
+
+  function pickSchedule(value: string) {
+    if (!value) return;
+    void beginRelease('scheduled', new Date(value).toISOString());
+  }
+
+  /** «Через 10 минут», «через 10 минут после 3 окт., 12:00». */
+  function whenLetters(p: NonNullable<typeof preflight>): string {
+    const mins = Math.round((p.forecast?.graceSecs ?? 600) / 60);
+    if (p.target === 'scheduled' && p.at) {
+      const at = new Date(p.at).toLocaleString($lang === 'ru' ? 'ru-RU' : 'en-GB', {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+      });
+      return $t('adminTalesLettersAfter').replace('{min}', String(mins)).replace('{at}', at);
+    }
+    return $t('adminTalesLettersIn').replace('{min}', String(mins));
   }
 
   async function destroy() {
     if (!selectedId) return;
     if (!confirm($t('adminTalesDeleteConfirm'))) return;
-    await api.adminDeleteGazetteLeaf(selectedId);
+    try {
+      await api.adminDeleteGazetteLeaf(selectedId);
+    } catch (e) {
+      flash(String(e), 6000);
+      return;
+    }
     localStorage.removeItem(draftKey());
     blank();
     await loadTales();
@@ -496,10 +783,27 @@
     }, REORDER_MS);
   }
 
-  async function useWorkPhoto() {
-    if (!selectedFig?.faceImageUrl) return;
-    imageUrls = [selectedFig.faceImageUrl];
+  function pickFrame(url: string) {
+    imageUrls = [url];
   }
+
+  /** The work's full photo set, fetched only once a work is on the desk. */
+  async function loadFrames(id: string) {
+    try {
+      extraFig = await api.getFigurine(id);
+    } catch {
+      extraFig = null;
+    }
+  }
+
+  $effect(() => {
+    const id = figurineId;
+    if (!id) {
+      extraFig = null;
+      return;
+    }
+    void loadFrames(id);
+  });
 
   async function uploadPhoto() {
     const input = document.createElement('input');
@@ -519,6 +823,17 @@
       }
     };
     input.click();
+  }
+
+  /**
+   * ISO-время в значение `datetime-local`. Срез `slice(0, 16)` давал время по
+   * Гринвичу, а поле читает его как местное: запланированная на 12:00 байка
+   * показывалась на 9:00 и при следующей правке уезжала на три часа.
+   */
+  function localInput(iso: string): string {
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   function clock(at: Date): string {
@@ -586,6 +901,11 @@
         onclick={startNew}
         class="w-full py-2 text-[10px] uppercase tracking-[0.18em] border border-[#c65f3c]/40 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors"
       >{$t('adminTalesNew')}</button>
+      <button
+        onclick={() => (pollDesk = !pollDesk)}
+        class="w-full py-1.5 text-[10px] uppercase tracking-[0.16em] border transition-colors
+          {pollDesk ? 'border-[#34251c]/40 bg-[#34251c]/5 text-[#34251c]' : 'border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c]'}"
+      >{$t('adminTalesPollButton')}</button>
       <input
         bind:value={listQuery}
         placeholder={$t('adminTalesSearch')}
@@ -624,10 +944,25 @@
                   {#if tale.figurineName}
                     <span class="block text-[10px] text-[#8a6a55] truncate">{tale.figurineName}</span>
                   {/if}
+                  <!-- Половина сайта без текста видна в списке, а не только
+                       на открытой байке: иначе её находят читатели. Пишется
+                       только недостающее — «EN RU» у каждой строки было бы шумом. -->
+                  {#if (tale.bodyEn ?? '').trim() && !(tale.bodyRu ?? '').trim()}
+                    <span class="lang-gap">{$t('adminTalesLangGap').replace('{lang}', 'RU')}</span>
+                  {:else if (tale.bodyRu ?? '').trim() && !(tale.bodyEn ?? '').trim()}
+                    <span class="lang-gap">{$t('adminTalesLangGap').replace('{lang}', 'EN')}</span>
+                  {/if}
                 </span>
                 {#if (stats[tale.id]?.pendingComments ?? 0) > 0}
                   <span class="ml-auto text-[#c65f3c] text-[10px]" title={$t('adminTalesPending')}>
                     {stats[tale.id].pendingComments}✍
+                  </span>
+                {/if}
+                <!-- Сколько ждут продолжения — видно в списке, а не только на
+                     открытой байке: это ответ на вопрос «что писать дальше». -->
+                {#if (stats[tale.id]?.sequelWishes ?? 0) > 0}
+                  <span class="ml-auto text-[#6f3b24] text-[10px] whitespace-nowrap" title={$t('adminTalesSequelWishes')}>
+                    +{stats[tale.id].sequelWishes}
                   </span>
                 {/if}
                 {#if tale.pinned}<span class="ml-auto text-[#c65f3c] text-[10px]">◆</span>{/if}
@@ -641,13 +976,17 @@
 
   <!-- ── The desk ───────────────────────────────────────────────────────── -->
   <div class="flex-1 flex flex-col min-w-0 bg-[#f8f1e7]">
+    {#if pollDesk}
+      <TalePollDesk {figurines} {tales} onWrite={writeChosen} onBack={() => (pollDesk = false)} />
+    {:else}
     <div class="desk-chrome flex items-center gap-3 px-4 py-2 border-b border-[#34251c]/10 text-[10px] uppercase tracking-[0.16em]">
       <div class="flex border border-[#34251c]/15">
         {#each ['en', 'ru'] as code}
           <button
             onclick={() => (editLang = code as Lang)}
             class="px-2 py-1 transition-colors {editLang === code ? 'bg-[#34251c]/10 text-[#34251c]' : 'text-[#8a6a55]'}"
-          >{code}</button>
+            title={bodyMissing[code as Lang] ? $t('adminTalesLangEmpty') : undefined}
+          >{code}{#if bodyMissing[code as Lang] && open}<span class="lang-hollow" aria-label={$t('adminTalesLangEmpty')}>○</span>{/if}</button>
         {/each}
       </div>
       <button
@@ -664,6 +1003,38 @@
         onclick={() => (focus = !focus)}
         class="px-2 py-1 border border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c] transition-colors"
       >{focus ? $t('adminTalesFocusExit') : $t('adminTalesFocus')}</button>
+      <button
+        onclick={() => (markupOpen = !markupOpen)}
+        class="px-2 py-1 border transition-colors {markupOpen ? 'border-[#34251c]/40 text-[#34251c]' : 'border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c]'}"
+        aria-expanded={markupOpen}
+      >{$t('adminTalesMarkup')}</button>
+      <button
+        onclick={() => (reading = !reading)}
+        class="px-2 py-1 border transition-colors {reading ? 'border-[#c65f3c]/50 text-[#c65f3c]' : 'border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c]'}"
+        aria-pressed={reading}
+      >{reading ? $t('adminTalesReadingOff') : $t('adminTalesReadingOn')}</button>
+
+      <!-- Где байка живёт на сайте. Ссылка — только у той, что на людях:
+           у черновика адрес отвечает «не найдено», и ссылка туда была бы
+           обещанием, которое страница не сдержит. -->
+      {#if siteHref}
+        {#if status === 'published'}
+          <a href={siteHref} target="_blank" rel="noopener" class="normal-case tracking-normal text-[11px] text-[#c65f3c] hover:underline">{siteHref} ↗</a>
+        {:else if slugEditable}
+          <label class="normal-case tracking-normal text-[11px] text-[#8a6a55] flex items-center" title={$t('adminTalesSlugHint')}>
+            /tales/<input
+              bind:value={slugDraft}
+              onblur={commitSlug}
+              onkeydown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); else if (e.key === 'Escape') { slugDraft = slug; e.currentTarget.blur(); } }}
+              maxlength="120"
+              aria-label={$t('adminTalesSlugHint')}
+              class="slug-input w-[16ch] px-1 py-0.5 bg-transparent border-b border-[#34251c]/20 focus:border-[#34251c]/50 outline-none text-[#34251c]"
+            />
+          </label>
+        {:else}
+          <span class="normal-case tracking-normal text-[11px] text-[#8a6a55]" title={addressFixed ? $t('adminTalesSlugFixed') : $t('adminTalesSiteHidden')}>{siteHref}</span>
+        {/if}
+      {/if}
 
       <span class="ml-auto normal-case tracking-normal text-[11px] text-[#8a6a55]">
         {#if saving}{$t('adminTalesSaving')}
@@ -671,6 +1042,19 @@
         {:else if dirty}{$t('adminTalesUnsaved')}{/if}
       </span>
     </div>
+
+    {#if markupOpen}
+      <!-- Что понимает тело байки. Разметки ровно столько, сколько знает
+           renderTale; остальное печатается как написано. -->
+      <div class="desk-chrome markup px-4 py-3 border-b border-[#34251c]/10">
+        <dl>
+          <dt># {$t('adminTalesMarkupHeadEx')}</dt><dd>{$t('adminTalesMarkupHead')}</dd>
+          <dt>**{$t('adminTalesMarkupBoldEx')}**</dt><dd>{$t('adminTalesMarkupBold')}</dd>
+          <dt>{ORNAMENT}</dt><dd>{$t('adminTalesMarkupOrnament')}</dd>
+          <dt>ritunia.com/figurines/…</dt><dd>{$t('adminTalesMarkupLink')}</dd>
+        </dl>
+      </div>
+    {/if}
 
     <div class="flex-1 overflow-y-auto">
       <div class="desk mx-auto px-6 py-8">
@@ -711,6 +1095,18 @@
             class="paper-byline"
           />
 
+          {#if reading}
+            <div class="columns" class:two={both}>
+              <div class="reading">
+                <TaleProse blocks={renderTale(bodyNow)} links={readingLinks} />
+              </div>
+              {#if both}
+                <div class="reading second">
+                  <TaleProse blocks={renderTale(otherBody)} links={readingLinks} />
+                </div>
+              {/if}
+            </div>
+          {:else}
           <div class="columns" class:two={both}>
             <textarea
               bind:this={bodyBox}
@@ -738,12 +1134,13 @@
               ></textarea>
             {/if}
           </div>
+          {/if}
 
           <!-- Length as a shadow, not a number: a rising hairline that turns
                copper once the little story has stopped being little. -->
           <div class="measure-row">
             <span class="measure-label" class:over={tooLong}>
-              {tooLong ? $t('adminTalesTooLong') : $t('adminTalesLength')} — {chars}
+              {tooLong ? $t('adminTalesTooLong') : $t('adminTalesLength')} — {chars}{#if minutes} · {$t('adminTalesReading').replace('{n}', String(minutes)).replace('{unit}', $t(minutesKey(minutes)))}{/if}
             </span>
             <span class="measure">
               <span class="measure-fill" class:over={tooLong} style="width: {fill * 100}%"></span>
@@ -762,13 +1159,61 @@
               <span class="num"><b>{mine?.likes ?? 0}</b> {$t('adminTalesLikes')}</span>
               <span class="num num--ill"><b>{mine?.dislikes ?? 0}</b> {$t('adminTalesDislikes')}</span>
               <span class="num"><b>{mine?.comments ?? 0}</b> {$t('adminTalesComments')}</span>
+              {#if (mine?.sequelWishes ?? 0) > 0}
+                <span class="num num--wait">
+                  {$t('adminTalesSequelWishes')}: <b>{mine?.sequelWishes}</b>{#if (mine?.sequelLetters ?? 0) > 0}, {$t('adminTalesSequelLetters')}: <b>{mine?.sequelLetters}</b>{/if}
+                </span>
+              {/if}
               {#if (mine?.pendingComments ?? 0) > 0}
                 <span class="num num--wait"><b>{mine?.pendingComments}</b> {$t('adminTalesPending')}</span>
               {/if}
-              <button class="talk-toggle" onclick={() => (talkOpen = !talkOpen)}>
+              {#if (mine?.sequelWishes ?? 0) > 0}
+                <button class="talk-toggle" onclick={toggleWaiting}>
+                  {waitingOpen ? $t('adminTalesWaitingHide') : $t('adminTalesWaitingShow')}
+                </button>
+              {/if}
+              <button class="talk-toggle talk-toggle--next" onclick={() => (talkOpen = !talkOpen)}>
                 {talkOpen ? $t('adminTalesTalkHide') : $t('adminTalesTalkShow')}
               </button>
             </div>
+
+            <!-- Кто ждёт продолжения и дошло ли до него известие. Письма и
+                 записки уходят сами, когда у новой байки выбрано «Продолжает»;
+                 здесь их только видно. -->
+            {#if waitingOpen}
+              <div class="waiting">
+                <p class="waiting-hint">{$t('adminTalesWaitingHint')}</p>
+                {#if waitingLoading}
+                  <p class="talk-empty">…</p>
+                {:else if waiting.length === 0}
+                  <p class="talk-empty">{$t('adminTalesWaitingEmpty')}</p>
+                {:else}
+                  <ul class="talk-list">
+                    {#each waiting as w, i (i)}
+                      <li class="talk-item">
+                        <div class="talk-head">
+                          <span class="talk-who">{w.name ?? w.email ?? $t('adminTalesWaitingGuest')}</span>
+                          {#if w.email && w.name}<span class="talk-mail">{w.email}</span>{/if}
+                          {#if w.telegramUsername}<span class="talk-mail">@{w.telegramUsername}</span>{/if}
+                          <span class="talk-when">{new Date(w.createdAt).toLocaleDateString()}</span>
+                        </div>
+                        <p class="waiting-ways">
+                          {#if w.email}
+                            <span class="way way--{w.letter}">{$t('adminTalesWaitingLetter')}: {$t(NOTICE_WORD[w.letter] as never)}</span>
+                          {/if}
+                          {#if w.byTelegram}
+                            <span class="way way--{w.note}">Telegram: {$t(NOTICE_WORD[w.note] as never)}</span>
+                          {/if}
+                          {#if !w.email && !w.byTelegram}
+                            <span class="way way--none">{$t('adminTalesWaitingNoWay')}</span>
+                          {/if}
+                        </p>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
 
             {#if talkOpen}
               {#if commentsLoading}
@@ -831,6 +1276,47 @@
       </div>
     </div>
 
+    {#if preflight}
+      {@const p = preflight}
+      <!-- Листок перед выходом. Стоит над лентой, у той самой кнопки, а не
+           окном поверх бумаги: байку под ним видно, и замечание можно
+           проверить глазами, не закрывая его. -->
+      <div class="preflight desk-chrome border-t border-[#c65f3c]/30 px-4 py-3 text-xs" role="alertdialog" aria-label={$t('adminTalesPreflight')}>
+        <p class="pf-head">{p.target === 'scheduled' ? $t('adminTalesPreflightScheduled') : $t('adminTalesPreflight')}</p>
+        {#if p.warnings.length}
+          <ul class="pf-warn">
+            {#each p.warnings as w (w)}<li>{w}</li>{/each}
+          </ul>
+        {/if}
+        <p class="pf-letters">
+          {#if !p.forecast}
+            {$t('adminTalesLettersUnknown')}
+          {:else if p.forecast.laid}
+            {$t('adminTalesLettersLaid')}
+          {:else if p.forecast.letters === 0 && p.forecast.notes === 0}
+            {$t('adminTalesLettersNone')}
+          {:else}
+            <!-- «писем: 5», а не «5 писем»: так число не спорит с падежом. -->
+            {whenLetters(p)} —
+            {#if p.forecast.letters > 0}{$t('adminTalesLettersMail')}: <b>{p.forecast.letters}</b>{/if}{#if p.forecast.letters > 0 && p.forecast.notes > 0}, {/if}{#if p.forecast.notes > 0}{$t('adminTalesLettersNotes')}: <b>{p.forecast.notes}</b>{/if}.
+            {$t('adminTalesLettersUndo')}
+            {#if !p.forecast.mail && p.forecast.letters > 0}
+              <span class="pf-nomail">{$t('adminTalesLettersNoMail')}</span>
+            {/if}
+          {/if}
+        </p>
+        <div class="flex gap-3 mt-2">
+          <button
+            onclick={confirmRelease}
+            class="px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] border border-[#c65f3c]/50 text-[#c65f3c] hover:bg-[#c65f3c]/5"
+          >{p.target === 'scheduled' ? $t('adminTalesPreflightSchedule') : $t('adminTalesPreflightGo')}</button>
+          <button onclick={cancelRelease} class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#34251c]">
+            {$t('adminTalesPreflightBack')}
+          </button>
+        </div>
+      </div>
+    {/if}
+
     <!-- ── The margin: the work, the status, the seal ──────────────────── -->
     <div class="desk-chrome border-t border-[#34251c]/10 px-4 py-3 flex items-start gap-5 text-xs">
       <div class="w-[220px] flex-shrink-0">
@@ -844,9 +1330,6 @@
               <p class="truncate">{selectedFig.name}</p>
               <div class="flex flex-wrap gap-2 mt-1 text-[10px]">
                 <button onclick={() => { figurineId = ''; }} class="text-[#8a6a55] hover:text-[#34251c]">{$t('adminTalesWorkClear')}</button>
-                {#if !plate && selectedFig.faceImageUrl}
-                  <button onclick={useWorkPhoto} class="text-[#c65f3c]">{$t('adminTalesUseWorkPhoto')}</button>
-                {/if}
                 <button onclick={uploadPhoto} class="text-[#8a6a55] hover:text-[#34251c]" disabled={uploading}>
                   {uploading ? '…' : $t('adminTalesUpload')}
                 </button>
@@ -854,6 +1337,20 @@
                   <button onclick={() => (imageUrls = [])} class="text-[#8a6a55] hover:text-[#34251c]">{$t('adminTalesDropPhoto')}</button>
                 {/if}
               </div>
+              {#if frames.length > 0}
+                <div class="flex flex-wrap gap-1.5 mt-2">
+                  {#each frames as url (url)}
+                    <button
+                      type="button"
+                      onclick={() => pickFrame(url)}
+                      title={$t('adminTalesUseWorkPhoto')}
+                      class="w-8 h-10 p-0 overflow-hidden border {plate === url ? 'border-[#c65f3c]' : 'border-[#d8c6b1] hover:border-[#8a6a55]'}"
+                    >
+                      <img src={url} alt="" class="w-full h-full object-cover" />
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             </div>
           </div>
         {:else}
@@ -889,17 +1386,22 @@
               onclick={() => setStatus(value as GazetteStatus)}
               disabled={!open}
               class="px-2 py-1 text-[10px] uppercase tracking-[0.14em] border transition-colors
-                {status === value ? 'border-[#34251c]/40 bg-[#34251c]/5 text-[#34251c]' : 'border-[#34251c]/12 text-[#8a6a55] hover:text-[#34251c]'}"
+                {status === value || (value === 'scheduled' && scheduling) ? 'border-[#34251c]/40 bg-[#34251c]/5 text-[#34251c]' : 'border-[#34251c]/12 text-[#8a6a55] hover:text-[#34251c]'}"
             >{$t(label as never)}</button>
           {/each}
 
-          {#if status === 'scheduled'}
+          {#if status === 'scheduled' || scheduling}
+            <!-- Дата уходит через тот же листок, что и «Опубликовать»: в
+                 назначенный час байка разойдётся письмами так же. -->
             <input
               type="datetime-local"
-              value={scheduledAt ? scheduledAt.slice(0, 16) : ''}
-              onchange={(e) => (scheduledAt = e.currentTarget.value ? new Date(e.currentTarget.value).toISOString() : null)}
+              value={scheduledAt ? localInput(scheduledAt) : ''}
+              onchange={(e) => pickSchedule(e.currentTarget.value)}
               class="px-2 py-1 bg-transparent border border-[#34251c]/15 text-[11px]"
             />
+            {#if scheduling && status !== 'scheduled'}
+              <span class="text-[10px] text-[#8a6a55]">{$t('adminTalesPickDate')}</span>
+            {/if}
           {/if}
 
           <label class="flex items-center gap-1.5 text-[10px] text-[#5f4636] ml-2">
@@ -907,6 +1409,24 @@
             {$t('adminTalesPinned')}
           </label>
         </div>
+        <!-- Продолжение: кто просил продолжение начала, получит письмо, когда
+             эта байка выйдет. Только у сохранённой байки — у несохранённой
+             нет id, на который сослаться. -->
+        {#if selectedId}
+          <label class="mt-2 flex items-center gap-2 text-[10px] text-[#5f4636]">
+            <span class="uppercase tracking-[0.14em] text-[#8a6a55]">{$t('adminTalesSequelOf')}</span>
+            <select
+              value={mine?.sequelOf ?? ''}
+              onchange={(e) => setSequel(e.currentTarget)}
+              class="max-w-[260px] px-1.5 py-1 bg-transparent border border-[#34251c]/15 text-[11px]"
+            >
+              <option value="">{$t('adminTalesSequelNone')}</option>
+              {#each tales.filter((other) => other.id !== selectedId) as other (other.id)}
+                <option value={other.id}>{titleOf(other)}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
       </div>
 
       <div class="flex-shrink-0 flex items-center gap-3">
@@ -915,7 +1435,7 @@
         {/if}
         <button
           onclick={publish}
-          disabled={!open || saving}
+          disabled={!open || saving || preflightBusy || preflight !== null}
           class="px-3 py-2 text-[10px] uppercase tracking-[0.18em] border border-[#c65f3c]/50 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors disabled:opacity-40"
         >{$t('adminTalesPublish')}</button>
         {#if selectedId}
@@ -925,6 +1445,7 @@
         {/if}
       </div>
     </div>
+    {/if}
 
     {#if message}
       <p class="px-4 py-2 text-xs border-t border-[#34251c]/10 text-[#6f3b24]">{message}</p>
@@ -1012,6 +1533,26 @@
     cursor: pointer;
   }
 
+  /* Второй переключатель стоит за первым, а не отъезжает к краю сам. */
+  .talk-toggle + .talk-toggle--next { margin-left: 0; }
+
+  .waiting { margin-top: 14px; }
+  .waiting-hint { margin: 0; font-size: 12px; line-height: 1.5; color: #5f4636; max-width: 60ch; }
+  .waiting-ways {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: #5f4636;
+  }
+  /* Судьба известия — формой отметки, а не только словом: ушедшее залито,
+     не дошедшее отбито красным. */
+  .way { padding: 1px 7px; border: 1px solid rgba(52, 37, 28, 0.15); }
+  .way--sent { background: rgba(198, 95, 60, 0.12); border-color: rgba(198, 95, 60, 0.4); color: #6f3b24; }
+  .way--failed { border-color: #8a2a2a; color: #8a2a2a; }
+  .way--pending { border-style: dashed; }
+
   .talk-empty { margin: 16px 0 0; font-size: 12px; font-style: italic; color: #8a6a55; }
   .talk-list { list-style: none; margin: 16px 0 0; padding: 0; }
   .talk-item {
@@ -1081,6 +1622,11 @@
   }
   .paper-body.second { color: #6f5847; }
 
+  /* Предпросмотр занимает место полей: высота та же, чтобы бумага не
+     прыгала при переключении. */
+  .reading { min-height: 46vh; }
+  .reading.second { opacity: 0.8; }
+
   .measure-row {
     display: flex;
     align-items: center;
@@ -1129,6 +1675,35 @@
     from { transform: scale(1.5) rotate(-8deg); opacity: 0; }
     to { transform: scale(1) rotate(-2deg); opacity: 1; }
   }
+
+  .lang-gap {
+    display: inline-block;
+    margin-top: 2px;
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #c65f3c;
+  }
+  .lang-hollow { margin-left: 3px; font-size: 8px; color: #c65f3c; }
+
+  .markup dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 16px;
+    margin: 0;
+    max-width: 780px;
+    font-size: 12px;
+    color: #5f4636;
+  }
+  .markup dt { font-family: ui-monospace, Menlo, monospace; color: #34251c; }
+  .markup dd { margin: 0; }
+
+  .preflight { background: rgba(198, 95, 60, 0.04); }
+  .pf-head { margin: 0 0 6px; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: #6f3b24; }
+  .pf-warn { margin: 0 0 6px; padding-left: 16px; color: #6f3b24; line-height: 1.5; }
+  .pf-letters { margin: 0; color: #34251c; line-height: 1.5; max-width: 80ch; }
+  .pf-letters b { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 16px; font-weight: 500; }
+  .pf-nomail { display: block; margin-top: 4px; color: #8a2a2a; }
 
   /* Nothing but paper. */
   .focus-mode :global(.shelf-pane),

@@ -1,0 +1,6 @@
+rembg[cpu]>=2.0.60
+pillow>=11
+pillow-heif>=0.18
+numpy
+scipy
+pymatting

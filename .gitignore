@@ -31,3 +31,5 @@ live_drop/
 # Копия значков рамок перед переносом их с резьбы внутрь окна (см. .badge-revert/revert.sql)
 .badge-revert/
 src-tauri/server/test_uploads**
+# окружение утилиты вырезания фигурок (ставится само при первом запуске)
+tools/cutout/.venv/
