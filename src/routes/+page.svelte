@@ -15,6 +15,7 @@
     import AuthorStory from '$lib/components/AuthorStory.svelte';
     import CorrespondenceInvite from '$lib/components/CorrespondenceInvite.svelte';
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
+    import { CHANNEL_URL } from '$lib/channel';
     import { heroImageUrl, pickHeroFigurine, pickLatestAddedWork, sortWorks, visibleWorks } from '$lib/home-hero';
     import { syncAttr } from '$lib/hydrate-image';
     import { afterLoadIdle } from '$lib/after-load-idle';
@@ -659,6 +660,20 @@
                                 </svg>
                             </a>
                             <a href={secondaryCtaHref} class="cta-ghost">{secondaryCtaText}</a>
+                            <!-- Канал — третье, самое тихое действие: только знак, без подписи.
+                                 С подписью строка не помещалась в колонку и переносилась. -->
+                            <a
+                                href={CHANNEL_URL}
+                                class="cta-channel"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={$t('homeCtaChannelAria')}
+                                title={$t('homeCtaChannelAria')}
+                            >
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path d="M3.5 11.5L20 5l-2.6 13.5-5-3.7-2.6 2.6-.4-4.2L17 7.5 8.6 12.2 3.5 11.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                                </svg>
+                            </a>
                         </div>
 
                         <div class="hero-doors">
@@ -1381,6 +1396,31 @@
             color 0.22s ease,
             border-color 0.22s ease,
             transform 0.12s ease;
+    }
+
+    .cta-channel {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        color: var(--copper);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        transition:
+            color 0.22s ease,
+            border-color 0.22s ease,
+            transform 0.12s ease;
+    }
+    .cta-channel:hover {
+        color: var(--deep, #6f3b24);
+        border-color: rgba(198,95,60,0.6);
+    }
+    .cta-channel:active { transform: translateY(1px); }
+    .cta-channel:focus-visible {
+        outline: 2px solid rgba(198, 95, 60, 0.56);
+        outline-offset: 3px;
     }
 
     .cta-ghost:hover {
@@ -2155,7 +2195,8 @@
     @media (hover: none) {
         .cursor-glow { display: none; }
         .cta-primary,
-        .cta-ghost {
+        .cta-ghost,
+        .cta-channel {
             transform: none !important;
         }
     }

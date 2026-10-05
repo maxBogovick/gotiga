@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t, brandName } from '$lib/i18n';
+  import { CHANNEL_URL, CHANNEL_HANDLE } from '$lib/channel';
 
   // Single source of truth for the contact details. Phone doubles as the
   // Telegram handle (Telegram resolves +<number> links directly).
@@ -105,6 +106,22 @@
             <span class="contact-text">
               <span class="contact-label">{$t('footerTelegramLabel')}</span>
               <span class="contact-value">{PHONE_DISPLAY}</span>
+            </span>
+          </a>
+        </li>
+        <!-- Канал — не контакт: туда пишет дом, а не читатель. Своя строка,
+             чтобы личный Telegram автора и канал не принимали друг за друга. -->
+        <li>
+          <a class="contact-row" href={CHANNEL_URL} target="_blank" rel="noopener noreferrer">
+            <span class="contact-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
+                <path d="M4 10.5v3a1 1 0 001 1h2l5 4V5.5l-5 4H5a1 1 0 00-1 1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                <path d="M16 9.5a3.5 3.5 0 010 5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="contact-text">
+              <span class="contact-label">{$t('footerChannelLabel')}</span>
+              <span class="contact-value">{CHANNEL_HANDLE}</span>
             </span>
           </a>
         </li>

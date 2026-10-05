@@ -129,9 +129,14 @@
     rowsEditable = false,
     rowHeld = $bindable(null),
     onRowMove,
+    uniform = false,
   }: {
     card: BattleCard;
     frames?: BattleFrame[] | null;
+    /** Карта стоит в форме по умолчанию (5:7), что бы ни назвала её рамка.
+     *  Для полки, где ряд карт разной высоты рвёт подписи под ними: настоящая
+     *  форма рамки видна на листе, а здесь рамки не сравнивают по пропорциям. */
+    uniform?: boolean;
     /** Face up or face down. A card you do not have lies in dust, price up. */
     owned?: boolean;
     /** The level of *your* copy, 1..5. Null while nobody owns anything. */
@@ -235,7 +240,12 @@
     onRowMove?: (slot: SheetSlot, band: SheetBand, before: SheetSlot | null) => void;
   } = $props();
 
-  let frame = $derived(frameForCard(card, frames, level));
+  let frame = $derived.by(() => {
+    const worn = frameForCard(card, frames, level);
+    return uniform && worn.aspect !== DEFAULT_ASPECT
+      ? { ...worn, aspect: DEFAULT_ASPECT }
+      : worn;
+  });
   /** The language the card's own text reads as. A reader always sees the
    *  site's language; the keeper's desk passes its RU/EN toggle instead, so
    *  the preview shows exactly the language being typed into the sidebar

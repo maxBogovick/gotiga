@@ -90,50 +90,76 @@
 
 .room--fill .scene.scene--fill.scene--chamber .crest {
   display: grid;
-  grid-template-columns: minmax(8rem, 1fr) auto minmax(8rem, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.6rem 1rem;
   flex: 0 0 auto;
-  min-height: 5rem;
-  padding: 0 1.1rem;
+  /* Шапка — узкая полоса, а не этаж: было 85 точек на одно слово, и ровно
+     столько не хватало полю, которое упирается в высоту окна. */
+  min-height: 3.3rem;
+  padding: 0.2rem 0.6rem;
 }
 
-/* Выход — НЕ игра, и бляха ему не полагается. На литой табличке, ростом в
-   одиннадцать знаков и с той же бронзой, что у маны и подписей зон, он читался
-   четвёртым игровым предметом шапки. Порядок в комнате: ход · карты ·
-   действия · исход, а выход — то, чем пользуются один раз и не на ходу.
-   Поэтому здесь одни буквы, и они приходят в полный голос только под рукой. */
-.room--fill .scene.scene--fill.scene--chamber .exit {
-  justify-self: start;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
+/* Выход и журнал — НЕ игра, и бляха им не полагается: оба круглыми значками
+   по краям шапки. Выходом пользуются один раз и не на ходу, журнал читают
+   между ходами; ни тому, ни другому не нужно место, которое нужно полю.
+   Слово каждого — в `title` и `aria-label`, приходят они в полный голос
+   только под рукой. */
+.room--fill .scene.scene--fill.scene--chamber .exit,
+.room--fill .scene.scene--fill.scene--chamber .log-toggle {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
   margin: 0;
-  min-width: 0;
-  padding: 0.4rem 0.2rem 0.36rem;
-  border: 0;
-  background: none;
-  font-family: Georgia, "Fraunces", serif;
-  font-size: 0.7rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(214, 190, 146, 0.62);
+  padding: 0;
+  border: 1px solid rgba(214, 190, 146, 0.32);
+  border-radius: 50%;
+  background: rgba(10, 7, 5, 0.6);
+  color: rgba(226, 204, 160, 0.78);
   cursor: pointer;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 216, 152, 0.14),
+    0 3px 10px rgba(0, 0, 0, 0.55);
   filter: none;
   transition:
     color 160ms ease,
-    opacity 160ms ease;
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.room--fill .scene.scene--fill.scene--chamber .exit {
+  justify-self: start;
+}
+
+.room--fill .scene.scene--fill.scene--chamber .log-toggle {
+  justify-self: end;
 }
 
 .room--fill .scene.scene--fill.scene--chamber .exit:hover,
-.room--fill .scene.scene--fill.scene--chamber .exit:focus-visible {
+.room--fill .scene.scene--fill.scene--chamber .exit:focus-visible,
+.room--fill .scene.scene--fill.scene--chamber .log-toggle:hover,
+.room--fill .scene.scene--fill.scene--chamber .log-toggle:focus-visible,
+.room--fill .scene.scene--fill.scene--chamber .log-toggle--open {
   color: #ffeec2;
+  border-color: rgba(232, 200, 140, 0.7);
+  background: rgba(40, 28, 16, 0.85);
 }
 
-.room--fill .scene.scene--fill.scene--chamber .exit-arrow {
-  font-size: 0.95em;
-  opacity: 0.85;
+/* Точка, а не число: вопрос у неё один — «что-то случилось с тех пор, как я
+   смотрел», — и число в сорока точках значка было бы нечитаемым. */
+.room--fill .scene.scene--fill.scene--chamber .log-toggle-dot {
+  position: absolute;
+  top: 0.32rem;
+  right: 0.32rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #ffb04a;
+  box-shadow:
+    0 0 0 2px #0d0a07,
+    0 0 8px rgba(255, 176, 74, 0.8);
 }
 
 .room--fill .scene.scene--fill.scene--chamber .crest-mark {
@@ -141,9 +167,13 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 28rem;
-  min-height: 4.6rem;
-  padding: 0.44rem 3.4rem 0.5rem;
+  justify-self: center;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.2rem 1.3rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0.3rem 1.6rem;
   /* Картуш из-под слов УБРАН, и это не про вкус. Картинка 16:9 показывалась
      полосой в 60px — то есть произвольным СРЕЗОМ по её середине, и какая
      часть узора придётся на строку, решала высота окна: то светлая филигрань
@@ -166,9 +196,9 @@
 .room--fill .scene.scene--fill.scene--chamber .crest-turn {
   margin: 0;
   font-family: Georgia, "Fraunces", serif;
-  font-size: clamp(1.55rem, 3.1vw, 2.7rem);
+  font-size: clamp(1.1rem, 1.9vw, 1.6rem);
   font-weight: 700;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   /* Цвет КОСТИ, а не золота. Золотом набрана вся комната — бляхи, подписи
      зон, кнопка, — и слова хода тонули в ней, сколько их ни свети. Самое
@@ -188,19 +218,22 @@
   margin: 0;
   line-height: 1.25;
   font-family: Georgia, "Fraunces", serif;
-  font-size: 0.78rem;
-  letter-spacing: 0.28em;
+  font-size: 0.82rem;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   color: #d6c294;
   text-shadow: 0 1px 0 #1a1208;
 }
 
 .room--fill .scene.scene--fill.scene--chamber .mana-track {
-  justify-self: end;
   display: flex;
   align-items: center;
   gap: 0.5rem 0.66rem;
-  padding: 0.6rem 1.1rem 0.6rem 1.15rem;
+  /* Мана стоит в той же плашке, что и ход, — отдельной бляхи у неё больше
+     нет, от слов хода её отделяет гравированная черта. */
+  padding: 0.15rem 0.2rem 0.15rem 1.2rem;
+  border-left: 1px solid rgba(0, 0, 0, 0.6);
+  box-shadow: inset 1px 0 0 rgba(255, 214, 150, 0.22);
   /* Отсвет камней на металле — ПЕРВЫМ слоем, и его сила взята прямо из числа
      (`--lit`), а не из класса: бляха темнеет по мере того, как ману тратят, и
      это единственное место, где количество видно, не считая камней. Кладётся
@@ -210,9 +243,7 @@
       ellipse 46% 130% at 79% 50%,
       rgba(96, 214, 255, calc(0.05 * var(--lit, 0))),
       transparent 72%
-    ),
-    linear-gradient(180deg, rgba(20, 40, 70, 0.35), rgba(8, 12, 22, 0.55)),
-    url("/battles/chamber/chamber-plate.png?v=2") center / 100% 100% no-repeat;
+    );
 }
 
 .room--fill .scene.scene--fill.scene--chamber .mana-word {
@@ -292,8 +323,8 @@
    потраченная мана читалась как «камень потемнел», а не «камня нет». */
 .room--fill .scene.scene--fill.scene--chamber .gem {
   display: block;
-  width: 1.5rem;
-  height: 1.9rem;
+  width: 1.2rem;
+  height: 1.5rem;
   background:
     url("/battles/chamber/chamber-socket.png?v=2") center / contain no-repeat,
     radial-gradient(
@@ -324,14 +355,15 @@
 
 /* ── Сетка комнаты ─────────────────────────────────────────────────────── */
 
-.room--fill .scene.scene--fill.scene--chamber .play {
+.room--fill .scene.scene--fill.scene--chamber .play,
+.room--fill .scene.scene--fill.scene--along.scene--chamber .play {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(18rem, 22.5rem);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1.35rem minmax(0, 1fr) auto;
   grid-template-areas:
-    "theirs rail"
-    "board rail"
-    "foot foot";
+    "theirs"
+    "board"
+    "foot";
   gap: 0 0.7rem;
   flex: 1 1 auto;
   min-height: 0;
@@ -368,17 +400,29 @@
   grid-area: foot;
 }
 
+/* Журнал — ШТОРКА поверх комнаты, а не колонна рядом с полем: поле упирается
+   в высоту окна, и колонна отнимала у него не высоту, а ширину, которой ему и
+   так не на что потратить, — четверть экрана стояла под «пока ничего не
+   произошло». Выезжает по значку в шапке; закрытая — `inert`, чтобы Tab не
+   уходил в невидимое. `grid-area: auto` обязателен: у абсолютного ребёнка
+   сетки с назначенной областью опорой становится область, а не сетка. */
 .room--fill .scene.scene--fill.scene--chamber .aside {
   container-type: inline-size;
-  grid-area: rail;
-  position: relative;
-  top: auto;
-  right: auto;
-  bottom: auto;
-  z-index: 2;
-  width: auto;
+  grid-area: auto;
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  bottom: 0.2rem;
+  z-index: 50;
+  width: min(22.5rem, calc(100% - 1.5rem));
   max-width: none;
+  max-height: none;
   margin: 0;
+  transform: none;
+  visibility: visible;
+  transition:
+    transform 260ms cubic-bezier(0.2, 0.8, 0.25, 1),
+    visibility 0s;
   padding: 1.15rem 1.25rem 1.2rem;
   overflow: auto;
   background:
@@ -393,7 +437,16 @@
   color: #fff8ea;
   box-shadow:
     inset 0 0 34px rgba(0, 0, 0, 0.6),
-    0 18px 44px rgba(0, 0, 0, 0.55);
+    0 18px 44px rgba(0, 0, 0, 0.55),
+    -18px 0 40px rgba(0, 0, 0, 0.5);
+}
+
+.room--fill .scene.scene--fill.scene--chamber .aside.aside--shut {
+  transform: translateX(calc(100% + 2rem));
+  visibility: hidden;
+  transition:
+    transform 260ms cubic-bezier(0.4, 0, 0.6, 1),
+    visibility 0s 260ms;
 }
 
 .room--fill .scene.scene--fill.scene--chamber .field,
@@ -543,7 +596,7 @@
      высота поля и есть величина карты, и отдавать её под подпись нельзя. */
   min-width: 0;
   padding: 0.12rem 0.9rem 0.14rem;
-  font-size: clamp(0.6rem, 1.35cqw, 0.95rem);
+  font-size: clamp(0.76rem, 1.35cqw, 1rem);
   line-height: 1.05;
   letter-spacing: 0.16em;
   /* Сойдя с крашеной половины на тёмную резьбу, табличка пропала — и это не
@@ -559,35 +612,17 @@
 }
 
 .room--fill .scene.scene--fill.scene--along.scene--chamber .zone--theirs {
-  left: 25%;
-}
-
-.room--fill .scene.scene--fill.scene--along.scene--chamber .zone--mine {
   left: 75%;
 }
 
-.room--fill .scene.scene--fill.scene--along.scene--chamber .grid::before {
-  top: 0;
-  bottom: 0;
-  left: 0;
-  right: auto;
-  width: 50%;
-  height: auto;
-  background:
-    radial-gradient(
-      ellipse at -10% 50%,
-      rgba(196, 62, 40, 0.27),
-      transparent 62%
-    ),
-    linear-gradient(
-      90deg,
-      rgba(132, 34, 24, 0.38),
-      rgba(78, 28, 20, 0.15) 72%,
-      transparent
-    );
+/* Своя половина — СЛЕВА, рядом с рукой (`spots` в сцене кладёт глубину
+   справа налево): карту из руки кладут в соседнюю клетку, а не через всё
+   чужое поле. Краска половин и таблички следуют за клетками. */
+.room--fill .scene.scene--fill.scene--along.scene--chamber .zone--mine {
+  left: 25%;
 }
 
-.room--fill .scene.scene--fill.scene--along.scene--chamber .grid::after {
+.room--fill .scene.scene--fill.scene--along.scene--chamber .grid::before {
   top: 0;
   bottom: 0;
   right: 0;
@@ -597,11 +632,32 @@
   background:
     radial-gradient(
       ellipse at 110% 50%,
+      rgba(196, 62, 40, 0.27),
+      transparent 62%
+    ),
+    linear-gradient(
+      270deg,
+      rgba(132, 34, 24, 0.38),
+      rgba(78, 28, 20, 0.15) 72%,
+      transparent
+    );
+}
+
+.room--fill .scene.scene--fill.scene--along.scene--chamber .grid::after {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: auto;
+  width: 50%;
+  height: auto;
+  background:
+    radial-gradient(
+      ellipse at -10% 50%,
       rgba(58, 108, 208, 0.28),
       transparent 58%
     ),
     linear-gradient(
-      270deg,
+      90deg,
       rgba(26, 52, 118, 0.4),
       rgba(24, 42, 78, 0.14) 74%,
       transparent
@@ -1039,7 +1095,7 @@
   background: url("/battles/chamber/chamber-plaque.png?v=3") center / 100% 100%
     no-repeat;
   font-family: Georgia, "Fraunces", serif;
-  font-size: 0.74rem;
+  font-size: 0.86rem;
   line-height: 1.3;
   filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.55));
   text-align: center;
@@ -1167,20 +1223,37 @@
   filter: grayscale(0.45) brightness(0.8);
 }
 
+/* Столбиком: переключатель под кнопкой хода, строка под ним. Рядом в строку
+   им не хватало ширины угла, и подсказка сжималась в обрубок. Строка держит
+   высоту в две строки и при пустом предвестии — иначе она толкала бы
+   переключатель из-под пальца. */
 .room--fill .scene.scene--fill.scene--chamber .omens {
   width: 100%;
+  flex-direction: column-reverse;
+  align-items: center;
   justify-content: center;
+  gap: 0.3rem;
   margin: 0;
 }
 
 .room--fill .scene.scene--fill.scene--chamber .omen-word {
-  max-width: 12rem;
-  color: #b8a888;
+  max-width: none;
+  /* В две строки, а не многоточием: обрезанное «наведите на …» не говорило
+     ничего, а подсказка здесь одна и короткая. */
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-height: 2.6em;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  color: #c8b896;
   text-align: center;
 }
 
 .room--fill .scene.scene--fill.scene--chamber .omen-switch {
-  color: #8a7a60;
+  font-size: 0.76rem;
+  color: #a8987a;
 }
 
 .room--fill .scene.scene--fill.scene--chamber .omen-switch--on {
@@ -1290,6 +1363,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .room--fill .scene.scene--fill.scene--chamber .aside,
+  .room--fill .scene.scene--fill.scene--chamber .aside.aside--shut {
+    transition: none;
+  }
+
   .room.room--fill::before,
   .room--fill .scene.scene--fill.scene--chamber .journal-lines li,
   .room--fill .scene.scene--fill.scene--chamber .vs {
@@ -1312,7 +1390,8 @@
 }
 
 @media (max-width: 820px) {
-  .room--fill .scene.scene--fill.scene--chamber .play {
+  .room--fill .scene.scene--fill.scene--chamber .play,
+  .room--fill .scene.scene--fill.scene--along.scene--chamber .play {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 2.1rem minmax(0, 1fr) auto auto;
     grid-template-areas:
@@ -1322,11 +1401,6 @@
       "foot";
   }
 
-  /* В одну колонну журнал стоит под доской, и в 7.5rem резная рама съедала
-     почти всё: оставалась строка, обрезанная посередине. */
-  .room--fill .scene.scene--fill.scene--chamber .aside {
-    max-height: 11rem;
-  }
 
   .room--fill .scene.scene--fill.scene--chamber .journal-label {
     margin-bottom: 0.5rem;
@@ -1344,9 +1418,9 @@
 
   .room--fill .scene.scene--fill.scene--chamber .foot {
     grid-template-columns: 5.4rem minmax(0, 1fr) 9.2rem;
-    height: 7.4rem;
-    min-height: 7.4rem;
-    max-height: 7.4rem;
+    height: 7.8rem;
+    min-height: 7.8rem;
+    max-height: 7.8rem;
   }
 
   .room--fill .scene.scene--fill.scene--chamber .foot .table-hand--mine,
@@ -1373,15 +1447,24 @@
   }
 
   .room--fill .scene.scene--fill.scene--chamber .crest {
-    grid-template-columns: auto 1fr auto;
-    min-height: 3.2rem;
-    padding-inline: 0.35rem;
+    min-height: 3rem;
+    padding-inline: 0.2rem;
+    gap: 0.4rem;
   }
 
   .room--fill .scene.scene--fill.scene--chamber .crest-mark {
-    min-width: 0;
-    min-height: 0;
-    padding-inline: 0.4rem;
+    gap: 0.1rem 0.7rem;
+    padding-inline: 0.5rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .mana-track {
+    padding-left: 0.7rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .exit,
+  .room--fill .scene.scene--fill.scene--chamber .log-toggle {
+    width: 2.3rem;
+    height: 2.3rem;
   }
 
   .room--fill .scene.scene--fill.scene--chamber .mana-word {
@@ -1396,12 +1479,220 @@
 
   .room--fill .scene.scene--fill.scene--chamber .prompt-word {
     max-width: none;
-    font-size: 0.56rem;
+    font-size: 0.7rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .omen-word {
+    font-size: 0.7rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .turn,
+  .room--fill .scene.scene--fill.scene--chamber .omens {
+    gap: 0.1rem;
   }
 
   .room--fill .scene.scene--fill.scene--chamber .glass {
     width: 2.6rem;
     height: 3.5rem;
+  }
+}
+
+/* ── Широкое окно: своё слева, чужое справа ──────────────────────────────
+   Поле 6×3 из карт 5:7 почти квадратное (1.43), а окно — полоса, поэтому поле
+   упирается в ВЫСОТУ, и растит его только высота, отнятая у остального. Низа
+   комнаты как полосы больше нет: всё, что не поле, стоит в двух колоннах по
+   бокам, которые поле и так оставляло пустыми.
+
+   Колонны следуют за половинами поля. Слева своя половина и своя рука —
+   карту кладут в соседнюю клетку, а не через всё чужое поле. Справа чужая
+   половина, рука хранителя рубашками, а под ней всё, чем заканчивают ход:
+   подсказка, «Закончить ход», предвестие.
+
+   Сетка `.play` раскладывает детей `.foot` напрямую (`display: contents` у
+   стола и у низа): так рука, подсказка и кнопка встают в свои колонны без
+   абсолютных координат, которые расходились бы между собой. */
+@media (min-width: 821px) {
+  .room--fill .scene.scene--fill.scene--chamber .play,
+  .room--fill .scene.scene--fill.scene--along.scene--chamber .play {
+    --band: clamp(10.5rem, 14vw, 13rem);
+    --hand-w: min(calc(var(--band) - 1.4rem), 11rem);
+    --hand-h: calc(var(--hand-w) / var(--fit, 0.714));
+    grid-template-columns: var(--band) minmax(0, 1fr) var(--band);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "hand board theirs"
+      "hand board ."
+      "hand board prompt"
+      "hand board turn";
+    gap: 0.5rem 0.6rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .well {
+    padding: 0.2rem 0;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .foot {
+    display: contents;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .table-hand--theirs {
+    grid-area: theirs;
+    justify-content: flex-end;
+    height: auto;
+    min-height: 0;
+    padding-top: 0.3rem;
+    overflow: visible;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .table-hand--theirs .held {
+    height: 3.2rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .prompt {
+    grid-area: prompt;
+    align-self: end;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .prompt-word {
+    max-width: none;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .turn {
+    grid-area: turn;
+    padding-bottom: 0.3rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .end {
+    width: 100%;
+    max-width: 13.2rem;
+    height: auto;
+    aspect-ratio: 13.2 / 4.6;
+  }
+
+  /* ── Своя рука: колонна слева ──────────────────────────────────────────
+     Карты стоят столбцом во всю высоту комнаты. Помещаются — стоят целиком,
+     с промежутком, посередине колонны. Не помещаются — ложатся внахлёст, как
+     разложенная колода: каждое гнездо ужимается (`flex-shrink`), а карта в
+     нём остаётся своего роста и выходит вниз, под следующую. Видна верхняя
+     часть каждой — цена и фотография, по ним карту и узнают, — а последняя
+     видна вся. Последнее гнездо не ужимается, иначе её низ ушёл бы под обрез.
+     Ширина карты задана колонной, а не ростом гнезда: гнездо ужимается по
+     высоте, и `aspect-ratio` иначе ужал бы вместе с ним и карту. */
+  .room--fill .scene.scene--fill.scene--chamber .foot .table-hand--mine {
+    grid-area: hand;
+    /* Колонна меряет СЕБЯ: рост карты считается из её высоты (`cqh`). Своё
+       содержимое в её размер не входит — высоту даёт сетка комнаты. */
+    container-type: size;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 0;
+    height: auto;
+    padding: 0.3rem 0 0.4rem;
+    overflow: visible;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .foot .table-hand--mine .hand-label {
+    display: block;
+    flex: 0 0 auto;
+    margin: 0 0 0.45rem;
+    font-size: 0.78rem;
+    font-style: normal;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #cfe0ff;
+    text-shadow:
+      0 1px 0 #060a14,
+      0 0 12px rgba(72, 136, 224, 0.55);
+  }
+
+  /* Рост карты в колоде: полный (`--hand-h`), пока карты стоят целиком, и
+     меньше, когда их много, — так, чтобы от каждой оставалось видно больше
+     половины (0.58), а не полоска резьбы. Колода из шести карт полного роста
+     показывала по 65 точек от каждой — рамку и строку расы, без фотографии,
+     по которой карту и узнают. Мелкую карту наведение набирает крупно. */
+  .room--fill .scene.scene--fill.scene--chamber .foot .hand {
+    --deal-h: min(
+      var(--hand-h),
+      calc((100cqh - 2.4rem) / (1 + 0.58 * (var(--n, 1) - 1)))
+    );
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    padding: 0;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .foot .held {
+    position: relative;
+    z-index: calc(1 + var(--i, 0));
+    display: block;
+    flex: 0 1 var(--deal-h);
+    width: calc(var(--deal-h) * var(--fit, 0.714));
+    height: var(--deal-h);
+    min-height: 0;
+    margin: 0;
+    aspect-ratio: auto;
+    overflow: visible;
+    transform: none;
+    transition:
+      transform 180ms cubic-bezier(0.2, 0.8, 0.25, 1),
+      filter 180ms ease;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .foot .held:last-child {
+    flex-shrink: 0;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .foot .held > .slot {
+    width: 100%;
+  }
+
+  /* Наведённая и взятая выходят из колоды вправо — к полю, куда их кладут, —
+     и встают поверх соседок целиком. Не вверх: столбец не ряд, и карта,
+     поднятая вверх, закрыла бы ту, что над ней, вместо того чтобы показаться. */
+  .room--fill .scene.scene--fill.scene--chamber .foot .held--mine:hover,
+  .room--fill .scene.scene--fill.scene--chamber .foot .held--mine:focus-visible {
+    z-index: 30;
+    opacity: 1;
+    transform: translateX(0.9rem);
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .foot .held--picked,
+  .room--fill
+    .scene.scene--fill.scene--chamber
+    .foot
+    .held--mine:hover:not(:disabled) {
+    z-index: 30;
+    transform: translateX(0.9rem);
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .foot .held--picked {
+    z-index: 29;
+    transform: translateX(1.3rem);
+  }
+
+  /* Узкая колонна печатает карту мельче полки (161 точка), и тогда наведённая
+     НАБИРАЕТСЯ заново в ширину полки — не растягивается преобразованием: карта
+     меряет себя контейнерными запросами, и только настоящая ширина даёт ей
+     напечатать то, что в клетке скрыто. Нижняя половина колоды растёт вверх
+     (`held--low`), иначе выросшая карта ушла бы под обрез комнаты. */
+  .room--fill .scene.scene--fill.scene--chamber .foot .held--mine:hover > .slot,
+  .room--fill .scene.scene--fill.scene--chamber .foot .held--mine:focus-visible > .slot {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: max(100%, 11rem);
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .foot .held--low:hover > .slot,
+  .room--fill .scene.scene--fill.scene--chamber .foot .held--low:focus-visible > .slot {
+    top: auto;
+    bottom: calc(100% - var(--deal-h));
   }
 }
 

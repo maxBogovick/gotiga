@@ -3969,9 +3969,13 @@ export function stage(
   const frozen = held !== null;
   const lag = (at: number) => (frozen ? at - (held as number) : at);
 
-  // Экранные координаты клеток. Разворот живёт здесь и только здесь.
+  // Экранные координаты клеток. Разворот живёт здесь и только здесь. Вдоль
+  // комнаты глубина идёт СПРАВА НАЛЕВО — своя половина слева, — и сцена
+  // кладёт клетки в том же порядке (`spots` в `BattleScene`).
   const screen = (spot: StageSpot | null) =>
-    spot ? { x: along ? spot.y : spot.x, y: along ? spot.x : spot.y } : null;
+    spot
+      ? { x: along ? spanX - 1 - spot.y : spot.x, y: along ? spot.x : spot.y }
+      : null;
   const a = screen(from);
   const b = screen(to);
 

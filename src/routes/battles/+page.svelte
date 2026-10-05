@@ -15,7 +15,19 @@
   import { jsonLdSafe } from '$lib/jsonld';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
-  import { cardCopy, pricesOf, workHref } from '$lib/battles';
+  import { cardCopy, frameFor, frameName, headerCopy, pricesOf, statLabel, statMark } from '$lib/battles';
+  import {
+    SHELF_DEFAULT,
+    canAfford,
+    shelfCards,
+    shelfFacets,
+    shelfGroups,
+    shelfNarrowed,
+    type ShelfGroupId,
+    type ShelfQuery,
+  } from '$lib/shelf';
+  import BattleIcon from '$lib/components/BattleIcon.svelte';
+  import BattleShelfBar from '$lib/components/BattleShelfBar.svelte';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleSheet from '$lib/components/BattleSheet.svelte';
   import BattleTaking from '$lib/components/BattleTaking.svelte';
@@ -38,6 +50,10 @@
   // Полка видна всем; своё видно только под именем. Гость видит цены целиком —
   // полка сама себе прейскурант, и отдельной витрины не нужно.
   let me = $state<BattleMe | null>(null);
+  /** Кошелёк спросили и ответ пришёл (хоть пустой). Пока вошедший его не
+   *  дождался, полка не рисуется: плоский список, перестраивающийся в разделы
+   *  через триста миллисекунд, — это страница, вздрагивающая под рукой. */
+  let walletAsked = $state(false);
   let signedIn = $derived(authStore.isLoggedIn);
   let busyCard = $state<string | null>(null);
   let complaint = $state<string | null>(null);
@@ -200,10 +216,62 @@
     }
   }
 
-  onMount(enterRoom);
+  onMount(async () => {
+    try {
+      await enterRoom();
+    } finally {
+      walletAsked = true;
+    }
+  });
 
   let ownedBy = $derived(new Map((me?.owned ?? []).map((o) => [o.cardId, o])));
   const holdingOf = (id: string) => ownedBy.get(id) ?? null;
+
+  // ── Отбор и разделы ───────────────────────────────────────────────────────
+  //
+  // Полка одна, а читают её по-разному: кто-то ищет свою карту, кто-то
+  // выбирает следующую. Отбор живёт только в этой вкладке и в адрес не пишется:
+  // ссылка, которую кто-то отправил другу, должна открывать полку, а не чужой
+  // отбор.
+  let query = $state<ShelfQuery>({ ...SHELF_DEFAULT });
+  /** Свёрнутые разделы. Свёрнутое помнит только эта страница. */
+  let folded = $state<ShelfGroupId[]>([]);
+
+  // Высота двери для полосы отбора: дверь прилипает сверху, полоса — под ней, и
+  // стоять она должна ровно там, где дверь кончается. Дверь меняет высоту с
+  // шириной (на телефоне она в две строки), поэтому число читается, а не
+  // выписывается.
+  let pageEl = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    const root = pageEl;
+    const door = root?.querySelector<HTMLElement>('.door');
+    if (!root || !door || typeof ResizeObserver === 'undefined') return;
+    const set = () => root.style.setProperty('--door-h', `${door.offsetHeight}px`);
+    set();
+    const watcher = new ResizeObserver(set);
+    watcher.observe(door);
+    return () => watcher.disconnect();
+  });
+
+  let heldIds = $derived(new Set(ownedBy.keys()));
+  let facets = $derived(shelfFacets(cards, $lang));
+  let listed = $derived(shelfCards(cards, query, $lang, me, heldIds));
+  let groups = $derived(shelfGroups(listed, me, heldIds));
+  /** Вошедший ещё не дождался кошелька: разделов нет, и рисовать нечего. */
+  let waiting = $derived(signedIn && !walletAsked);
+  let mineCount = $derived(cards.filter((c) => heldIds.has(c.id)).length);
+
+  function toggleFold(id: ShelfGroupId) {
+    folded = folded.includes(id) ? folded.filter((g) => g !== id) : [...folded, id];
+  }
+
+  /** У `all` заголовка нет вовсе: гостю делить нечего. */
+  const GROUP_TITLES = {
+    mine: 'battlesShelfGroupMine',
+    can: 'battlesShelfGroupCan',
+    later: 'battlesShelfGroupLater',
+  } as const;
 
   function loginFromSheet(card: BattleCardDto): string {
     return `/login?from=${encodeURIComponent(`/battles?card=${card.id}`)}`;
@@ -369,9 +437,120 @@
   {@html `<script type="application/ld+json">${jsonLd}<\/script>`}
 </svelte:head>
 
+{#snippet stand(card: BattleCardDto)}
+  {@const copy = cardCopy(card, $lang)}
+  {@const prices = pricesOf(card)}
+  {@const held = holdingOf(card.id)}
+  {@const name = copy.title || card.figurineName || ''}
+  {@const kin = [headerCopy(card, $lang).race, frameName(frameFor(card.tier, frames), $lang)].filter(Boolean).join(' · ')}
+  <!-- Стоимость и сила напечатаны в углах самой карты, и вторая запись под
+       ней говорила бы то же самое дважды. Здесь то, чего на малой карте не
+       видно: здоровье, мана, броня. -->
+  {@const stats = [
+    { slot: 'health', value: card.health },
+    { slot: 'mana', value: card.mana },
+    { slot: 'armor', value: card.armor },
+  ].filter((one) => one.value > 0) as { slot: 'health' | 'mana' | 'armor'; value: number }[]}
+  <figure class="stand" class:stand--raised={justRaised === card.id} use:firstLook={card.id}>
+    <!-- The shelf is a showcase. A back would hide the work, and a
+         person would have to remember what they had not been shown.
+         Face always; "yours" is the caption and the pips, not a
+         turned card. Get it lives on the sheet, where the body is. -->
+    <div
+      class="stand-face"
+      role="button"
+      tabindex="0"
+      aria-haspopup="dialog"
+      aria-label={name}
+      onclick={() => lookAt(card)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          lookAt(card);
+        }
+      }}
+    >
+      <!-- Все карты полки одной формы (`uniform`): ряд, где одна карта выше
+           другой, рвёт подписи под ними. Настоящая форма рамки видна на листе. -->
+      <BattleCard
+        {card}
+        {frames}
+        owned={true}
+        level={held?.level ?? null}
+        isNew={held?.isNew ?? false}
+        interactive={false}
+        uniform={true}
+      />
+    </div>
+    <!-- Подпись — три строки одного устройства: как зовут, кто это, что с
+         этим делать. Цена приколота под картой, а не вшита в неё: карта —
+         то, что сделал дом, цена — записка. Работа, из которой карта
+         сделана, названа на листе: здесь она стояла серой строкой и
+         ничего не добавляла к выбору. -->
+    <figcaption class="label">
+      <span class="label-name" title={name}>{name}</span>
+      {#if kin}
+        <span class="label-kin" title={kin}>{kin}</span>
+      {/if}
+      <!-- Строка занимает место и пустой: у заклинания здоровья нет, а подписи
+           под соседями должны стоять на одной линии. -->
+      <span class="label-stats">
+        {#if stats.length}
+          {#each stats as one (one.slot)}
+            <span class="label-stat" title={$t(statLabel(one.slot))}>
+              <BattleIcon name={statMark(one.slot)} size="0.95em" weight={1.3} />
+              <span class="sr">{$t(statLabel(one.slot))}</span>
+              {one.value}
+            </span>
+          {/each}
+        {/if}
+      </span>
+      {#if held}
+        {@const rung = nextRung(card, held.level)}
+        <span class="label-prices">
+          <span class="label-yours">{$t('battlesYours')}</span>
+          <!-- Ступень: цена и слово рядом, тем же голосом, что и цена
+               карты. Уровень ничего не даёт в бою — он засечка. -->
+          {#if rung !== null}
+            <span class="label-price">
+              <span class="label-amount">{rung}</span>
+              <span class="label-coin">{$t('battlesCoinDust')}</span>
+              <button
+                type="button"
+                class="label-take"
+                disabled={busyCard !== null || !affordable('dust', rung)}
+                onclick={() => raise(card, rung)}
+              >
+                {busyCard === card.id
+                  ? $t('battlesRaising')
+                  : affordable('dust', rung)
+                    ? $t('battlesRaise')
+                    : $t('battlesNotEnough')}
+              </button>
+            </span>
+          {/if}
+        </span>
+      {:else}
+        <!-- Не хватает — цена приглушена, слов нет: раздел уже сказал, что
+             эта карта пока не по карману. -->
+        <span class="label-prices" class:label-prices--short={!!me && !canAfford(card, me)}>
+          {#each prices as price (price.coin)}
+            <span class="label-price">
+              <span class="label-amount">{price.amount}</span>
+              <span class="label-coin">
+                {price.coin === 'dust' ? $t('battlesCoinDust') : $t('battlesCoinFeed')}
+              </span>
+            </span>
+          {/each}
+        </span>
+      {/if}
+    </figcaption>
+  </figure>
+{/snippet}
+
 <div class="root">
   <div class="grain" aria-hidden="true"></div>
-  <div class="page">
+  <div class="page" bind:this={pageEl}>
     <!-- Три комнаты одной дверью. Кошелёк и задания висят на ней, не в теле
          полки: полка показывает карты, а не объясняет, где ещё можно быть. -->
     <BattleDoor {me} {settled} {errands} />
@@ -392,87 +571,50 @@
     {#if !cards.length}
       <p class="empty" in:fade={{ duration: 700, delay: 160 }}>{$t('battlesEmpty')}</p>
     {:else}
-      <div class="shelf" in:fade={{ duration: 700, delay: 240 }}>
-        {#each cards as card (card.id)}
-          {@const copy = cardCopy(card, $lang)}
-          {@const prices = pricesOf(card)}
-          {@const href = workHref(card)}
-          {@const held = holdingOf(card.id)}
-          <figure class="stand" class:stand--raised={justRaised === card.id} use:firstLook={card.id}>
-            <!-- The shelf is a showcase. A back would hide the work, and a
-                 person would have to remember what they had not been shown.
-                 Face always; "yours" is the caption and the pips, not a
-                 turned card. Get it lives on the sheet, where the body is. -->
-            <div
-              class="stand-face"
-              role="button"
-              tabindex="0"
-              aria-haspopup="dialog"
-              aria-label={copy.title || card.figurineName || ''}
-              onclick={() => lookAt(card)}
-              onkeydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  lookAt(card);
-                }
-              }}
-            >
-              <BattleCard
-                {card}
-                {frames}
-                owned={true}
-                level={held?.level ?? null}
-                isNew={held?.isNew ?? false}
-                interactive={false}
-              />
-            </div>
-            <!-- The price belongs to the shelf, not to the card: a card is a
-                 thing the house made, a price is a note pinned under it. -->
-            <figcaption class="label">
-              {#if held}
-                {@const rung = nextRung(card, held.level)}
-                <span class="label-prices">
-                  <span class="label-yours">{$t('battlesYours')}</span>
-                  <!-- Ступень: цена и слово рядом, тем же голосом, что и цена
-                       карты. Уровень ничего не даёт в бою — он засечка. -->
-                  {#if rung !== null}
-                    <span class="label-price">
-                      <span class="label-amount">{rung}</span>
-                      <span class="label-coin">{$t('battlesCoinDust')}</span>
-                      <button
-                        type="button"
-                        class="label-take"
-                        disabled={busyCard !== null || !affordable('dust', rung)}
-                        onclick={() => raise(card, rung)}
-                      >
-                        {busyCard === card.id
-                          ? $t('battlesRaising')
-                          : affordable('dust', rung)
-                            ? $t('battlesRaise')
-                            : $t('battlesNotEnough')}
-                      </button>
-                    </span>
-                  {/if}
-                </span>
-              {:else}
-                <span class="label-prices">
-                  {#each prices as price (price.coin)}
-                    <span class="label-price">
-                      <span class="label-amount">{price.amount}</span>
-                      <span class="label-coin">
-                        {price.coin === 'dust' ? $t('battlesCoinDust') : $t('battlesCoinFeed')}
-                      </span>
-                    </span>
+      <BattleShelfBar
+        bind:query
+        {facets}
+        {frames}
+        signedIn={!!me}
+        total={cards.length}
+        shown={listed.length}
+        mine={mineCount}
+      />
+
+      {#if !listed.length}
+        <p class="empty">{$t('battlesShelfNone')}</p>
+      {:else}
+        <div class="sections" class:sections--waiting={waiting} in:fade={{ duration: 700, delay: 240 }}>
+          {#each groups as group (group.id)}
+            {@const shut = folded.includes(group.id)}
+            <section class="section">
+              {#if groups.length > 1 && group.id !== 'all'}
+                <h2 class="section-head">
+                  <button
+                    type="button"
+                    class="section-toggle"
+                    aria-expanded={!shut}
+                    aria-label={shut ? $t('battlesShelfUnfold') : $t('battlesShelfFold')}
+                    onclick={() => toggleFold(group.id)}
+                  >
+                    <span class="section-mark" class:section-mark--shut={shut} aria-hidden="true"></span>
+                    <span class="section-name">{$t(GROUP_TITLES[group.id])}</span>
+                    <span class="section-count">{group.cards.length}</span>
+                  </button>
+                  <span class="section-rule" aria-hidden="true"></span>
+                </h2>
+              {/if}
+              {#if !shut}
+                <div class="shelf">
+                  {#each group.cards as card (card.id)}
+                    {@render stand(card)}
                   {/each}
-                </span>
+                </div>
               {/if}
-              {#if href}
-                <a class="label-work" {href}>{card.figurineName || copy.title}</a>
-              {/if}
-            </figcaption>
-          </figure>
-        {/each}
-      </div>
+            </section>
+          {/each}
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -576,11 +718,123 @@
     opacity: 0.6;
   }
 
+  .sections {
+    display: flex;
+    flex-direction: column;
+    gap: 3rem;
+    margin-top: 2.4rem;
+  }
+
+  /* Невидима, но на месте: высота страницы не должна прыгать, когда кошелёк
+     придёт и список встанет по разделам. */
+  .sections {
+    transition: opacity 240ms ease;
+  }
+
+  .sections--waiting {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sections {
+      transition: none;
+    }
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 0 0 1.6rem;
+    font-weight: 400;
+  }
+
+  .section-toggle {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    padding: 0;
+    font: inherit;
+    color: #6f3b24;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+
+  /* Палец, а не мышь: заголовок раздела — единственное, за что его сворачивают,
+     и в семнадцать точек высотой в него не попасть. */
+  @media (pointer: coarse), (max-width: 640px) {
+    .section-toggle {
+      min-height: 2.5rem;
+    }
+  }
+
+  .section-toggle:focus-visible {
+    outline: 1px solid #6f3b24;
+    outline-offset: 4px;
+  }
+
+  .section-name {
+    font-size: 0.7rem;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+  }
+
+  .section-count {
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.9rem;
+    color: #8a6a55;
+  }
+
+  /* Стрелка не рисована: уголок из двух границ, как у всех свёрнутых мест. */
+  .section-mark {
+    align-self: center;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-right: 1px solid currentColor;
+    border-bottom: 1px solid currentColor;
+    transform: rotate(45deg) translate(-0.1rem, -0.1rem);
+    transition: transform 200ms ease;
+  }
+
+  .section-mark--shut {
+    transform: rotate(-45deg);
+  }
+
+  .section-rule {
+    flex: 1;
+    height: 1px;
+    background: #d8c6b1;
+  }
+
   .shelf {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
     gap: 2.6rem 1.8rem;
-    margin-top: 2.2rem;
+  }
+
+  /* Телефон: две карты в ряд, а не одна на весь экран. Карта умеет быть
+     узкой — полка и клетка боя уже меряют её по ширине, — и одна карта в
+     327 px заставляла листать через весь экран ради одной подписи. */
+  @media (max-width: 640px) {
+    .shelf {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1.8rem 0.9rem;
+    }
+
+    .label-name {
+      font-size: 0.9rem;
+    }
+  }
+
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   .stand {
@@ -616,9 +870,53 @@
   .label {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.3rem;
     margin-top: 0.9rem;
     text-align: center;
+  }
+
+  /* Одна строка с многоточием, а не перенос: ряд карт одной высоты, и подписи
+     под ними должны стоять на одной линии, а полное имя лежит в `title` и на
+     листе. */
+  .label-name {
+    overflow: hidden;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 1rem;
+    line-height: 1.3;
+    color: #34251c;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .label-kin {
+    overflow: hidden;
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #8a6a55;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .label-stats {
+    display: flex;
+    justify-content: center;
+    gap: 0.9rem;
+    min-height: 1.3rem;
+  }
+
+  .label-stat {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.85rem;
+    color: #5f4636;
+  }
+
+  .label-prices--short {
+    opacity: 0.55;
   }
 
   .label-prices {
@@ -721,17 +1019,4 @@
     letter-spacing: 0;
   }
 
-  .label-work {
-    font-family: Georgia, 'Fraunces', serif;
-    font-size: 0.85rem;
-    color: #34251c;
-    opacity: 0.6;
-    text-decoration: none;
-    border-bottom: 1px solid transparent;
-  }
-
-  .label-work:hover {
-    opacity: 1;
-    border-bottom-color: #d8c6b1;
-  }
 </style>

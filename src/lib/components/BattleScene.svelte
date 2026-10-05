@@ -308,7 +308,7 @@
     if (!trayShown || picked?.kind !== 'unit') return null;
     const at = cellOf(picked.id);
     if (!at) return null;
-    const col = along ? at.y + 1 : at.x + 1;
+    const col = along ? DEPTH - at.y : at.x + 1;
     const row = along ? at.x + 1 : at.y + 1;
     const cols = along ? DEPTH : WIDTH;
     const rows = along ? WIDTH : DEPTH;
@@ -891,6 +891,11 @@
       e.stopImmediatePropagation();
       return;
     }
+    if (logOpen) {
+      logOpen = false;
+      e.stopImmediatePropagation();
+      return;
+    }
     if (sheet) {
       sheet = null;
       e.stopImmediatePropagation();
@@ -1464,6 +1469,20 @@
     if (leafOpen) leafRead = true;
   }
 
+  /**
+   * Журнал в комнате этюда — шторка, а не колонна: колонна держала четверть
+   * ширины, а поле упирается в высоту окна, и каждая точка сбоку, отнятая у
+   * пустоты, — это точка, которой поле не получит. Шторка выезжает по значку
+   * в шапке; точка на значке говорит, что с прошлого взгляда что-то
+   * случилось, и гаснет, когда шторку открыли.
+   */
+  let logOpen = $state(false);
+  let logSeen = $state(0);
+  $effect(() => {
+    if (logOpen) logSeen = journal.length;
+  });
+  let logFresh = $derived(!logOpen && journal.length > logSeen);
+
   const MANA_GEMS_CAP = 10;
   let manaCap = $derived(Math.max(0, Math.min(MANA_GEMS_CAP, position.player.manaMax)));
   let manaLit = $derived(
@@ -1580,10 +1599,14 @@
 
   const rows = Array.from({ length: DEPTH }, (_, y) => y);
   const cols = Array.from({ length: WIDTH }, (_, x) => x);
-  /** Порядок клеток на экране. Движок не знает про это: x и y те же. */
+  /** Порядок клеток на экране. Движок не знает про это: x и y те же.
+   *  Вдоль комнаты своя половина стоит СЛЕВА (глубина идёт справа налево):
+   *  рука лежит в левой колонке, и между картой в руке и клеткой, куда её
+   *  кладут, не должно быть чужого поля. Тот же разворот повторяют поднос
+   *  (`trayAt`) и `stage()` в `battles.ts`: разойдутся — стрела полетит мимо. */
   let spots = $derived(
     along
-      ? cols.flatMap((x) => rows.map((y) => ({ x, y })))
+      ? cols.flatMap((x) => [...rows].reverse().map((y) => ({ x, y })))
       : rows.flatMap((y) => cols.map((x) => ({ x, y }))),
   );
 </script>
@@ -1696,7 +1719,7 @@
 {#snippet ownHand()}
   {#if hand.length}
     <p class="hand-label">{$t('battleHandYours')}</p>
-    <div class="hand">
+    <div class="hand" style="--n:{hand.length}">
       {#each hand as held, i (i)}
         {@const dto = dtoOf(held.name)}
         <button
@@ -1706,6 +1729,7 @@
           class="held held--mine"
           class:held--picked={picked?.kind === 'hand' && picked.index === i}
           class:held--dim={!playableHand.has(i)}
+          class:held--low={i > 0 && i >= hand.length / 2}
           style="--i:{i}; --n:{hand.length}; --arc:{(hand.length - 1) / 2
             - Math.abs(i - (hand.length - 1) / 2)}"
         >
@@ -1755,14 +1779,24 @@
 >
   {#if fill}
     <div class="crest">
+      <!-- Выход — значком: им пользуются один раз и не на ходу, а словами в
+           одиннадцать знаков он занимал угол шапки, который нужен полю. -->
       {#if onexit}
-        <button type="button" class="exit" onclick={onexit}>
-          <span class="exit-arrow" aria-hidden="true">←</span>
-          {$t('battleLeave')}
+        <button
+          type="button"
+          class="exit"
+          onclick={onexit}
+          aria-label={$t('battleLeave')}
+          title={$t('battleLeave')}
+        >
+          <BattleIcon name="door" size="1.25rem" weight={1.3} />
         </button>
       {:else}
         <span></span>
       {/if}
+      <!-- Ход, раунд и мана — одна плашка в одну строку: это одна строка
+           сведений («чей ход и чем за него платят»), и три бляхи на трёх
+           этажах съедали высоту, которой полю не хватает. -->
       <div class="crest-mark">
         <p class="crest-turn">
           {position.active === me ? $t('battleWhoseTurnYours') : $t('battleWhoseTurnKeeper')}
@@ -1771,8 +1805,21 @@
           {$t('battleRound')} {position.round}
           {@render roundMark()}
         </p>
+        {@render manaTrack()}
       </div>
-      {@render manaTrack()}
+      <button
+        type="button"
+        class="log-toggle"
+        class:log-toggle--open={logOpen}
+        aria-expanded={logOpen}
+        aria-controls="battle-log"
+        aria-label={$t('battleJournal')}
+        title={$t('battleJournal')}
+        onclick={() => (logOpen = !logOpen)}
+      >
+        <BattleIcon name="book" size="1.25rem" weight={1.3} />
+        {#if logFresh}<i class="log-toggle-dot" aria-hidden="true"></i>{/if}
+      </button>
     </div>
   {:else}
   <div class="strip">
@@ -2211,7 +2258,12 @@
   </div>
 
   {#if hasRail}
-  <aside class="aside">
+  <aside
+    class="aside"
+    class:aside--shut={fill && !logOpen}
+    id={fill ? 'battle-log' : undefined}
+    inert={fill && !logOpen}
+  >
     <!-- Карточка выбранного: спокойная и неподвижная, не всплывающая подсказка. -->
     {#if chosen}
       <div class="chosen">

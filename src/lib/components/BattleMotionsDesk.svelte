@@ -235,7 +235,8 @@
   let spots = $derived(
     along
       ? Array.from({ length: WIDTH }, (_, x) =>
-          Array.from({ length: DEPTH }, (_, y) => ({ x, y })),
+          // Глубина справа налево, как на странице: своя половина слева.
+          Array.from({ length: DEPTH }, (_, y) => ({ x, y: DEPTH - 1 - y })),
         ).flat()
       : Array.from({ length: DEPTH }, (_, y) =>
           Array.from({ length: WIDTH }, (_, x) => ({ x, y })),

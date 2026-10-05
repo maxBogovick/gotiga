@@ -7,6 +7,7 @@
   import { visitorBook } from '$lib/stores/visitor-book.svelte';
   import { visitorToken } from '$lib/visitorToken';
   import { knownReaderEmail } from '$lib/readerEmail';
+  import { CHANNEL_URL } from '$lib/channel';
   import type { GazetteNeighbor, TaleDoors } from '$lib/types/api';
   import LetterSlip from './LetterSlip.svelte';
   import TalePoll from './TalePoll.svelte';
@@ -60,6 +61,9 @@
   let bookError = $state('');
   let bookJustSigned = $state(false);
 
+  // Имя канала назвал сервер — берём его; не назвал, стоит тот, что известен
+  // сайту: у канала дома адрес один, и дверь не должна исчезать из-за настройки.
+  let channel = $derived(doors.telegram ?? CHANNEL_URL);
   let booked = $derived(visitorBook.signed && !!visitorBook.email.trim());
   // Записку пишет бот, с которым читатель начинал разговор, когда входил:
   // предложить её можно только вошедшему через Telegram.
@@ -246,7 +250,7 @@
   </div>
 
   <!-- Следующая небылица: письмом (книга дома) или в канале. -->
-  {#if doors.letters || doors.telegram}
+  {#if doors.letters || channel}
     <div class="part">
       <p class="kicker">{$t('talesNextKicker')}</p>
       <p class="rule">{$t('talesNextRule')}</p>
@@ -270,8 +274,8 @@
           />
         {/if}
       {/if}
-      {#if doors.telegram}
-        <a class="channel" href={doors.telegram} target="_blank" rel="noopener">
+      {#if channel}
+        <a class="channel" href={channel} target="_blank" rel="noopener noreferrer">
           {doors.letters ? $t('talesNextTelegramToo') : $t('talesNextTelegram')} →
         </a>
       {/if}
