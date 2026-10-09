@@ -11,6 +11,8 @@
   import { onMount, untrack } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { t, lang, type TranslationKey } from '$lib/i18n';
+  import BattleGroundMark from './BattleGroundMark.svelte';
+  import BattleGroundSigil from './BattleGroundSigil.svelte';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleIcon from '$lib/components/BattleIcon.svelte';
   import BattleSheet from '$lib/components/BattleSheet.svelte';
@@ -40,6 +42,11 @@
     motionWound,
     occasionOf,
     rulesInForce,
+    terrainLines,
+    GROUND_KEY,
+    GROUNDS,
+    GROUND_NAME,
+    GROUND_SHORT,
     stage,
     struckOf,
     WARD_MOTION,
@@ -110,8 +117,11 @@
     fill?: boolean;
   } = $props();
 
-  const WIDTH = 3;
-  const DEPTH = 6;
+  /** Величина поля этой партии: клеток поперёк и рядов от края до края.
+   *  Партия, начатая до ручки, приходит без поля — это 3 × 3 на половину. */
+  let WIDTH = $derived(match.state.field?.width ?? 3);
+  let HALF = $derived(match.state.field?.depth ?? 3);
+  let DEPTH = $derived(HALF * 2);
   /** Комната, в которой стол ложится вдоль: шесть портретов в ряд на более
    *  узкой — штампы. Совпадает с `.scene--along`. Полоса хода больше не ест
    *  тринадцать колонн слева, поэтому порог чуть ниже прежних 1100. */
@@ -193,6 +203,36 @@
   let byCell = $derived(
     new Map(position.board.map((s) => [`${s.cell.x},${s.cell.y}`, s.unit])),
   );
+  /** Местность поля, по клетке. */
+  /** Какие земли лежат на этом поле — по строке на род, в порядке `GROUNDS`
+   *  (сперва запрет, потом опасность, потом подмога). Легенда стоит рядом с
+   *  полем всегда, а не за кнопкой листка: правило, которое надо искать,
+   *  узнают, только споткнувшись о него. */
+  let legend = $derived(
+    GROUNDS.filter((g) => (position.terrain ?? []).some((t) => t.ground === g)),
+  );
+  let grounds = $derived(
+    new Map((position.terrain ?? []).map((t) => [`${t.cell.x},${t.cell.y}`, t.ground] as const)),
+  );
+  /** Прорыв в этой партии: дальние ряды — цели, и они помечены. */
+  let edges = $derived(!!position.rules?.breakthrough);
+  /** Кто закончил ход своей стороны на чужом краю: если простоит ход
+   *  противника — партия его. Помечен рамкой, а не словом: стоящий там виден. */
+  let poised = $derived(new Set(edges ? (position.poised ?? []) : []));
+  /** Кто решил партию прорывом. Читается из доски, а не из события: события
+   *  есть только у хода, которым партия кончилась, а печать видна и после
+   *  перезагрузки. */
+  let breachedBy = $derived.by<number | null>(() => {
+    const o = position.outcome;
+    if (!edges || (o !== 'player' && o !== 'keeper')) return null;
+    const goal = o === 'player' ? 0 : DEPTH - 1;
+    for (const id of position.poised ?? []) {
+      const u = position.units[id];
+      const at = position.board.find((s) => s.unit === id)?.cell;
+      if (u && u.owner === o && at?.y === goal) return id;
+    }
+    return null;
+  });
   const unitAt = (x: number, y: number): BattleUnit | null => {
     const id = byCell.get(`${x},${y}`);
     return id === undefined ? null : (position.units[id] ?? null);
@@ -1027,6 +1067,9 @@
       pos.board = pos.board.map((s) =>
         s.unit === e.moved.unit ? { ...s, cell: e.moved.to } : s,
       );
+    } else if ('fell' in e) {
+      // Тело переезжает на клетку оврага и там оседает: `died` идёт следом.
+      pos.board = pos.board.map((s) => (s.unit === e.fell.unit ? { ...s, cell: e.fell.to } : s));
     } else if ('damaged' in e) {
       const u = pos.units[e.damaged.target];
       if (u) {
@@ -1121,7 +1164,7 @@
 
     // Шаг — не движение из свода, а перекладка: тело переезжает на другую
     // клетку, и жеста для этого в словаре нет.
-    if ('moved' in e) {
+    if ('moved' in e || 'fell' in e) {
       transcribe(pos, e);
       live = copy(pos);
       if (!calm) await sleep(BEAT_MOVED);
@@ -1240,7 +1283,7 @@
     told = [];
 
     for (const e of own) {
-      if ('turnEnded' in e || 'finished' in e) {
+      if ('turnEnded' in e || 'breached' in e || 'finished' in e) {
         transcribe(pos, e);
         live = copy(pos);
         told = [...told, e];
@@ -1253,7 +1296,7 @@
     for (const e of tail) {
       // Пауза — между тем, что видно. Конец хода и итог ничего не показывают,
       // и полсекунды тишины перед ними человек читает как задержку, а не как ритм.
-      if (!('turnEnded' in e) && !('finished' in e)) {
+      if (!('turnEnded' in e) && !('breached' in e) && !('finished' in e)) {
         await sleep(REST);
         if (run !== token) return;
       }
@@ -1307,6 +1350,7 @@
   const STEP_KEY: Record<string, TranslationKey> = {
     immunity: 'battleStepImmunity',
     pointBlank: 'battleStepPointBlank',
+    cover: 'battleStepCover',
     attackerBless: 'battleStepAttackerBless',
     attackerCurse: 'battleStepAttackerCurse',
     targetVulnerable: 'battleStepTargetVulnerable',
@@ -1404,6 +1448,8 @@
         );
       if ('zoned' in e) return bare($t('battleLogZoned'), 'charm');
       if ('died' in e) return bare(`${nameOf(e.died.target)} — ${$t('battleLogDied')}`, 'fall');
+      if ('fell' in e) return bare(`${nameOf(e.fell.unit)} — ${$t('battleLogFell')}`, 'fall');
+      if ('breached' in e) return bare(`${nameOf(e.breached.unit)} — ${$t('battleLogBreached')}`, 'move');
       if ('immune' in e) return bare(`${nameOf(e.immune.target)} — ${$t('battleLogImmune')}`, 'ward');
       if ('turnEnded' in e)
         return bare(
@@ -1463,7 +1509,7 @@
    * со второго раза.
    */
   let leafCalls = $derived(openingLeft === 0 && !leafRead);
-  let leafLines = $derived(rulesInForce(position.rules));
+  let leafLines = $derived([...rulesInForce(position.rules), ...terrainLines(position.terrain)]);
   function openLeaf() {
     leafOpen = !leafOpen;
     if (leafOpen) leafRead = true;
@@ -1597,8 +1643,8 @@
     return () => ro.disconnect();
   });
 
-  const rows = Array.from({ length: DEPTH }, (_, y) => y);
-  const cols = Array.from({ length: WIDTH }, (_, x) => x);
+  let rows = $derived(Array.from({ length: DEPTH }, (_, y) => y));
+  let cols = $derived(Array.from({ length: WIDTH }, (_, x) => x));
   /** Порядок клеток на экране. Движок не знает про это: x и y те же.
    *  Вдоль комнаты своя половина стоит СЛЕВА (глубина идёт справа налево):
    *  рука лежит в левой колонке, и между картой в руке и клеткой, куда её
@@ -1872,7 +1918,11 @@
     <!-- Домашняя форма приходит СВЕРХУ, со сцены: гнездо руки и клетка доски
          обязаны быть одной формы, а два объявления однажды разойдутся. -->
     <div class="well">
-    <div class="field" bind:this={fieldEl}>
+    <div
+      class="field"
+      bind:this={fieldEl}
+      style="--cols:{along ? DEPTH : WIDTH}; --rows:{along ? WIDTH : DEPTH}"
+    >
       <div class="cloth">
       <div class="face">
       <div class="grid">
@@ -1881,6 +1931,7 @@
           {@const open2 = openCells.has(`${x},${y}`)}
           {@const spot = openSpots.get(`${x},${y}`)}
           {@const burn = zoneAt(x, y)}
+          {@const ground = grounds.get(`${x},${y}`)}
           {@const target = here ? openUnits.get(here.id)?.mark : undefined}
           {@const dto = here ? dtoOf(here.card.name) : null}
           {@const willTake = here ? toldMine.get(here.id) : undefined}
@@ -1893,7 +1944,8 @@
             onpointerleave={forget}
             onfocus={() => ponder(actionAt(x, y))}
             onblur={forget}
-            aria-label={here ? titleOf(here.card.name) : `${x},${y}`}
+            aria-label={`${here ? titleOf(here.card.name) : `${x},${y}`}${ground ? ` — ${$t(GROUND_KEY[ground])}` : ''}`}
+            title={ground ? $t(GROUND_KEY[ground]) : undefined}
             class="cell"
             class:cell--omen={!!willGet}
             class:cell--open={open2}
@@ -1904,9 +1956,20 @@
             class:cell--spot={!!spot}
             class:cell--burn={!!burn}
             class:cell--live={mine && here?.owner === me && ready.has(here.id)}
-            class:cell--theirs={y < 3}
-            class:cell--mine={y >= 3}
+            class:cell--theirs={y < HALF}
+            class:cell--mine={y >= HALF}
+            class:cell--poised={!!here && poised.has(here.id)}
           >
+              {#if ground}
+                <!-- Местность. Под телом: на укрытии и в топи стоят, а стена
+                     пуста по правилу, и её можно закрасить целиком. -->
+                <BattleGroundMark {ground} occupied={!!here} dark={fill} />
+              {/if}
+              {#if edges && (y === 0 || y === DEPTH - 1)}
+                <!-- Ряд прорыва. Отдельным слоем, а не тенью клетки: тень
+                     клетки в тёмной комнате занята её собственным светом. -->
+                <i class="edge" aria-hidden="true"></i>
+              {/if}
               {#if burn}
                 <!-- Опасная клетка: та же штриховка, что у сукна, только
                      гуще, и число — сколько снимет с того, кто здесь
@@ -2177,6 +2240,21 @@
     <!-- Своя рука и ход — ближний край стола: веер карт и фраза хода
          в одной полосе, чтобы оба оставались в окне. -->
     <div class="foot">
+      {#if legend.length}
+        <!-- Легенда местности: знак, имя и правило коротко. Знак тот же, что в
+             углу клетки, — по нему клетку и легенду связывают взглядом. -->
+        <section class="ground-legend" aria-label={$t('battleGroundLegend')}>
+          <p class="ground-legend-head">{$t('battleGroundLegend')}</p>
+          <ul class="ground-legend-list">
+            {#each legend as g (g)}
+              <li>
+                <BattleGroundSigil ground={g} size="1.15em" />
+                <span><b>{$t(GROUND_NAME[g])}</b> — {$t(GROUND_SHORT[g])}</span>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
       {#if fill}
         <div class="prompt">
           <div class="glass" class:glass--run={playing} aria-hidden="true"></div>
@@ -2436,6 +2514,9 @@
                 ? $t('battleWonByKeeper')
                 : $t('battleDrawn')}
           </p>
+          {#if breachedBy !== null}
+            <p class="seal-line">{$t('battleSealBreached')} — {nameOf(breachedBy)}</p>
+          {/if}
           {#if match.rewardDust > 0}
             <p class="seal-dust">{match.rewardDust} {$t('battleDustGranted')}</p>
           {/if}
@@ -2683,7 +2764,7 @@
   }
 
   .scene--along .grid {
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(var(--cols, 6), 1fr);
   }
 
   .scene--along .midline {
@@ -2782,12 +2863,12 @@
   }
 
   .scene.scene--fill .grid {
-    grid-template-rows: repeat(6, minmax(0, 1fr));
+    grid-template-rows: repeat(var(--rows, 6), minmax(0, 1fr));
   }
 
   .scene.scene--fill.scene--along .grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    grid-template-rows: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--rows, 3), minmax(0, 1fr));
   }
 
   .scene.scene--fill .cell {
@@ -2975,6 +3056,44 @@
     display: none;
   }
 
+  /* Легенда местности. На бумаге — строка под полем; в тёмной комнате её место
+     и краски назначает `battle-chamber.css`. */
+  .ground-legend {
+    margin: 0.4rem 0;
+    font-family: Georgia, 'Fraunces', serif;
+    color: #5f4636;
+  }
+
+  .ground-legend-head {
+    margin: 0 0 0.25rem;
+    font-size: 0.66rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #8a6a55;
+  }
+
+  .ground-legend-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.78rem;
+    line-height: 1.3;
+  }
+
+  .ground-legend-list li {
+    display: flex;
+    gap: 0.4rem;
+    align-items: flex-start;
+  }
+
+  .ground-legend-list b {
+    font-weight: 600;
+    text-transform: capitalize;
+  }
+
   .ledger-turn {
     margin: 0;
     font-size: 1.15rem;
@@ -3011,7 +3130,7 @@
   .grid {
     position: relative;
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(var(--cols, 3), 1fr);
     gap: 5px;
   }
 
@@ -3242,6 +3361,32 @@
   .cell--omen {
     outline: 1px dashed rgba(198, 95, 60, 0.45);
     outline-offset: -3px;
+  }
+
+  /* Ряд прорыва: тонкая вторая кромка внутри клетки. Не цвет и не пунктир —
+     пунктир занят предвестием, цвет — целями хода. */
+  .edge {
+    position: absolute;
+    inset: 4px;
+    z-index: 0;
+    border: 1px solid rgba(111, 59, 36, 0.24);
+    pointer-events: none;
+  }
+
+  /* В тёмной комнате у клетки уже есть своя одинарная рамка, и вторая
+     одинарная с ней сливалась. Двойной линии на поле нет больше нигде. */
+  .scene.scene--fill .edge {
+    z-index: 1;
+    inset: 7px;
+    border: 3px double rgba(212, 176, 106, 0.55);
+  }
+
+  /* Тело на краю: та же кромка, сплошнее и в цвет акцента, и поверх карты —
+     иначе её закрыло бы само тело, ради которого она нарисована. */
+  .cell--poised .edge {
+    z-index: 3;
+    inset: -3px;
+    border: 1.5px solid rgba(198, 95, 60, 0.75);
   }
 
   /* Строка под печатью. Тише самой печати: она не хвалит, она сообщает. */

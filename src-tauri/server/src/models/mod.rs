@@ -4455,6 +4455,14 @@ pub struct ChallengeSetup {
     /// 43 % на 98 %. До этого поля ни одна из них этюду доступна не была.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rules: Option<battle_core::Rules>,
+    /// Местность: стены, укрытия, топи. Часть шаблона по той же причине, что
+    /// и правила, — «здесь стена» говорит об этюде то же, что «здесь ведьма».
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terrain: Vec<battle_core::Tile>,
+    /// Величина поля: клеток поперёк и вглубь у каждой половины. Не названная —
+    /// 3 × 3, и тогда не пишется вовсе.
+    #[serde(default, skip_serializing_if = "battle_core::Field::is_default")]
+    pub field: battle_core::Field,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

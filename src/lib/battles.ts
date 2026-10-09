@@ -37,9 +37,15 @@ import type {
   BattleFrame,
   BattleFrameMode,
   BattleRules,
+  BattleGround,
+  BattleTile,
+  BattleField,
   BattleLayout,
   CardAbility,
   CardTrait,
+  FreeMark,
+  FreeMarkAlign,
+  FreeSlot,
   SheetBand,
   SheetRow,
   SheetShow,
@@ -937,9 +943,14 @@ export function moveSheetRow(
  * не снята», а не ступень `cell`/`cellOnly`.
  */
 export function cellPrints(
-  frame: Pick<BattleFrame, "sheet">,
+  frame: BattleFrame,
   slot: SheetSlot,
 ): boolean {
+  // На готовой иллюстрации значок, назначенный меткой, решает сам (§ 9.10).
+  const kind: BadgeKind | null =
+    slot === "healthMark" ? "health" : slot === "cost" || slot === "power" ? slot : null;
+  const marked = kind ? freeBadgeShown(frame, kind) : null;
+  if (marked != null) return marked;
   return sheetOf(frame).some(
     (row) => row.slot === slot && row.show !== "never",
   );
@@ -1551,7 +1562,72 @@ export function badgeExtent(
  * отступ под плашку, которой нет.
  */
 export function badgeWearsMark(frame: BattleFrame, kind: BadgeKind): boolean {
-  return !badgePlate(frame, kind);
+  // На готовой иллюстрации знак снимают руками (`glyph: false`) — там, где он
+  // уже нарисован на картинке. По умолчанию он есть: пустой медальон с цифрой
+  // не говорит, стоимость это или сила.
+  return !badgePlate(frame, kind) && glyphMode(frame, kind) === "beside";
+}
+
+// ── Знак числа отдельно от числа ────────────────────────────────────────────
+//
+// На готовой картинке под знак часто нарисовано своё место — щит над цифрой,
+// сердце сбоку, — и знак, приклеенный к цифре, туда не встаёт. Поэтому у
+// знака три положения: нет его, рядом с цифрой (как везде на сайте) и
+// отдельно — тогда у него своё место и своя величина, и таскают его сам по
+// себе. Хранится в метке числа (`glyphX`/`glyphY`/`glyphSize`), а не в
+// отдельной: знак принадлежит числу, и снятое число уносит свой знак.
+
+export type GlyphSlot = BadgeKind | FreeStatSlot;
+export type GlyphMode = "off" | "beside" | "apart";
+
+/** Кегль отдельного знака при множителе 1, в cqi. */
+export const FREE_GLYPH_BASE = 7;
+
+export function glyphMode(frame: BattleFrame, slot: GlyphSlot): GlyphMode {
+  const own = frame.freeMarks?.[slot];
+  if (own?.glyph === false) return "off";
+  if (isFreeform(frame) && finite(own?.glyphX) != null && finite(own?.glyphY) != null) {
+    return "apart";
+  }
+  return "beside";
+}
+
+/** Где и какой величины стоит отдельный знак; `null` — он не отдельно. */
+export function freeGlyphAt(
+  frame: BattleFrame,
+  slot: GlyphSlot,
+): { x: number; y: number; size: number } | null {
+  if (glyphMode(frame, slot) !== "apart") return null;
+  const own = frame.freeMarks?.[slot] ?? {};
+  const size = finite(own.glyphSize) || 1;
+  return {
+    x: own.glyphX as number,
+    y: own.glyphY as number,
+    size: Math.min(FREE_MARK_SIZE_MAX, Math.max(FREE_MARK_SIZE_MIN, size)),
+  };
+}
+
+/**
+ * Перевести знак в положение. Отделённый встаёт чуть левее числа — рядом с
+ * тем, к чему относится, но уже своей вещью, которую видно и можно взять;
+ * `from` — где число стоит сейчас.
+ */
+export function setGlyphMode(
+  target: BattleFrame | FrameOverride,
+  slot: GlyphSlot,
+  mode: GlyphMode,
+  from: { x: number; y: number },
+): void {
+  if (mode === "off") {
+    setFreeMark(target, slot, { glyph: false });
+    return;
+  }
+  if (mode === "beside") {
+    setFreeMark(target, slot, { glyph: undefined, glyphX: undefined, glyphY: undefined, glyphSize: undefined });
+    return;
+  }
+  const x = from.x > 15 ? from.x - 9 : from.x + 9;
+  setFreeMark(target, slot, { glyph: undefined, glyphX: x, glyphY: from.y });
 }
 export const BADGE_WEIGHTS = [300, 400, 500, 600, 700, 800];
 
@@ -2018,6 +2094,389 @@ export function isFreeform(frame: BattleFrame): boolean {
   return frame.frameMode === "freeform";
 }
 
+/** «Готовая карта»: картинка несёт всё, включая фотографию работы, и второй
+ *  фотографии под ней не кладут. */
+export function isBaked(frame: BattleFrame): boolean {
+  return isFreeform(frame) && !!frame.artBaked;
+}
+
+// ── Метки поверх иллюстрации (`freeform`) ─────────────────────────────────
+//
+// Слова и числа карты, поставленные туда, где под них на картинке оставлено
+// место. Одна таблица на все: место, величина, ширина строки, шрифт, чернила.
+// Значки стоимости, силы и здоровья стоят в том же списке ради одного поля —
+// `shown`: место и вид у них свои (§ 9.9), второй способ их ставить разошёлся
+// бы с первым.
+
+export const FREE_TEXT_SLOTS = [
+  "title",
+  "kind",
+  "effect",
+  "traits",
+  "lore",
+] as const satisfies readonly FreeSlot[];
+export const FREE_STAT_SLOTS = [
+  "mana",
+  "armor",
+  "ward",
+  "reach",
+  "step",
+  "speed",
+  "mend",
+] as const satisfies readonly FreeSlot[];
+export type FreeTextSlot = (typeof FREE_TEXT_SLOTS)[number];
+export type FreeStatSlot = (typeof FREE_STAT_SLOTS)[number];
+/** Метки, которые печатает сама карта. Значки рисует свой слой. */
+export type FreePrintedSlot = FreeTextSlot | FreeStatSlot;
+export const FREE_PRINTED_SLOTS: FreePrintedSlot[] = [
+  ...FREE_TEXT_SLOTS,
+  ...FREE_STAT_SLOTS,
+];
+/** Все места в порядке, в котором их перечисляет стол. Зеркало в
+ *  `battles.rs` (`FREE_SLOTS`), менять вместе. */
+export const FREE_SLOTS: FreeSlot[] = [
+  ...FREE_TEXT_SLOTS,
+  "cost",
+  "power",
+  "health",
+  ...FREE_STAT_SLOTS,
+];
+
+export function isFreeStat(slot: FreeSlot): slot is FreeStatSlot {
+  return (FREE_STAT_SLOTS as readonly FreeSlot[]).includes(slot);
+}
+
+export function isFreeBadge(slot: FreeSlot): slot is BadgeKind {
+  return slot === "cost" || slot === "power" || slot === "health";
+}
+
+/** Имя места — для стола. У чисел это то же слово, что везде (`statLabel`). */
+export function freeMarkLabel(slot: FreeSlot): TranslationKey {
+  switch (slot) {
+    case "title": return "adminBattlesTitle";
+    case "kind": return "adminBattlesReadyKind";
+    case "effect": return "adminBattlesEffect";
+    case "traits": return "adminBattlesTraits";
+    case "lore": return "adminBattlesLore";
+    default: return statLabel(slot);
+  }
+}
+
+/** Пределы. Зеркало в `battles.rs`, менять вместе. */
+export const FREE_MARK_SIZE_MIN = 0.3;
+export const FREE_MARK_SIZE_MAX = 4;
+export const FREE_MARK_WIDTH_MIN = 10;
+export const FREE_MARK_WIDTH_MAX = 100;
+
+interface FreeHome {
+  x: number;
+  y: number;
+  /** Ширина строки, % карты. Ноль — по содержимому (числа). */
+  width: number;
+  /** Кегль при множителе 1, в cqi. */
+  base: number;
+  italic: boolean;
+  caps: boolean;
+  shown: boolean;
+}
+
+/**
+ * Где метка встаёт, пока её не двигали, и какой она величины. Имя и
+ * приписка видны сразу — так было и до меток; остальное включают на столе.
+ * Числа разведены по краям, чтобы включённые разом не легли друг на друга.
+ */
+const FREE_HOME: Record<FreePrintedSlot, FreeHome> = {
+  title: { x: DEFAULT_FREE_NAME_X, y: DEFAULT_FREE_NAME_Y, width: 84, base: 7, italic: false, caps: false, shown: true },
+  kind: { x: 50, y: 53, width: 74, base: 3.4, italic: false, caps: true, shown: false },
+  effect: { x: 50, y: 72, width: 76, base: 4.2, italic: false, caps: false, shown: false },
+  traits: { x: 50, y: 66, width: 76, base: 3.8, italic: false, caps: false, shown: false },
+  lore: { x: DEFAULT_FREE_LORE_X, y: DEFAULT_FREE_LORE_Y, width: 76, base: 4.4, italic: true, caps: false, shown: true },
+  mana: { x: 86, y: 12, width: 0, base: 6.6, italic: false, caps: false, shown: false },
+  armor: { x: 14, y: 30, width: 0, base: 6.6, italic: false, caps: false, shown: false },
+  ward: { x: 86, y: 30, width: 0, base: 6.6, italic: false, caps: false, shown: false },
+  reach: { x: 14, y: 46, width: 0, base: 6.6, italic: false, caps: false, shown: false },
+  step: { x: 86, y: 46, width: 0, base: 6.6, italic: false, caps: false, shown: false },
+  speed: { x: 14, y: 62, width: 0, base: 6.6, italic: false, caps: false, shown: false },
+  mend: { x: 86, y: 62, width: 0, base: 6.6, italic: false, caps: false, shown: false },
+};
+
+/** Где метка встаёт, пока её не двигали. */
+export function freeHomeAt(slot: FreePrintedSlot): { x: number; y: number } {
+  return { x: FREE_HOME[slot].x, y: FREE_HOME[slot].y };
+}
+
+/** Чернила, которые читаются на картинке: светлые там, где она тёмная, и
+ *  тёмные там, где светлая. Пара домашняя — бумага и текст сайта. */
+export const READY_INK_DARK = "#34251c";
+export const READY_INK_LIGHT = "#f4ead8";
+
+/**
+ * Какие чернила видны в этой точке картинки.
+ *
+ * Метку ставят на нарисованную плашку, и цвет текста «как у ранга» — это
+ * цвет, мерянный по чужой картинке: тёмный текст на тёмной резьбе не виден,
+ * и хранитель тыкал бы по карте наугад. Поэтому чернила выбирает сама
+ * картинка: средняя светлота пятна вокруг метки (±6 % по ширине, ±3 % по
+ * высоте) решает, светлые они или тёмные. Картинка уменьшается до 100 × 140
+ * — для среднего по пятну этого довольно, и проход ничего не стоит.
+ *
+ * `null` — картинку прочитать не удалось (не загрузилась, чужой адрес без
+ * разрешения на чтение): тогда остаются чернила ранга, а не догадка.
+ */
+export async function pictureInks(
+  source: Blob | string,
+): Promise<((x: number, y: number) => string) | null> {
+  try {
+    let picture: CanvasImageSource;
+    if (typeof source === "string") {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = source;
+      await image.decode();
+      picture = image;
+    } else {
+      picture = await createImageBitmap(source);
+    }
+    const W = 100;
+    const H = 140;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const pen = canvas.getContext("2d", { willReadFrequently: true });
+    if (!pen) return null;
+    pen.drawImage(picture, 0, 0, W, H);
+    const pixels = pen.getImageData(0, 0, W, H).data;
+    const linear = (c: number) => {
+      const v = c / 255;
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    return (x: number, y: number) => {
+      const x0 = Math.max(0, Math.floor(((x - 6) / 100) * W));
+      const x1 = Math.min(W - 1, Math.ceil(((x + 6) / 100) * W));
+      const y0 = Math.max(0, Math.floor(((y - 3) / 100) * H));
+      const y1 = Math.min(H - 1, Math.ceil(((y + 3) / 100) * H));
+      let sum = 0;
+      let count = 0;
+      for (let row = y0; row <= y1; row++) {
+        for (let col = x0; col <= x1; col++) {
+          const at = (row * W + col) * 4;
+          const alpha = pixels[at + 3] / 255;
+          // Прозрачное читается как бумага сайта под картой — светлое.
+          const lum =
+            0.2126 * linear(pixels[at]) + 0.7152 * linear(pixels[at + 1]) + 0.0722 * linear(pixels[at + 2]);
+          sum += lum * alpha + 0.87 * (1 - alpha);
+          count++;
+        }
+      }
+      // 0.18 — середина по контрасту между двумя чернилами, а не 0.5: глаз
+      // мерит светлоту не линейно, и «серое на вид» лежит около пятой части.
+      return count && sum / count < 0.18 ? READY_INK_LIGHT : READY_INK_DARK;
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Метка, разрешённая до конца: всё, что нужно, чтобы её нарисовать. */
+export interface FreeMarkLook {
+  x: number;
+  y: number;
+  size: number;
+  width: number;
+  align: FreeMarkAlign;
+  /** Начертание, id из `SITE_FONTS`. Пусто — шрифт карты. */
+  font: string;
+  ink: string;
+  bold: boolean;
+  italic: boolean;
+  caps: boolean;
+  base: number;
+  shown: boolean;
+  /** Знак рядом с числом. Только у чисел; у слов всегда `false`. */
+  glyph: boolean;
+}
+
+function finite(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Как метка выглядит на этой раме.
+ *
+ * Лестница отката одна: своё поле метки → у имени и приписки прежние поля
+ * (`freeName*`, `titleFont`/`titleInk`, `freeLore*`), которыми рама
+ * пользовалась до меток → дом метки. Прежние поля только ЧИТАЮТСЯ: пишет
+ * стол всегда в `freeMarks`, иначе у одной вещи было бы два дома.
+ */
+export function freeMarkOf(frame: BattleFrame, slot: FreePrintedSlot): FreeMarkLook {
+  const own: FreeMark = frame.freeMarks?.[slot] ?? {};
+  const home = FREE_HOME[slot];
+  // У готовой карты прежних полей нет вовсе: они мерены по картинке ранга, а
+  // на этой картинке место под имя нарисовано в другом месте и другим цветом.
+  const legacy = isBaked(frame)
+    ? { x: null, y: null, size: null, font: "", ink: "" }
+    : slot === "title"
+      ? {
+          x: finite(frame.freeNameX),
+          y: finite(frame.freeNameY),
+          size: finite(frame.freeNameSize),
+          font: frame.titleFont ?? "",
+          ink: frame.titleInk ?? "",
+        }
+      : slot === "lore"
+        ? {
+            x: finite(frame.freeLoreX),
+            y: finite(frame.freeLoreY),
+            size: finite(frame.freeLoreSize),
+            font: frame.freeLoreFont ?? "",
+            ink: frame.freeLoreInk ?? "",
+          }
+        : { x: null, y: null, size: null, font: "", ink: "" };
+  const size = finite(own.size) || legacy.size || 1;
+  const width = finite(own.width) ?? home.width;
+  return {
+    x: finite(own.x) ?? legacy.x ?? home.x,
+    y: finite(own.y) ?? legacy.y ?? home.y,
+    size: Math.min(FREE_MARK_SIZE_MAX, Math.max(FREE_MARK_SIZE_MIN, size)),
+    width: width ? Math.min(FREE_MARK_WIDTH_MAX, Math.max(FREE_MARK_WIDTH_MIN, width)) : 0,
+    align: own.align ?? "center",
+    font: own.font?.trim() || legacy.font.trim(),
+    ink: own.ink?.trim() || legacy.ink.trim() || frame.ink,
+    bold: own.bold ?? false,
+    italic: own.italic ?? home.italic,
+    caps: home.caps,
+    base: home.base,
+    shown: own.shown ?? home.shown,
+    glyph: isFreeStat(slot) ? glyphMode(frame, slot) === "beside" : false,
+  };
+}
+
+/** Стиль метки одной строкой — для карты, единственного её отрисовщика. */
+export function freeMarkStyle(look: FreeMarkLook): string {
+  return [
+    `left:${look.x}%`,
+    `top:${look.y}%`,
+    look.width ? `width:${look.width}%` : "",
+    `--fm-size:${(look.base * look.size).toFixed(3)}cqi`,
+    `text-align:${look.align}`,
+    `color:${look.ink}`,
+    look.font ? `font-family:${fontStack(look.font)}` : "",
+    `font-weight:${look.bold ? 700 : 400}`,
+    `font-style:${look.italic ? "italic" : "normal"}`,
+  ]
+    .filter(Boolean)
+    .join(";");
+}
+
+/**
+ * Значок на готовой иллюстрации: назначенное меткой, иначе `null` — и тогда
+ * решает опись, как решала до меток. Назначенное решает на любой величине
+ * карты: место под число нарисовано на самой картинке.
+ */
+export function freeBadgeShown(frame: BattleFrame, kind: BadgeKind): boolean | null {
+  if (!isFreeform(frame)) return null;
+  return frame.freeMarks?.[kind]?.shown ?? null;
+}
+
+/** Записать в метку. Пустое (`undefined`) снимает поле — метка вернётся к
+ *  откату, а не запомнит «ничего» как выбор. */
+export function setFreeMark(
+  target: BattleFrame | FrameOverride,
+  slot: FreeSlot,
+  patch: Partial<Record<keyof FreeMark, FreeMark[keyof FreeMark] | undefined>>,
+): void {
+  const marks = (target.freeMarks ??= {});
+  const own = (marks[slot] ??= {}) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) delete own[key];
+    else own[key] = value;
+  }
+  if (!Object.keys(own).length) delete marks[slot];
+}
+
+/** Отношение сторон, которое считается «той же формой», что у карты. */
+export const READY_ASPECT_SLACK = 0.03;
+
+/**
+ * Наряд «Готовой карты» для только что загруженной картинки.
+ *
+ * Прежний наряд готовой карты переживает замену картинки целиком — места,
+ * шрифты, всё, что поставлено руками: картинку перерисовали, а место под
+ * имя на ней то же. С чужого наряда (своя рамка, пресет) не берётся ничего.
+ * Значки — голая цифра (`none`) со знаком рядом: подложка нарисована на
+ * картинке, а что значит число, говорит знак (снимается в панели значка, если
+ * на картинке нарисован и он). Места и чернила назначены
+ * явно, а не взяты у ранга: ранговые мерены по чужой картинке, а голая цифра
+ * в чернилах по умолчанию — бумажная, то есть светлая по светлому. `ink` —
+ * чернила ранга, те же, в которых по умолчанию печатаются слова.
+ */
+export function readyCardDress(
+  url: string,
+  before: FrameOverride | null,
+  ink: string,
+  inkAt: ((x: number, y: number) => string) | null = null,
+): FrameOverride {
+  if (before?.frameMode === "freeform" && before.artBaked) {
+    return { ...before, frameImage: url };
+  }
+  const dress: FrameOverride = {
+    frameMode: "freeform",
+    artBaked: true,
+    frameImage: url,
+    frameScaleX: 1,
+    frameScaleY: 1,
+    insetTop: 0,
+    insetRight: 0,
+    insetBottom: 0,
+    insetLeft: 0,
+    layout: "corners",
+    costShape: "none",
+    powerShape: "none",
+    healthShape: "none",
+    costInk: ink,
+    powerInk: ink,
+    healthInk: ink,
+    costX: DEFAULT_COST_X,
+    costY: DEFAULT_COST_Y,
+    powerX: DEFAULT_POWER_X,
+    powerY: DEFAULT_POWER_Y,
+    healthX: DEFAULT_COST_X,
+    healthY: DEFAULT_POWER_Y,
+    freeMarks: {
+      title: { shown: true },
+      effect: { shown: true },
+      lore: { shown: false },
+      cost: { shown: true },
+      power: { shown: true },
+      health: { shown: true },
+    },
+  };
+  if (inkAt) inkByPicture(dress, inkAt);
+  return dress;
+}
+
+/**
+ * Перекрасить слова и числа наряда под картинку — каждую метку и каждый
+ * значок по тому месту, где они стоят СЕЙЧАС. Пишет поверх выбранного
+ * руками: это кнопка «подобрать», а не умолчание.
+ */
+export function inkByPicture(
+  dress: FrameOverride,
+  inkAt: (x: number, y: number) => string,
+): void {
+  for (const slot of FREE_PRINTED_SLOTS) {
+    const own = dress.freeMarks?.[slot];
+    const home = FREE_HOME[slot];
+    setFreeMark(dress, slot, { ink: inkAt(own?.x ?? home.x, own?.y ?? home.y) });
+  }
+  for (const kind of BADGE_KINDS) {
+    const keys = BADGE_FIELDS[kind];
+    const x = (dress[keys.x] as number | null | undefined) ?? keys.homeX;
+    const y = (dress[keys.y] as number | null | undefined) ?? keys.homeY;
+    (dress as Record<string, unknown>)[keys.ink] = inkAt(x, y);
+  }
+}
+
 /**
  * Every value the card's CSS reads, in one place.
  *
@@ -2082,14 +2541,6 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     // ровно то, ради чего она их считает.
     "--type-scale": String(clampScale(frame.typeScale, 0.75, 1.5)),
     "--ink-fade": String(clampScale(frame.inkFade, 0.5, 1.6)),
-    // `freeform` — вольный текст. Место читает сама разметка (это доли
-    // карты, не CSS), а здесь только то, что можно выразить каскадом: шрифт,
-    // чернила, кегль. Пустая приписка — тот же дом, что и у имени: обычный
-    // шрифт карты, цвет `--ink`.
-    "--free-name-size": String(clampScale(frame.freeNameSize, 0.5, 4)),
-    "--free-lore-face": frame.freeLoreFont ? fontStack(frame.freeLoreFont) : "inherit",
-    "--free-lore-ink": frame.freeLoreInk?.trim() || frame.ink,
-    "--free-lore-size": String(clampScale(frame.freeLoreSize, 0.5, 4)),
   };
 }
 
@@ -2173,7 +2624,9 @@ function lineInLang(own: string | null | undefined, lang: Lang): string {
   return s;
 }
 
-function mostlyCyrillic(s: string): boolean {
+/** Больше половины букв — кириллица. Такой текст в английском поле карта не
+ *  печатает (`lineInLang`), и стол обязан сказать об этом словами. */
+export function mostlyCyrillic(s: string): boolean {
   const letters = [...s].filter((ch) => /\p{L}/u.test(ch));
   if (!letters.length) return false;
   const cyr = letters.filter((ch) => /\p{Script=Cyrillic}/u.test(ch)).length;
@@ -4801,6 +5254,7 @@ export const HOUSE_RULES: BattleRules = {
   maxRounds: 12,
   longShotPower: 25,
   pointBlankPower: 50,
+  breakthrough: false,
 };
 
 /** Одно отличие правил от домашних: чем сказать и какое при нём число. */
@@ -4839,6 +5293,7 @@ export function rulesInForce(rules: BattleRules | null | undefined): RuleApart[]
   if (rules.pointBlankPower < 100) say("battleRulePointBlank", rules.pointBlankPower);
   if (rules.longShotPower < 100) say("battleRuleLongShot", rules.longShotPower);
   if (rules.secondSideCoin > 0) say("battleRuleCoin", rules.secondSideCoin);
+  if (rules.breakthrough) say("battleRuleBreakthrough");
   say("battleRuleRounds", rules.maxRounds);
 
   return out;
@@ -4913,7 +5368,86 @@ export function rulesApart(rules: BattleRules | null | undefined): RuleApart[] {
       rules.longShotPower === 0 ? null : rules.longShotPower,
     );
   }
+  // Записанное без поля — «выключено»: так его и играет сервер.
+  if (!!rules.breakthrough !== !!HOUSE_RULES.breakthrough) {
+    say(rules.breakthrough ? "battleRuleBreakthrough" : "battleRuleNoBreakthrough");
+  }
   return out;
+}
+
+/** Порядок, в котором местность называется словами и лежит в ящике стола:
+ *  сперва то, что не пускает, потом то, что держит и ранит, потом то, что
+ *  даёт. */
+export const GROUNDS: BattleGround[] = ['wall', 'ravine', 'pit', 'mire', 'cover', 'hill', 'spring'];
+
+/** Слово к земле: что она делает, а не как называется. */
+export const GROUND_KEY: Record<BattleGround, TranslationKey> = {
+  wall: 'battleGroundWall',
+  ravine: 'battleGroundRavine',
+  pit: 'battleGroundPit',
+  mire: 'battleGroundMire',
+  cover: 'battleGroundCover',
+  hill: 'battleGroundHill',
+  spring: 'battleGroundSpring',
+};
+
+/** Что земля делает с тем, кто на неё идёт: запрет, опасность, подмога. По
+ *  этому, а не по рисунку, выбирается знак — три формы читаются с одного
+ *  взгляда, семь значков не различит никто. */
+export type GroundKind = 'block' | 'hazard' | 'boon';
+export const GROUND_KIND: Record<BattleGround, GroundKind> = {
+  wall: 'block',
+  ravine: 'block',
+  pit: 'hazard',
+  mire: 'hazard',
+  cover: 'boon',
+  hill: 'boon',
+  spring: 'boon',
+};
+
+/** Правило земли коротко — для легенды рядом с полем, где строка узкая. */
+export const GROUND_SHORT: Record<BattleGround, TranslationKey> = {
+  wall: 'battleGroundShortWall',
+  ravine: 'battleGroundShortRavine',
+  pit: 'battleGroundShortPit',
+  mire: 'battleGroundShortMire',
+  cover: 'battleGroundShortCover',
+  hill: 'battleGroundShortHill',
+  spring: 'battleGroundShortSpring',
+};
+
+/** Имя земли — одно слово: для стола и для подписи клетки. */
+export const GROUND_NAME: Record<BattleGround, TranslationKey> = {
+  wall: 'battleGroundNameWall',
+  ravine: 'battleGroundNameRavine',
+  pit: 'battleGroundNamePit',
+  mire: 'battleGroundNameMire',
+  cover: 'battleGroundNameCover',
+  hill: 'battleGroundNameHill',
+  spring: 'battleGroundNameSpring',
+};
+
+/** Поле, на котором играется всё, что не назвало своего. */
+export const DEFAULT_FIELD: BattleField = { width: 3, depth: 3 };
+
+/** Какие величины поля бывают — зеркало `Field::normalized` в движке. */
+export const FIELD_WIDTHS = [3, 4] as const;
+export const FIELD_DEPTHS = [3, 4, 5] as const;
+
+/** Сколько клеток местности держит этюд. Зеркало `battles::TERRAIN_MAX`. */
+export const TERRAIN_MAX = 9;
+
+/** На этой земле не стоят — и сервер не примет тело над ней. */
+export const UNSTANDABLE: ReadonlySet<BattleGround> = new Set(['wall', 'ravine']);
+
+/**
+ * Какая местность лежит на этом поле — по строке на род, а не на клетку:
+ * три стены объясняются одной фразой. Печатается и на полке (местность —
+ * всегда отличие от ровного поля), и на листке правил в бою.
+ */
+export function terrainLines(terrain: BattleTile[] | null | undefined): RuleApart[] {
+  const have = new Set((terrain ?? []).map((t) => t.ground));
+  return GROUNDS.filter((g) => have.has(g)).map((g) => ({ key: GROUND_KEY[g], amount: null }));
 }
 
 /** Пустая карта — манекен, на котором примеряют раму.

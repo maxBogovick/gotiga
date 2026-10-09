@@ -78,13 +78,15 @@ pub mod spell;
 pub mod state;
 pub mod unit;
 
-pub use board::{Board, Cell, Side, Spot};
+pub use board::{Board, Cell, Field, Side, Spot};
 pub use card::{AbilitySnapshot, CardSnapshot};
 pub use damage::{Breakdown, Channel, DamagePacket, Resolution, Source, StepId, apply, resolve, strike};
 pub use event::{Event, Outcome};
 pub use heal::{Mending, apply_mend, resolve_mend};
 pub use spell::{Aim, Casting, lay_hold, lay_rider, lift_riders, raise_shield, rider};
 pub use state::{
-    Action, Illegal, Mark, MatchState, Rules, Setup, SideState, Zone, legal_actions, reduce,
+    Action, COVER_KEPT, Ground, Illegal, Mark, MatchState, PIT_HARM, Rules, SPRING_MEND, Setup,
+    SideState, Tile, Zone,
+    legal_actions, reduce,
 };
 pub use unit::{AbilityCooldown, Health, Hold, HoldKind, Stat, Status, Unit, UnitId};

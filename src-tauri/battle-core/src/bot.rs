@@ -25,6 +25,89 @@ fn nearest_enemy(state: &MatchState, cell: Cell) -> u8 {
         .unwrap_or(u8::MAX)
 }
 
+/// Сколько стоит войти в болото сверх обычного шага. Болото кончает ход, и
+/// путь через него дороже ровно на то, что тело в нём простоит.
+const MIRE_TOLL: u16 = 2;
+
+/// Яма кончает ход, как болото, и ещё ранит — значит, дороже на её урон.
+const PIT_TOLL: u16 = MIRE_TOLL + crate::state::PIT_HARM as u16;
+
+/// Сколько сверх шага стоит вход на эту землю.
+fn toll(state: &MatchState, cell: Cell) -> u16 {
+    match state.ground(cell) {
+        Some(crate::state::Ground::Mire) => MIRE_TOLL,
+        Some(crate::state::Ground::Pit) => PIT_TOLL,
+        _ => 0,
+    }
+}
+
+/// Недостижимо.
+const FAR: u16 = u16::MAX;
+
+fn slot(cell: Cell) -> usize {
+    cell.y as usize * crate::board::MAX_WIDTH as usize + cell.x as usize
+}
+
+/// Сколько шагов от каждой клетки до ближайшего из `sources` — по земле, а не
+/// по прямой.
+///
+/// Стена и чужое тело не пропускают; `through` — клетка самого идущего, она
+/// для него не помеха. Вход в болото и в яму стоит дороже, кроме самой цели.
+/// Овраг пропускает только того, кто его перепрыгивает (`leaps`: шаг от двух),
+/// и встать на нём нельзя — он бывает серединой пути, но не его концом. Поле — восемнадцать клеток, поэтому это не очередь с приоритетом, а
+/// честное повторение, пока числа не перестанут меняться: дешевле написать и
+/// невозможно ошибиться.
+fn walk_costs(
+    state: &MatchState,
+    sources: &[Cell],
+    through: Option<Cell>,
+    leaps: bool,
+) -> [u16; crate::board::MAX_CELLS] {
+    use crate::state::Ground;
+    let mut cost = [FAR; crate::board::MAX_CELLS];
+    for s in sources {
+        cost[slot(*s)] = 0;
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for cell in state.field.cells() {
+            let here = cost[slot(cell)];
+            if here == FAR {
+                continue;
+            }
+            // Идущий шагает из соседней клетки СЮДА: платит за вход сюда.
+            let enter = 1 + if here > 0 { toll(state, cell) } else { 0 };
+            for n in state.field.neighbours(cell) {
+                let ground = state.ground(n);
+                let passable = ground != Some(Ground::Wall)
+                    && (leaps || ground != Some(Ground::Ravine))
+                    && (state.board.is_free(n) || Some(n) == through);
+                if passable && here + enter < cost[slot(n)] {
+                    cost[slot(n)] = here + enter;
+                    changed = true;
+                }
+            }
+        }
+    }
+    cost
+}
+
+/// Расстояние по земле, а где земли не хватило — по прямой, но всегда дальше
+/// любого пути: отрезанное стеной тело не стоит, а тянется хотя бы ближе.
+fn ground_or_line(cost: &[u16; crate::board::MAX_CELLS], cell: Cell, line: u8) -> u16 {
+    let c = cost[slot(cell)];
+    if c == FAR { 1000 + line as u16 } else { c }
+}
+
+/// Чего стоит ВСТАТЬ на эту клетку и идти от неё дальше. `walk_costs` берёт
+/// плату за вход в топь с соседа, с которого в неё шагают, — значит, у самой
+/// топи её цена входа не записана, и шаг в топь без этой прибавки выглядел бы
+/// дешёвым.
+fn landing(state: &MatchState, cost: &[u16; crate::board::MAX_CELLS], cell: Cell, line: u8) -> u16 {
+    ground_or_line(cost, cell, line) + toll(state, cell)
+}
+
 /// Насколько далеко бот смотрит. Это и есть вся сложность: бот, которому дали
 /// лишнюю ману или лишнее здоровье, ломает и честность, и всякую возможность
 /// измерить силу карты — победа над жуликом не говорит о карте ничего.
@@ -256,7 +339,74 @@ fn rider_worth(state: &MatchState, action: &Action) -> Option<i32> {
 /// One action, chosen. Ties are broken by the order `legal_actions` returns —
 /// the field's scan order — so the same position always yields the same move.
 pub fn choose(state: &MatchState) -> Action {
+    choose_with(state, true)
+}
+
+/// Та же рука, но не видящая земли: меряет расстояние по прямой, как до
+/// местности. Только для замера — чтобы было с чем сравнить.
+pub fn choose_blind(state: &MatchState) -> Action {
+    choose_with(state, false)
+}
+
+fn choose_with(state: &MatchState, sees_ground: bool) -> Action {
     let actions = legal_actions(state);
+    // Без местности обе руки — одна и та же, байт в байт: прежние партии и
+    // замеры остаются в силе.
+    let sees = sees_ground && !state.terrain.is_empty();
+    let foe_cells: Vec<Cell> = state
+        .standing(state.active.other())
+        .iter()
+        .filter_map(|id| state.board.cell_of(*id))
+        .collect();
+    let breakthrough = state.rules.breakthrough;
+    let side = state.active;
+
+    // 0. Чужое тело на моём краю: если оно простоит до конца хода, партия
+    //    проиграна, и никакой размен этого не перевешивает. Бьётся сильнейшим,
+    //    что есть, — добить лучше, но и ранить лучше, чем стоять.
+    if breakthrough {
+        let threats = state.on_goal(side.other());
+        let mut best_guard: Option<(&Action, i32)> = None;
+        for action in &actions {
+            if let Some((off, target)) = wound_of(state, action) {
+                if !threats.contains(&target) {
+                    continue;
+                }
+                let t = &state.units[target as usize];
+                let score = if off >= t.health.current { 1000 + off } else { off };
+                if off > 0 && best_guard.is_none_or(|(_, best)| score > best) {
+                    best_guard = Some((action, score));
+                }
+            }
+        }
+        if let Some((action, _)) = best_guard {
+            return action.clone();
+        }
+    }
+
+    // ½. Сбросить врага в овраг. Толчок жадная рука в остальном не берёт —
+    //    расстановку она не оценивает, — но толчок в овраг не расстановка, а
+    //    гибель тела при любом здоровье, то есть добивание, которое сильнее
+    //    всякого удара. Проверяется самим ходом: свёртка скажет, упал ли.
+    if sees {
+        for action in &actions {
+            let Action::Cast { caster, ability, .. } = action else { continue };
+            let shoves = state.units[*caster as usize]
+                .ability_by_key(ability)
+                .and_then(|a| a.casting())
+                .is_some_and(|c| c == crate::spell::Casting::Shove);
+            if !shoves {
+                continue;
+            }
+            let Ok((_, events)) = crate::state::reduce(state, action) else { continue };
+            let felled = events.iter().any(|e| {
+                matches!(e, crate::event::Event::Fell { unit, .. } if state.units[*unit as usize].owner != side)
+            });
+            if felled {
+                return action.clone();
+            }
+        }
+    }
 
     // 1. A blow that finishes a body. Nothing else is worth more this turn.
     let mut killing: Option<(&Action, i32)> = None;
@@ -273,6 +423,19 @@ pub fn choose(state: &MatchState) -> Action {
     }
     if let Some((action, _)) = killing {
         return action.clone();
+    }
+
+    // 1½. Встать на чужой край. Стоит после добивания и до всего остального:
+    //     простоявший там ход противника выигрывает партию, а лечение и
+    //     выставление подождут. Шаг тело не тратит — ударить оно ещё успеет.
+    if breakthrough {
+        for action in &actions {
+            if let Action::Move { to, .. } = action {
+                if to.y == state.field.goal_row(side) {
+                    return action.clone();
+                }
+            }
+        }
     }
 
     // 2. Mend the worst wound within reach. Placed above putting a new body on
@@ -311,11 +474,17 @@ pub fn choose(state: &MatchState) -> Action {
     //    the round limit with both sides staring at each other — which is
     //    exactly what the first bot did before this was written down. It places
     //    towards the enemy, and among equal cells keeps the field's scan order.
-    let mut best_play: Option<(&Action, (i32, u8))> = None;
+    let play_costs = sees.then(|| walk_costs(state, &foe_cells, None, false));
+    let mut best_play: Option<(&Action, (i32, u16))> = None;
     for action in &actions {
         if let Action::Play { hand_index, cell } = action {
             let card = &state.side_state(state.active).hand[*hand_index];
-            let rank = (card.cost, u8::MAX - nearest_enemy(state, *cell));
+            let near = if let Some(cost) = &play_costs {
+                landing(state, cost, *cell, nearest_enemy(state, *cell))
+            } else {
+                nearest_enemy(state, *cell) as u16
+            };
+            let rank = (card.cost, u16::MAX - near);
             if best_play.is_none_or(|(_, best)| rank > best) {
                 best_play = Some((action, rank));
             }
@@ -362,21 +531,66 @@ pub fn choose(state: &MatchState) -> Action {
     //    lines that could not touch each other simply stood there until the
     //    round limit and the match was decided on leftover health — which is
     //    not a game, it is a stalemate with a scoreboard.
-    let mut best_step: Option<(&Action, u8)> = None;
+    //
+    //    По земле, а не по прямой, когда земля есть: по прямой ближайшая к
+    //    врагу клетка бывает тупиком за стеной, и тело входило туда и стояло.
+    //    Из равных шагов — тот, что кончается в укрытии.
+    let mut best_step: Option<(&Action, (u16, bool))> = None;
+    let mut costs_of: Vec<(crate::unit::UnitId, [u16; crate::board::MAX_CELLS])> = Vec::new();
     for action in &actions {
         if let Action::Move { unit, to } = action {
             let Some(from) = state.board.cell_of(*unit) else { continue };
-            let now = nearest_enemy(state, from);
-            let after = nearest_enemy(state, *to);
+            let (now, after) = if sees {
+                if !costs_of.iter().any(|(u, _)| u == unit) {
+                    let leaps = state.units[*unit as usize].step >= 2;
+                    costs_of.push((*unit, walk_costs(state, &foe_cells, Some(from), leaps)));
+                }
+                let cost = &costs_of.iter().find(|(u, _)| u == unit).unwrap().1;
+                (
+                    ground_or_line(cost, from, nearest_enemy(state, from)),
+                    landing(state, cost, *to, nearest_enemy(state, *to)),
+                )
+            } else {
+                (nearest_enemy(state, from) as u16, nearest_enemy(state, *to) as u16)
+            };
+            let exposed = !(sees && state.ground(*to) == Some(crate::state::Ground::Cover));
             // Only a step that closes the gap. Otherwise a body would shuffle
             // sideways for ever, which is a legal action and a wasted turn.
-            if after < now && best_step.is_none_or(|(_, best)| after < best) {
-                best_step = Some((action, after));
+            if after < now && best_step.is_none_or(|(_, best)| (after, exposed) < best) {
+                best_step = Some((action, (after, exposed)));
             }
         }
     }
     if let Some((action, _)) = best_step {
         return action.clone();
+    }
+
+    // 6. К врагу не подойти — тогда к чужому краю. Без этой ступени тело,
+    //    от которого противник отступил, стояло бы, хотя цель у партии есть.
+    if breakthrough {
+        let goal: Vec<Cell> = state.field.cells()
+            .filter(|c| c.y == state.field.goal_row(side) && state.open(*c))
+            .collect();
+        let mut best_march: Option<(&Action, u16)> = None;
+        for action in &actions {
+            if let Action::Move { unit, to } = action {
+                let Some(from) = state.board.cell_of(*unit) else { continue };
+                let line = |c: Cell| c.y.abs_diff(state.field.goal_row(side));
+                let (now, after) = if sees {
+                    let leaps = state.units[*unit as usize].step >= 2;
+                    let cost = walk_costs(state, &goal, Some(from), leaps);
+                    (ground_or_line(&cost, from, line(from)), landing(state, &cost, *to, line(*to)))
+                } else {
+                    (line(from) as u16, line(*to) as u16)
+                };
+                if after < now && best_march.is_none_or(|(_, best)| after < best) {
+                    best_march = Some((action, after));
+                }
+            }
+        }
+        if let Some((action, _)) = best_march {
+            return action.clone();
+        }
     }
 
     Action::EndTurn

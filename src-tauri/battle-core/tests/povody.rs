@@ -56,6 +56,8 @@ fn face_off(mine: CardSnapshot, theirs: CardSnapshot) -> MatchState {
         player_hand: vec![],
         keeper_board: vec![(theirs, cell(1, 2)), (boec("Тень", 9, 2), cell(0, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     MatchState::begin_with(setup, rules())
 }
@@ -171,6 +173,8 @@ fn a_dying_gift_that_kills_does_not_start_a_second_chain() {
         player_hand: vec![],
         keeper_board: vec![(first, cell(1, 2)), (second, cell(0, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = MatchState::begin_with(setup, rules());
 
@@ -212,6 +216,8 @@ fn turn_start_goes_off_for_your_own_bodies_on_your_own_turn() {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 20, 2), cell(1, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = MatchState::begin_with(setup, rules());
 
@@ -271,6 +277,8 @@ fn an_aura_holds_by_the_body_that_breathes_it_and_not_by_a_term() {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 9, 9), cell(1, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = MatchState::begin_with(setup, rules());
 
@@ -294,6 +302,8 @@ fn an_aura_moves_with_the_body() {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 9, 5), cell(1, 2)), (boec("Тень", 9, 5), cell(0, 0))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = MatchState::begin_with(setup, rules());
     assert_eq!(st.units[1].printed_power(), 3, "ворон рядом — 5 − 2");
@@ -361,6 +371,8 @@ fn a_journal_of_occasions_folds_back_into_the_same_board() {
         player_hand: vec![],
         keeper_board: vec![(raven, cell(1, 2)), (boec("Тень", 9, 2), cell(0, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let journal = vec![
         Action::Attack { attacker: 0, target: 2 },

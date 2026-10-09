@@ -18,6 +18,9 @@ pub enum Event {
     /// A card left a hand and became a body.
     Played { side: Side, unit: UnitId, cell: Cell, cost: i32 },
     Moved { unit: UnitId, from: Cell, to: Cell },
+    /// Тело столкнули в овраг. Идёт перед `Died`: сцене нужно, куда оно
+    /// упало, а не только что его больше нет.
+    Fell { unit: UnitId, from: Cell, to: Cell },
     Damaged {
         target: UnitId,
         /// Who struck, when anyone did. `None` for a zone, a poison, a thorn —
@@ -109,6 +112,9 @@ pub enum Event {
     },
     Died { target: UnitId },
     TurnEnded { side: Side, round: u8 },
+    /// Тело простояло ход противника на его краю. Идёт прямо перед
+    /// `Finished`: исход тот же, а причину сцена иначе угадывала бы по доске.
+    Breached { unit: UnitId, side: Side },
     Finished { outcome: Outcome },
 }
 

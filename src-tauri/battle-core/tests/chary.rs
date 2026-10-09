@@ -33,6 +33,8 @@ fn witchcraft(ability: AbilitySnapshot) -> Setup {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 8, 4), cell(1, 1))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     }
 }
 
@@ -441,6 +443,8 @@ fn everything_offered_can_be_done() {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 8, 4), cell(1, 1)), (boec("Тень", 6, 2), cell(2, 0))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = MatchState::begin(setup);
 
@@ -496,6 +500,8 @@ fn the_keeper_reaches_for_a_spell_when_a_spell_is_the_best_thing_to_do() {
             cell(1, 1),
         )],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = MatchState::begin(setup);
     let (theirs, _) = act(&st, Action::EndTurn);

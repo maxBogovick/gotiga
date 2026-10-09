@@ -28,6 +28,8 @@ fn setup() -> Setup {
             CardSnapshot::new("Кот", 2, 5, 2).with_mend(4),
             CardSnapshot::new("Котёл", 3, 7, 3).with_armor(1),
         ],
+        terrain: Vec::new(),
+        field: Default::default(),
     }
 }
 
@@ -39,6 +41,7 @@ fn step_name(step: StepId) -> &'static str {
         StepId::Escalation => "поздний круг",
         StepId::LongShot => "выстрел за дальность",
         StepId::PointBlank => "стрелка достали вплотную",
+        StepId::Cover => "цель в укрытии",
         StepId::AttackerBless => "благословения бьющего",
         StepId::AttackerCurse => "проклятия бьющего",
         StepId::TargetVulnerable => "уязвимость цели",

@@ -158,20 +158,42 @@ pub fn esc(s: &str) -> String {
 /// видимые знаки, без разметки.
 pub const CAPTION_MAX: usize = 1024;
 
-/// Подпись объявления: заглавие жирным и под ним одна-две фразы.
+/// Подпись объявления — четыре строки, как страница газеты в миниатюре:
+///
+/// ```text
+/// ✦ Новая байка            ← род: что это, не дожидаясь заглавия
+///
+/// Заглавие                 ← жирным
+///
+/// │ вводка                 ← цитатой: отличается от заглавия без картинок
+///
+/// #байка                   ← метка: по ней в канале ищут «все байки»
+/// ```
+///
+/// Ни восклицаний, ни «успейте», ни цены: дом не магазин (CLAUDE.md § 1), и
+/// канал говорит тем же голосом, что и сайт.
 ///
 /// Урезается вводка, а не заглавие, и урезается по слову: подпись, оборванная
-/// посреди слова, выглядит как ошибка, а не как «читать дальше».
-pub fn announcement_caption(title: &str, lead: Option<&str>) -> String {
-    let title = title.trim();
-    let title: String = title.chars().take(CAPTION_MAX / 4).collect();
+/// посреди слова, выглядит как ошибка, а не как «читать дальше». Лимит
+/// Telegram считает видимые знаки без разметки, поэтому всё, что печатается
+/// кроме вводки, вычитается из места под неё.
+pub fn announcement_caption(label: &str, tag: &str, title: &str, lead: Option<&str>) -> String {
+    let title: String = title.trim().chars().take(CAPTION_MAX / 4).collect();
+    let head = format!("✦ {label}");
+    let foot = format!("#{tag}");
     let lead = lead.map(str::trim).filter(|l| !l.is_empty() && *l != title);
-    let Some(lead) = lead else {
-        return format!("<b>{}</b>", esc(&title));
-    };
-    // Две строки перевода между заглавием и вводкой — тоже знаки.
-    let room = CAPTION_MAX - title.chars().count() - 2;
-    format!("<b>{}</b>\n\n{}", esc(&title), esc(&clip_words(lead, room)))
+
+    let mut out = format!("{}\n\n<b>{}</b>", esc(&head), esc(&title));
+    if let Some(lead) = lead {
+        // Три разделителя по две строки перевода — тоже знаки.
+        let used = head.chars().count() + title.chars().count() + foot.chars().count() + 6;
+        // Заглавие урезано до четверти лимита, поэтому под вводку остаётся
+        // не меньше половины подписи.
+        let room = CAPTION_MAX - used;
+        out.push_str(&format!("\n\n<blockquote>{}</blockquote>", esc(&clip_words(lead, room))));
+    }
+    out.push_str(&format!("\n\n{}", esc(&foot)));
+    out
 }
 
 fn clip_words(s: &str, max: usize) -> String {
@@ -429,25 +451,44 @@ mod tests {
         assert_eq!(webhook_url("https://ritunia.com/", "s3cret"), plain);
     }
 
+    /// Видимые знаки подписи: без разметки, как их считает Telegram.
+    fn visible(caption: &str) -> String {
+        ["<b>", "</b>", "<blockquote>", "</blockquote>"]
+            .iter()
+            .fold(caption.to_string(), |s, tag| s.replace(tag, ""))
+    }
+
     #[test]
-    fn a_caption_is_a_bold_title_over_its_lead() {
+    fn a_caption_is_a_label_a_title_a_quoted_lead_and_a_tag() {
         assert_eq!(
-            announcement_caption("Страж <северной> двери", Some("Бронза & воск")),
-            "<b>Страж &lt;северной&gt; двери</b>\n\nБронза &amp; воск"
+            announcement_caption("Новая работа", "работа", "Страж <северной> двери", Some("Бронза & воск")),
+            "✦ Новая работа\n\n<b>Страж &lt;северной&gt; двери</b>\n\n\
+             <blockquote>Бронза &amp; воск</blockquote>\n\n#работа"
         );
-        // Вводки нет или она повторяет заглавие — остаётся одно заглавие.
-        assert_eq!(announcement_caption("Ворон", None), "<b>Ворон</b>");
-        assert_eq!(announcement_caption("Ворон", Some("  ")), "<b>Ворон</b>");
-        assert_eq!(announcement_caption("Ворон", Some("Ворон")), "<b>Ворон</b>");
+        // Вводки нет или она повторяет заглавие — цитаты нет вовсе, а не пустая.
+        let bare = "✦ Новая байка\n\n<b>Ворон</b>\n\n#байка";
+        assert_eq!(announcement_caption("Новая байка", "байка", "Ворон", None), bare);
+        assert_eq!(announcement_caption("Новая байка", "байка", "Ворон", Some("  ")), bare);
+        assert_eq!(announcement_caption("Новая байка", "байка", "Ворон", Some("Ворон")), bare);
     }
 
     #[test]
     fn a_long_lead_is_cut_by_the_word_and_fits_telegram() {
         let lead = "слово ".repeat(400);
-        let caption = announcement_caption("Байка", Some(&lead));
-        let visible = caption.replace("<b>", "").replace("</b>", "");
-        assert!(visible.chars().count() <= CAPTION_MAX);
-        assert!(caption.ends_with("слово…"));
+        let caption = announcement_caption("Новая байка", "байка", "Байка", Some(&lead));
+        assert!(visible(&caption).chars().count() <= CAPTION_MAX);
+        assert!(caption.contains("слово…</blockquote>"));
+        // Метка стоит в конце даже тогда, когда вводка заняла всё свободное место.
+        assert!(caption.ends_with("#байка"));
+    }
+
+    #[test]
+    fn a_huge_title_is_capped_and_the_caption_still_fits() {
+        let title = "а".repeat(CAPTION_MAX * 2);
+        let lead = "слово ".repeat(400);
+        let caption = announcement_caption("Новая работа", "работа", &title, Some(&lead));
+        assert!(visible(&caption).chars().count() <= CAPTION_MAX);
+        assert!(caption.contains("<blockquote>") && caption.ends_with("#работа"));
     }
 
     #[test]

@@ -40,6 +40,8 @@ fn table(ability: AbilitySnapshot) -> Setup {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 8, 4), cell(1, 1))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     }
 }
 
@@ -312,6 +314,8 @@ fn a_guard_takes_the_blow_meant_for_a_neighbour() {
         // Ворон (2) достаёт до отрока и целится в него.
         keeper_board: vec![(boec("Ворон", 8, 4), cell(1, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = begin(setup);
 
@@ -626,6 +630,8 @@ fn everything_offered_can_be_done_for_every_verb() {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 8, 4), cell(1, 1)), (boec("Тень", 6, 2), cell(2, 0))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = begin(setup);
 
@@ -663,6 +669,8 @@ fn a_journal_of_every_verb_folds_back_into_the_same_board() {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 9, 4), cell(1, 1)), (boec("Тень", 6, 2), cell(2, 1))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let journal = vec![
         cast(0, "порча", 1),

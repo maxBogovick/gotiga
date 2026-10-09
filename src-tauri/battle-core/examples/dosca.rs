@@ -23,7 +23,9 @@
 //!
 //!     cargo run --release --example dosca
 
-use battle_core::board::{DEPTH, WIDTH};
+// Замер формы доски 3 × 6 — поля по умолчанию.
+const WIDTH: u8 = 3;
+const DEPTH: u8 = 6;
 use battle_core::*;
 
 /// Сколько рядов у одной стороны.

@@ -35,8 +35,10 @@
     defaultSlices,
     dressWindowMissing,
     frameName,
+    freeMarkOf,
     kindOf,
     livePiece,
+    setFreeMark,
     newOrnament,
     pickImageFile,
     sliceSigns,
@@ -2527,16 +2529,21 @@
                       <label class="block">
                         <span
                           class="block mb-1 text-[11px] text-[#8a6a55]"
-                          >{$t("adminBattlesFreeNameSize")} · {frames[
-                            frameIndex
-                          ].freeNameSize.toFixed(2)}×</span
+                          >{$t("adminBattlesFreeNameSize")} · {freeMarkOf(
+                            frames[frameIndex],
+                            "title",
+                          ).size.toFixed(2)}×</span
                         >
                         <input
                           type="range"
                           min="0.5"
                           max="3"
                           step="0.05"
-                          bind:value={frames[frameIndex].freeNameSize}
+                          value={freeMarkOf(frames[frameIndex], "title").size}
+                          oninput={(e) =>
+                            setFreeMark(frames[frameIndex], "title", {
+                              size: Number(e.currentTarget.value),
+                            })}
                           class="w-full"
                         />
                       </label>
@@ -2553,7 +2560,11 @@
                           >{$t("adminBattlesFreeLoreFont")}</span
                         >
                         <select
-                          bind:value={frames[frameIndex].freeLoreFont}
+                          value={freeMarkOf(frames[frameIndex], "lore").font}
+                          onchange={(e) =>
+                            setFreeMark(frames[frameIndex], "lore", {
+                              font: e.currentTarget.value || undefined,
+                            })}
                           class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none"
                         >
                           <option value=""
@@ -2571,27 +2582,32 @@
                         >
                         <input
                           type="color"
-                          value={frames[frameIndex].freeLoreInk ||
-                            frames[frameIndex].ink}
+                          value={freeMarkOf(frames[frameIndex], "lore").ink}
                           oninput={(e) =>
-                            (frames[frameIndex].freeLoreInk =
-                              e.currentTarget.value)}
+                            setFreeMark(frames[frameIndex], "lore", {
+                              ink: e.currentTarget.value,
+                            })}
                           class="w-12 h-8 bg-transparent border border-[#34251c]/15"
                         />
                       </label>
                       <label class="block flex-1 min-w-[14rem]">
                         <span
                           class="block mb-1 text-[11px] text-[#8a6a55]"
-                          >{$t("adminBattlesFreeLoreSize")} · {frames[
-                            frameIndex
-                          ].freeLoreSize.toFixed(2)}×</span
+                          >{$t("adminBattlesFreeLoreSize")} · {freeMarkOf(
+                            frames[frameIndex],
+                            "lore",
+                          ).size.toFixed(2)}×</span
                         >
                         <input
                           type="range"
                           min="0.5"
                           max="3"
                           step="0.05"
-                          bind:value={frames[frameIndex].freeLoreSize}
+                          value={freeMarkOf(frames[frameIndex], "lore").size}
+                          oninput={(e) =>
+                            setFreeMark(frames[frameIndex], "lore", {
+                              size: Number(e.currentTarget.value),
+                            })}
                           class="w-full"
                         />
                       </label>

@@ -23,6 +23,7 @@
   import {
     BADGE_SHAPES,
     BADGE_FIELDS,
+    isFreeform,
     badgeAt,
     BADGE_SCALE_MIN,
     BADGE_SCALE_MAX,
@@ -45,6 +46,8 @@
     statLabel,
   } from '$lib/battles';
   import BattleIcon from '$lib/components/BattleIcon.svelte';
+  import BattleGlyphControl from '$lib/components/BattleGlyphControl.svelte';
+  import { selectOnFocus, blurOnWheel } from '$lib/utils/fields';
   import type { BattleBadgeShape, BattleFrame } from '$lib/types/api';
   import type { BadgeKind, FrameOverride } from '$lib/battles';
 
@@ -56,6 +59,7 @@
     onEditStart,
     onArtUpload,
     onArtStore,
+    onValue,
     onclose,
   }: {
     kind: BadgeKind;
@@ -74,6 +78,10 @@
      *  нет вовсе, и тогда он просто не показывает того, чего не может. */
     onArtUpload?: (apply: (url: string) => void) => void;
     onArtStore?: (apply: (url: string) => void) => void;
+    /** Число набирают здесь же, у самого значка, — когда карта это позволяет
+     *  (лист карты). Пишет оно в то же поле карты, что плашка на листе. На
+     *  столе рамок числа не карты, а образца, и поля нет. */
+    onValue?: (value: number) => void;
     onclose: () => void;
   } = $props();
 
@@ -154,6 +162,34 @@
       >×</button
     >
   </header>
+
+  {#if onValue}
+    <section class="bi-part">
+      <span class="bi-label">{$t('adminBattlesBadgeValue')}</span>
+      <div class="bi-row">
+        <label class="bi-field">
+          <input
+            type="number"
+            min="0"
+            max={kind === 'cost' ? 20 : 99}
+            step="1"
+            value={value ?? 0}
+            onfocus={selectOnFocus}
+            onwheel={blurOnWheel}
+            oninput={(e) => {
+              const field = e.currentTarget;
+              if (!Number.isFinite(field.valueAsNumber)) return;
+              // Прижатое число показывается в самом поле: иначе в нём стояло бы
+              // «997», а на карте — 99, и поле врало бы о том, что записано.
+              const n = Math.min(kind === 'cost' ? 20 : 99, Math.max(0, Math.round(field.valueAsNumber)));
+              if (String(n) !== field.value) field.value = String(n);
+              onValue?.(n);
+            }}
+          />
+        </label>
+      </div>
+    </section>
+  {/if}
 
   {#if onArtUpload || onArtStore}
     <!-- Первой, потому что жетон СИЛЬНЕЕ формы и заливки: хранитель, который
@@ -253,6 +289,12 @@
       {/if}
     </div>
   </section>
+
+  {#if isFreeform(frame) && !plate}
+    <!-- Знак у числа: нет, рядом с цифрой или отдельно — своей вещью, которую
+         таскают по карте сами по себе (§ 9.10). Жетон знака не носит вовсе. -->
+    <BattleGlyphControl {frame} slot={kind} {write} from={spot} />
+  {/if}
 
   <section class="bi-part">
     <span class="bi-label">{$t('adminBattlesBadgeInk')}</span>

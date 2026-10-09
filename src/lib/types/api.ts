@@ -3039,7 +3039,66 @@ export interface BattleFrame {
      *  — тот же дом: обычный шрифт карты, цвет `ink`. */
     freeLoreFont: string;
     freeLoreInk: string;
+    /** `freeform` only: the picture is the WHOLE card — the work's photograph
+     *  is already drawn in it, and the renderer does not lay a second one
+     *  underneath. Set by «Готовая карта» on one card's own dress. */
+    artBaked?: boolean;
+    /** `freeform` only: what is printed over the illustration and where,
+     *  one entry per slot (`FREE_SLOTS`). Every field is optional — an
+     *  unset one falls back to the slot's home (and, for the name and the
+     *  lore, to the older `freeName*` / `freeLore*` fields first). */
+    freeMarks?: FreeMarks;
 }
+
+/** A thing printed over a `freeform` illustration. Text slots print the
+ *  card's own words, stat slots one of its numbers; `cost`, `power` and
+ *  `health` are the three badges, of which only `shown` is read here — their
+ *  place and look are the badge's own fields (§ 9.9). */
+export type FreeSlot =
+    | 'title'
+    | 'kind'
+    | 'effect'
+    | 'traits'
+    | 'lore'
+    | 'cost'
+    | 'power'
+    | 'health'
+    | 'mana'
+    | 'armor'
+    | 'ward'
+    | 'reach'
+    | 'step'
+    | 'speed'
+    | 'mend';
+
+export type FreeMarkAlign = 'left' | 'center' | 'right';
+
+export interface FreeMark {
+    /** Centre of the mark, % of the card. */
+    x?: number;
+    y?: number;
+    /** Multiplier on the slot's own type size. */
+    size?: number;
+    /** Width of the text box, % of the card. Text wraps inside it. */
+    width?: number;
+    align?: FreeMarkAlign;
+    font?: string;
+    ink?: string;
+    bold?: boolean;
+    italic?: boolean;
+    shown?: boolean;
+    /** Знак рядом с числом (у значков и чисел). Пусто — знак есть: число без
+     *  знака на полке не говорит, что оно значит. */
+    glyph?: boolean;
+    /** Знак, стоящий ОТДЕЛЬНО от числа: его центр, % карты. Пусто — знак
+     *  стоит рядом с цифрой, в её строке. */
+    glyphX?: number;
+    glyphY?: number;
+    /** Величина отдельного знака — множитель. */
+    glyphSize?: number;
+}
+
+export type FreeMarks = Partial<Record<FreeSlot, FreeMark>>;
 
 /** `none` — не шестая форма, а её отсутствие: подложка не печатается вовсе и
  *  на карте остаётся одна цифра. Заливка при этом не стирается — сняли форму,
@@ -3462,6 +3521,9 @@ export interface BattleRules {
     longShotPower: number;
     /** Какую долю силы, в сотых, сохраняет стрелок, к которому подошли вплотную. */
     pointBlankPower: number;
+    /** Прорыв: тело, простоявшее ход противника на дальнем ряду его половины,
+     *  выигрывает партию. Записанное без поля читается как «выключено». */
+    breakthrough?: boolean;
 }
 
 /** A study sets BOTH sides. A meeting (`playerSide: 'deck'`) fills only the
@@ -3479,6 +3541,24 @@ export interface ChallengeSetup {
      * так же, как «здесь стоит ведьма».
      */
     rules?: BattleRules | null;
+    /** Местность: стены, укрытия, топи. Пусто или нет поля — ровное поле. */
+    terrain?: BattleTile[];
+    /** Величина поля. Нет — 3 × 3 на половину. */
+    field?: BattleField;
+}
+
+/** Величина поля: клеток поперёк (3–4) и вглубь у каждой половины (3–5). */
+export interface BattleField {
+    width: number;
+    depth: number;
+}
+
+/** Земля под клеткой. Зеркало `battle_core::Ground`. */
+export type BattleGround = 'wall' | 'cover' | 'mire' | 'ravine' | 'pit' | 'hill' | 'spring';
+
+export interface BattleTile {
+    cell: BattleCell;
+    ground: BattleGround;
 }
 
 export interface BattleChallenge {
@@ -3710,6 +3790,12 @@ export interface BattleMatchState {
     actsThisTurn: number;
     /** Опасные клетки. Пусто на всём, что начато до них. */
     zones?: BattleZone[];
+    /** Тела, закончившие ход своей стороны на её ряду прорыва. */
+    poised?: number[];
+    /** Местность поля. Нет поля — поле ровное. */
+    terrain?: BattleTile[];
+    /** Величина поля. Нет — 3 × 3 на половину. */
+    field?: BattleField;
 }
 
 /**
@@ -4021,7 +4107,12 @@ export type BattleEvent =
           };
       }
     | { died: { target: number } }
+    /** Тело столкнули в овраг. Идёт перед `died`: сцена показывает, куда. */
+    | { fell: { unit: number; from: BattleCell; to: BattleCell } }
     | { turnEnded: { side: BattleSide; round: number } }
+    /** Тело простояло ход противника на его краю. Идёт прямо перед `finished`:
+     *  исход тот же, а причину печать называет по этому событию. */
+    | { breached: { unit: number; side: BattleSide } }
     | { finished: { outcome: BattleOutcome } };
 
 export interface BattleMatch {

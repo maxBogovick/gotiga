@@ -6,7 +6,7 @@
 //! below. If a later stage has to change the signature of `reduce`, the journal
 //! format or the shape of a legal action, the stages were cut wrongly.
 
-use crate::board::{Board, Cell, Side};
+use crate::board::{Board, Cell, Field, Side};
 use crate::card::{AbilitySnapshot as CardAbilitySnap, CardSnapshot};
 use crate::damage::{apply, strike};
 use crate::event::{Event, Outcome};
@@ -124,6 +124,37 @@ pub struct Rules {
     /// выбирать его надо прогоном, а не на слух.
     #[serde(default = "point_blank_default")]
     pub point_blank_power: u8,
+    /// Прорыв: тело, которое дошло до дальнего ряда чужой половины и
+    /// простояло там ход противника, выигрывает партию.
+    ///
+    /// Вторая цель рядом с «уничтожить всех» — ту обороняющийся вправе не
+    /// преследовать, и пятая часть партий против умелой руки не кончалась
+    /// никогда (§19, §20). Эту пересидеть нельзя: кто стоит, тот пропускает.
+    ///
+    /// «Простояло ход», а не «дошло»: от переднего ряда до чужого края три
+    /// клетки, и тело с шагом 3 доходило бы в первый же ход, не дав ответить.
+    ///
+    /// Засчитывается хозяину и только пока тело ходит за него: иначе смута,
+    /// наведённая на тело у собственного края, выигрывала бы партию наводящему.
+    ///
+    /// Умолчание сериализации — выключено: партии и этюды, записанные до этой
+    /// ручки, играются тем, чем игрались.
+    ///
+    /// Умолчание дома — тоже выключено, и это выбрано замером
+    /// (`examples/proryv.rs`, `TASKS-BATTLE-ENGINE.md` §25):
+    ///
+    /// ```text
+    /// рукой с перебором           лимитом  ничьих  1-й ход  не кончилось за 60
+    ///   без прорыва                 23.6 %   2.0 %   56.8 %   6.7 %
+    ///   прорыв                      12.0 %   0.8 %   53.6 %   7.5 %
+    /// ```
+    ///
+    /// Счётчиком решено вдвое реже, но партии, не кончающиеся никогда, остались:
+    /// на поле шириной 3 один страж в средней колонке перекрывает весь ряд, а
+    /// шаг вбок от платы за простой освобождает. И при руке в одну карту
+    /// первый ход берёт 65 %. Ручка остаётся этюдам.
+    #[serde(default)]
+    pub breakthrough: bool,
 }
 
 fn point_blank_default() -> u8 {
@@ -306,6 +337,7 @@ impl Default for Rules {
             idle_toll: 1,
             long_shot_power: 25,
             max_rounds: MAX_ROUNDS,
+            breakthrough: false,
         }
     }
 }
@@ -317,7 +349,68 @@ pub struct Setup {
     pub player_hand: Vec<CardSnapshot>,
     pub keeper_board: Vec<(CardSnapshot, Cell)>,
     pub keeper_hand: Vec<CardSnapshot>,
+    /// Местность: клетки с правилом. Лежит в расстановке, потому что
+    /// расстановка замораживается вместе с партией, — и пересмотр, и свёртка
+    /// журнала видят то же поле, на котором играли.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terrain: Vec<Tile>,
+    /// Величина поля. Не названная — 3 × 3 на половину, как было всегда, и
+    /// тогда не пишется вовсе: замороженные партии не меняются ни на байт.
+    #[serde(default, skip_serializing_if = "Field::is_default")]
+    pub field: Field,
 }
+
+/// Что за земля под клеткой. Три рода, и список закрыт по той же причине, по
+/// которой закрыт словарь глаголов: новая местность — новое сочетание этих,
+/// а не четвёртое правило в коде.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Ground {
+    /// Стена: на неё не встают и через неё не проходят. Удары и чары через
+    /// неё летят — поле 3 × 6 слишком мало для линий видимости, и правило,
+    /// которое надо проверять глазом по клеткам, здесь не читается.
+    Wall,
+    /// Укрытие: удар издали (дальше соседней клетки) по стоящему здесь доходит
+    /// вполсилы. Не «не достаёт вовсе»: недосягаемая клетка — это та самая
+    /// безопасная клетка, на которой стоят до конца партии (§20), и её здесь
+    /// убирали.
+    Cover,
+    /// Болото: войти можно, пройти насквозь — нет. Вошедший останавливается,
+    /// стоящий в нём выходит на одну клетку.
+    Mire,
+    /// Овраг: на него не встают. Тело с шагом 1 его не пересечёт, с шагом 2 и
+    /// больше — перепрыгнет. Сброшенное в овраг толчком тело гибнет: это то
+    /// место на поле, где позиция решает сама, без чисел на карте.
+    Ravine,
+    /// Яма: кто оказался в ней по ходу партии — шагом, толчком, из руки,
+    /// призывом, — получает `PIT_HARM` урона от земли и дальше в этот ход не
+    /// идёт. Стоять в ней можно; ранит она один раз, при входе.
+    Pit,
+    /// Холм: стрелок (дальность больше одной клетки), стоящий здесь, бьёт на
+    /// клетку дальше. Ближнему бою холм не даёт ничего — с холма не дотянешься
+    /// рукой до соседа через клетку.
+    Hill,
+    /// Родник: тело, стоящее здесь, в начале своего хода восстанавливает
+    /// `SPRING_MEND` здоровья. Повод держать клетку, а не уходить от боя.
+    Spring,
+}
+
+/// Сколько ранит яма при входе.
+pub const PIT_HARM: i32 = 2;
+
+/// Сколько возвращает родник в начале своего хода.
+pub const SPRING_MEND: i32 = 1;
+
+/// Одна клетка местности.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tile {
+    pub cell: Cell,
+    pub ground: Ground,
+}
+
+/// Сколько силы, в сотых, доходит до тела в укрытии из-за соседней клетки.
+pub const COVER_KEPT: i32 = 50;
 
 /// Опасная клетка поля.
 ///
@@ -363,6 +456,18 @@ pub struct MatchState {
     /// Опасные клетки. Пусто на всякой партии, начатой до них.
     #[serde(default)]
     pub zones: Vec<Zone>,
+    /// Тела, которые закончили ход своей стороны на её ряду прорыва. Решается
+    /// в начале следующего хода той же стороны: кто там всё ещё стоит, тот и
+    /// выиграл. Обеих сторон в одном списке: записывается одна, а читается
+    /// другая, и два поля пришлось бы держать в согласии вручную.
+    #[serde(default)]
+    pub poised: Vec<UnitId>,
+    /// Местность поля. Пусто на всякой партии, начатой до неё.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terrain: Vec<Tile>,
+    /// Величина поля. Партия, начатая до неё, играется на 3 × 3.
+    #[serde(default, skip_serializing_if = "Field::is_default")]
+    pub field: Field,
 }
 
 /// What was asked for. May be refused; refusal is an ordinary answer.
@@ -487,6 +592,9 @@ impl MatchState {
             opening_attacks_used: 0,
             acts_this_turn: 0,
             zones: Vec::new(),
+            poised: Vec::new(),
+            terrain: Vec::new(),
+            field: setup.field.normalized(),
         };
         // The coin is laid before the first turn, so that turn's rise adds to it.
         st.keeper.mana_max = rules.second_side_coin.max(0);
@@ -496,6 +604,19 @@ impl MatchState {
         }
         for (card, cell) in setup.keeper_board {
             st.raise(&card, cell, Side::Keeper);
+        }
+
+        // Местность ложится после тел. Клетка вне поля, вторая запись о той же
+        // клетке и стена под стоящим телом отбрасываются молча: расстановку
+        // проверяет сервер, а движок только не даёт ей сломать партию.
+        for tile in setup.terrain {
+            let inside = st.field.contains(tile.cell);
+            let repeated = st.terrain.iter().any(|t| t.cell == tile.cell);
+            let walled_in = matches!(tile.ground, Ground::Wall | Ground::Ravine)
+                && !st.board.is_free(tile.cell);
+            if inside && !repeated && !walled_in {
+                st.terrain.push(tile);
+            }
         }
 
         // Bodies standing before the first turn are not newly played and may
@@ -562,6 +683,115 @@ impl MatchState {
             .collect()
     }
 
+    /// Что за земля под клеткой.
+    pub fn ground(&self, cell: Cell) -> Option<Ground> {
+        self.terrain.iter().find(|t| t.cell == cell).map(|t| t.ground)
+    }
+
+    /// Можно ли сюда встать: клетка пуста, и это не стена и не овраг.
+    pub fn open(&self, cell: Cell) -> bool {
+        self.board.is_free(cell) && !self.unstandable(cell)
+    }
+
+    /// Стена или овраг: на такую землю не встают.
+    fn unstandable(&self, cell: Cell) -> bool {
+        matches!(self.ground(cell), Some(Ground::Wall | Ground::Ravine))
+    }
+
+    /// Свободные клетки стороны, куда можно выставить тело, — в порядке обхода.
+    pub fn free_cells(&self, side: Side) -> Vec<Cell> {
+        self.board.free_cells(&self.field, side).filter(|c| !self.unstandable(*c)).collect()
+    }
+
+    /// Дальность удара с учётом земли: стрелок на холме бьёт на клетку дальше.
+    pub fn reach_of(&self, unit: &Unit) -> u8 {
+        let on_hill = self
+            .board
+            .cell_of(unit.id)
+            .is_some_and(|c| self.ground(c) == Some(Ground::Hill));
+        if on_hill && unit.reach > 1 { unit.reach + 1 } else { unit.reach }
+    }
+
+    /// Тело оказалось на клетке по ходу партии: яма ранит его. Одно место на
+    /// все пути на клетку — шаг, толчок, свой прыжок, выход из руки, призыв:
+    /// забыть яму в одной ветке из пяти ничего не стоит.
+    fn arrive(&mut self, id: UnitId, events: &mut Vec<Event>) {
+        let Some(cell) = self.board.cell_of(id) else { return };
+        if self.ground(cell) != Some(Ground::Pit) {
+            return;
+        }
+        let body = self.units[id as usize].clone();
+        let res = crate::damage::resolve(
+            None,
+            &body,
+            crate::damage::DamagePacket::new(PIT_HARM, crate::damage::Channel::Physical, crate::damage::Source::Zone),
+        );
+        events.extend(apply(&mut self.units[id as usize], &res));
+    }
+
+    /// Куда тело дойдёт с этой клетки — с местностью.
+    ///
+    /// Тот же обход в ширину, что у `Board::reachable`, и при пустой местности
+    /// ответ у них один до клетки: стена не пускает; болото и яма пускают, но
+    /// дальше из них в этот ход не идут; стоящий в болоте выходит на одну
+    /// клетку; овраг перепрыгивают, если шага хватает на клетку за ним.
+    pub fn walkable(&self, from: Cell, step: u8) -> Vec<Cell> {
+        if self.terrain.is_empty() {
+            return self.board.reachable(&self.field, from, step);
+        }
+        let step = if self.ground(from) == Some(Ground::Mire) { step.min(1) } else { step };
+        let mut seen: Vec<Cell> = vec![from];
+        let mut frontier = vec![from];
+        for _ in 0..step {
+            let mut next = Vec::new();
+            for cell in frontier.drain(..) {
+                // Болото и яма держат вошедшего: дальше из них в этот ход нет.
+                if cell != from && matches!(self.ground(cell), Some(Ground::Mire | Ground::Pit)) {
+                    continue;
+                }
+                for n in self.field.neighbours(cell) {
+                    // Через овраг идут как через клетку — встать на нём нельзя,
+                    // но перепрыгнуть можно, если шага хватает на клетку за ним.
+                    let passable = self.board.is_free(n) && self.ground(n) != Some(Ground::Wall);
+                    if !seen.contains(&n) && passable {
+                        seen.push(n);
+                        next.push(n);
+                    }
+                }
+            }
+            frontier = next;
+            if frontier.is_empty() {
+                break;
+            }
+        }
+        self.field.cells()
+            .filter(|c| *c != from && seen.contains(c) && !self.unstandable(*c))
+            .collect()
+    }
+
+    /// Тела стороны, стоящие на её ряду прорыва и ходящие за неё.
+    ///
+    /// Хозяин и тот, за кого тело ходит, должны совпасть: уведённое смутой
+    /// тело прорыва не делает ни хозяину (он им не ходит), ни уведшему (иначе
+    /// смута на тело у собственного края выигрывала бы партию).
+    pub fn on_goal(&self, side: Side) -> Vec<UnitId> {
+        self.owned_standing(side)
+            .into_iter()
+            .filter(|id| {
+                let u = &self.units[*id as usize];
+                u.side() == side
+                    && self.board.cell_of(*id).is_some_and(|c| c.y == self.field.goal_row(side))
+            })
+            .collect()
+    }
+
+    /// Тело стороны, которое закончило её прошлый ход на ряду прорыва и стоит
+    /// там до сих пор.
+    pub fn breaker(&self, side: Side) -> Option<UnitId> {
+        let now = self.on_goal(side);
+        self.poised.iter().copied().find(|id| now.contains(id))
+    }
+
     /// Health left standing on one side — what decides a match that ran out of
     /// rounds.
     pub fn standing_health(&self, side: Side) -> i32 {
@@ -605,7 +835,7 @@ impl MatchState {
     /// Ближний бой (дальность 1) достаёт только до соседней клетки: стрелять
     /// ему нечем, и штраф за дальний выстрел к нему не относится.
     pub fn can_reach(&self, attacker: &Unit, from: Cell, to: Cell) -> bool {
-        from.distance(to) <= attacker.reach
+        from.distance(to) <= self.reach_of(attacker)
             || (attacker.reach > 1 && self.rules.long_shot_power > 0)
     }
 
@@ -638,10 +868,19 @@ impl MatchState {
         (self.round - from + 1) as i32
     }
 
+    /// Стоит ли цель в укрытии, а бьют её не с соседней клетки.
+    pub fn covered(&self, attacker: &Unit, target: &Unit) -> bool {
+        let (Some(from), Some(at)) = (self.board.cell_of(attacker.id), self.board.cell_of(target.id)) else {
+            return false;
+        };
+        self.ground(at) == Some(Ground::Cover) && from.distance(at) > 1
+    }
+
     pub fn blow(&self, attacker: &Unit, target: &Unit) -> crate::damage::Resolution {
         let late = self.escalation();
         let far = self.long_shot(attacker, target);
-        if !self.engaged(attacker) && late == 0 && !far {
+        let covered = self.covered(attacker, target);
+        if !self.engaged(attacker) && late == 0 && !far && !covered {
             return strike(attacker, target);
         }
         // Оба штрафа перемножаются, когда положены оба: стрелок, которого
@@ -658,6 +897,11 @@ impl MatchState {
         if self.engaged(attacker) {
             let next = kept * self.rules.point_blank_power as i32 / 100;
             steps.push((crate::damage::StepId::PointBlank, kept, next));
+            kept = next;
+        }
+        if covered {
+            let next = kept * COVER_KEPT / 100;
+            steps.push((crate::damage::StepId::Cover, kept, next));
             kept = next;
         }
         let mut res = crate::damage::resolve(
@@ -877,6 +1121,16 @@ impl MatchState {
             if a.trigger != trigger || a.amount <= 0 {
                 continue;
             }
+            // Лечение не в словаре чар (`Casting::of_verb` его не знает: рукой
+            // оно играется `Action::Mend`), но и случиться само оно обязано:
+            // у вампира напечатано «восстанавливает 2 здоровья после каждого
+            // удара», и пока здесь стояло `continue`, этот повод молча не
+            // делал ничего. Хода и маны не тратит, как всякая реакция.
+            if a.verb == "heal" {
+                let key = crate::unit::ability_key(a, i);
+                self.react_heal(bearer, a, &key, events);
+                continue;
+            }
             let Some(what) = a.casting() else { continue };
             let key = crate::unit::ability_key(a, i);
             if self.units[bearer as usize].ability_cd(&key) > 0 {
@@ -952,6 +1206,46 @@ impl MatchState {
             // случается. Человек его и не просил.
             let _ = self.work(&body, a, what, &key, &swept, from, spot, span, side, events);
         }
+    }
+
+    /// Лечение по поводу: глоток по удару, исцеление при выходе, дар при гибели.
+    ///
+    /// Цель — носитель (форма `self`) или ближайший РАНЕНЫЙ свой в пределах
+    /// дальности умения, не считая носителя: «затянуть чужую рану» значит
+    /// «чужую», и самолечение — отдельная форма. Лечить некого — реакция не
+    /// случается и откат не тратит. Количество считает тот же `resolve_mend`,
+    /// что и рука: выше полного здоровья не лечат.
+    fn react_heal(&mut self, bearer: UnitId, a: &CardAbilitySnap, key: &str, events: &mut Vec<Event>) {
+        if a.amount <= 0 || self.units[bearer as usize].ability_cd(key) > 0 {
+            return;
+        }
+        let Some(from) = self.board.cell_of(bearer) else { return };
+        let side = self.units[bearer as usize].side();
+        let target = if a.shape == "self" {
+            Some(bearer)
+        } else {
+            self.board
+                .occupied()
+                .filter(|(cell, id)| {
+                    let u = &self.units[*id as usize];
+                    *id != bearer
+                        && !u.health.is_dead()
+                        && u.side() == side
+                        && u.wound() > 0
+                        && cell.distance(from) <= a.range
+                })
+                .min_by_key(|(cell, _)| cell.distance(from))
+                .map(|(_, id)| id)
+        };
+        let Some(target) = target else { return };
+        let mending = crate::heal::resolve_mend(&self.units[target as usize], a.amount);
+        if mending.restored == 0 {
+            return;
+        }
+        if a.cooldown > 0 {
+            self.units[bearer as usize].start_ability_cd(key, a.cooldown);
+        }
+        events.extend(crate::heal::apply_mend(Some(bearer), &mut self.units[target as usize], &mending));
     }
 
     /// ЧТО делает чара, когда уже решено, кто её наводит и в кого.
@@ -1087,11 +1381,22 @@ impl MatchState {
                     // и есть разница между ними, и берётся оно из того, кто
                     // кому свой, а не из поля на карте, которого нет.
                     let away = self.units[id as usize].side() != side;
-                    let to = self.slide(from, spot, a.amount, away);
-                    if to != spot {
+                    let (to, fell) = self.slide(from, spot, a.amount, away);
+                    if let Some(chasm) = fell {
+                        // Падение — та же гибель, что у жертвы: со снятием
+                        // всадников и с событием. `Fell` идёт первым, чтобы сцена
+                        // показала, КУДА, а не только что тела больше нет.
+                        self.units[id as usize].health.current = 0;
+                        self.units[id as usize].statuses.clear();
+                        self.units[id as usize].holds.clear();
+                        self.board.clear(spot);
+                        events.push(Event::Fell { unit: id, from: spot, to: chasm });
+                        events.push(Event::Died { target: id });
+                    } else if to != spot {
                         self.board.clear(spot);
                         self.board.place(to, id);
                         events.push(Event::Moved { unit: id, from: spot, to });
+                        self.arrive(id, events);
                     }
                 } else {
                     // Свой шаг: тело прыгает на пустую клетку в пределах
@@ -1100,6 +1405,7 @@ impl MatchState {
                     self.board.clear(from);
                     self.board.place(spot, c.id);
                     events.push(Event::Moved { unit: c.id, from, to: spot });
+                    self.arrive(c.id, events);
                 }
             }
             crate::spell::Casting::Zone => {
@@ -1107,7 +1413,7 @@ impl MatchState {
                 // которое у формы уже есть, и здесь оно значит то же, что
                 // везде: сколько шагов короля вокруг.
                 let cells: Vec<Cell> = if a.radius > 0 {
-                    let mut out: Vec<Cell> = crate::board::all_cells()
+                    let mut out: Vec<Cell> = self.field.cells()
                         .filter(|cell| cell.distance(spot) <= a.radius)
                         .collect();
                     out.sort();
@@ -1151,6 +1457,7 @@ impl MatchState {
                     cell: spot,
                     cost: 0,
                 });
+                self.arrive(id, events);
             }
             _ => {
                 // Всё остальное — удержание: порча, заживление, оцепенение,
@@ -1348,12 +1655,12 @@ impl MatchState {
     /// стену значит не сдвинуть: продавливать чужие тела было бы вторым
     /// правилом ходьбы, а она уже написана и обходит стоящих, а не проходит
     /// сквозь них.
-    fn slide(&self, from: Cell, spot: Cell, amount: i32, away: bool) -> Cell {
+    fn slide(&self, from: Cell, spot: Cell, amount: i32, away: bool) -> (Cell, Option<Cell>) {
         let sign = if away { 1 } else { -1 };
         let dx = (spot.x as i16 - from.x as i16).signum() * sign;
         let dy = (spot.y as i16 - from.y as i16).signum() * sign;
         if dx == 0 && dy == 0 {
-            return spot;
+            return (spot, None);
         }
         let mut at = spot;
         for _ in 0..amount.max(0) {
@@ -1365,7 +1672,12 @@ impl MatchState {
             let Some(next) = Cell::new(nx as u8, ny as u8) else {
                 break;
             };
-            if !self.board.is_free(next) {
+            // Овраг на пути толчка — падение. Не «остановился у края»: край
+            // оврага и есть то, ради чего его ставят рядом с толкающим.
+            if self.ground(next) == Some(Ground::Ravine) && self.board.is_free(next) {
+                return (at, Some(next));
+            }
+            if !self.open(next) {
                 break;
             }
             // Притягивают ДО вплотную, а не мимо: по-королевски шагая наискось,
@@ -1375,8 +1687,13 @@ impl MatchState {
                 break;
             }
             at = next;
+            // В болоте и в яме и толкнутое останавливается: они держат
+            // всякого, кто в них оказался, а не только того, кто вошёл сам.
+            if matches!(self.ground(at), Some(Ground::Mire | Ground::Pit)) {
+                break;
+            }
         }
-        at
+        (at, None)
     }
 
     /// Бьёт ли это тело дальше своей дальности.
@@ -1385,7 +1702,7 @@ impl MatchState {
             return false;
         }
         match (self.board.cell_of(attacker.id), self.board.cell_of(target.id)) {
-            (Some(from), Some(to)) => from.distance(to) > attacker.reach,
+            (Some(from), Some(to)) => from.distance(to) > self.reach_of(attacker),
             _ => false,
         }
     }
@@ -1487,10 +1804,15 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                 .get(*hand_index)
                 .cloned()
                 .ok_or(Illegal::NoSuchCard)?;
-            if cell.side() != side {
+            // Клетка, которой нет на ЭТОМ поле, — занятая: встать туда нельзя
+            // так же, как на стену.
+            if !st.field.contains(*cell) {
+                return Err(Illegal::CellTaken);
+            }
+            if st.field.side_of(*cell) != side {
                 return Err(Illegal::NotYourHalf);
             }
-            if !st.board.is_free(*cell) {
+            if !st.open(*cell) {
                 return Err(Illegal::CellTaken);
             }
             if st.side_state(side).mana < card.cost {
@@ -1501,6 +1823,7 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
             st.side_state_mut(side).mana -= card.cost;
             let id = st.raise(&card, *cell, side);
             events.push(Event::Played { side, unit: id, cell: *cell, cost: card.cost });
+            st.arrive(id, &mut events);
             let since = events.len();
             st.reacts("onPlay", id, None, &mut events);
             st.answer(Some(id), since, &mut events);
@@ -1521,7 +1844,7 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                 return Err(Illegal::AlreadyActed);
             }
             let from = st.board.cell_of(u.id).ok_or(Illegal::UnitIsDown)?;
-            if !st.board.reachable(from, u.step).contains(to) {
+            if !st.walkable(from, u.step).contains(to) {
                 return Err(Illegal::NoWayThere);
             }
 
@@ -1540,6 +1863,7 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                 st.units[u.id as usize].moved = true;
             }
             events.push(Event::Moved { unit: u.id, from, to: *to });
+            st.arrive(u.id, &mut events);
         }
 
         Action::Mend { healer, target } => {
@@ -1694,7 +2018,7 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                 && !st.units[t.id as usize].disarmed()
                 && !st.units[t.id as usize].bound()
                 && st.units[t.id as usize].strikes
-                && to.distance(from) <= st.units[t.id as usize].reach
+                && to.distance(from) <= st.reach_of(&st.units[t.id as usize])
             {
                 let defender = st.units[t.id as usize].clone();
                 let back = crate::damage::resolve(
@@ -1773,7 +2097,10 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                     if target.spot().is_none() {
                         return Err(Illegal::NotThatAim);
                     }
-                    if free && !st.board.is_free(spot) {
+                    if !st.field.contains(spot) {
+                        return Err(Illegal::NoRoom);
+                    }
+                    if free && !st.open(spot) {
                         return Err(Illegal::NoRoom);
                     }
                 }
@@ -1982,16 +2309,49 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                 }
             }
             st.zones.retain(|z| z.turns > 0);
+            // Кто закончил ход на чужом краю — запоминается после платы и
+            // сроков: павший от них края не держит.
+            if st.rules.breakthrough {
+                let mine = |id: &UnitId| st.units[*id as usize].owner == side;
+                let kept: Vec<UnitId> = st.poised.iter().copied().filter(|id| !mine(id)).collect();
+                let mut poised = kept;
+                poised.extend(st.on_goal(side));
+                st.poised = poised;
+            }
             events.push(Event::TurnEnded { side, round: st.round });
             st.active = side.other();
             if st.active == Side::Player {
                 st.round += 1;
+            }
+            // Прорыв решается раньше счётчика: простоявший ход противника
+            // заработал победу, и истёкший лимит её не отнимает.
+            if st.rules.breakthrough {
+                let next = st.active;
+                if let Some(unit) = st.breaker(next) {
+                    let outcome = match next {
+                        Side::Player => Outcome::Player,
+                        Side::Keeper => Outcome::Keeper,
+                    };
+                    st.outcome = Some(outcome);
+                    events.push(Event::Breached { unit, side: next });
+                    events.push(Event::Finished { outcome });
+                    return Ok((st, events));
+                }
             }
             if st.round > st.rules.max_rounds {
                 st.settle_on_time(&mut events);
                 return Ok((st, events));
             }
             st.open_turn();
+            // Родник поит стоящих на нём — до поводов начала хода: вода в
+            // начале хода, а не после того, как кто-то уже успел ответить.
+            for id in st.standing(st.active) {
+                let on_spring = st.board.cell_of(id).is_some_and(|c| st.ground(c) == Some(Ground::Spring));
+                if on_spring {
+                    let mending = crate::heal::resolve_mend(&st.units[id as usize], SPRING_MEND);
+                    events.extend(crate::heal::apply_mend(None, &mut st.units[id as usize], &mending));
+                }
+            }
             // Начало своего хода — повод. Стоящие берутся после того, как ход
             // уже перешёл: «свой ход» у тела то, в котором оно ходит.
             for id in st.standing(st.active) {
@@ -2031,7 +2391,7 @@ pub fn legal_actions(state: &MatchState) -> Vec<Action> {
         if card.cost > state.side_state(side).mana {
             continue;
         }
-        for cell in state.board.free_cells(side) {
+        for cell in state.free_cells(side) {
             out.push(Action::Play { hand_index: i, cell });
         }
     }
@@ -2042,7 +2402,7 @@ pub fn legal_actions(state: &MatchState) -> Vec<Action> {
             continue;
         }
         let Some(from) = state.board.cell_of(unit) else { continue };
-        for to in state.board.reachable(from, u.step) {
+        for to in state.walkable(from, u.step) {
             out.push(Action::Move { unit, to });
         }
     }
@@ -2190,11 +2550,11 @@ pub fn legal_actions(state: &MatchState) -> Vec<Action> {
                     }
                 }
                 crate::spell::Aim::Spot { free } => {
-                    for cell in crate::board::all_cells() {
+                    for cell in state.field.cells() {
                         if !reaches(cell) {
                             continue;
                         }
-                        if free && !state.board.is_free(cell) {
+                        if free && !state.open(cell) {
                             continue;
                         }
                         // Своим шагом на своё же место не ходят.

@@ -22,6 +22,8 @@ fn face_off() -> Setup {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 1, 6, 3), cell(1, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     }
 }
 
@@ -41,13 +43,19 @@ fn a_diagonal_costs_the_same_as_a_straight_step() {
 fn range_five_is_exactly_the_whole_field() {
     // The far rank of one side to the far rank of the other, corner to corner.
     assert_eq!(cell(0, 0).distance(cell(2, 5)), 5);
-    assert!(Cell::new(0, 6).is_none(), "поля глубже шести рядов нет");
+    assert!(Field::default().cell(0, 6).is_none(), "на поле 3 × 3 глубже шести рядов нет");
+    assert!(Field { width: 4, depth: 5 }.cell(3, 9).is_some(), "а на 4 × 5 — есть");
 }
 
 #[test]
 fn the_half_a_cell_belongs_to_is_read_off_its_row() {
-    assert_eq!(cell(0, 2).side(), Side::Keeper);
-    assert_eq!(cell(0, 3).side(), Side::Player);
+    let field = Field::default();
+    assert_eq!(field.side_of(cell(0, 2)), Side::Keeper);
+    assert_eq!(field.side_of(cell(0, 3)), Side::Player);
+    // На поле поглубже шов уходит вместе с глубиной половины.
+    let deep = Field { width: 4, depth: 5 };
+    assert_eq!(deep.side_of(cell(0, 4)), Side::Keeper);
+    assert_eq!(deep.side_of(cell(0, 5)), Side::Player);
 }
 
 // ── розыгрыш карты ──────────────────────────────────────────────────────────
@@ -322,6 +330,8 @@ fn skirmish() -> Setup {
             (boec("Тень", 2, 4, 2).with_reach(3), cell(2, 1)),
         ],
         keeper_hand: vec![boec("Кот", 2, 5, 2), boec("Котёл", 3, 7, 3)],
+        terrain: Vec::new(),
+        field: Default::default(),
     }
 }
 
@@ -461,7 +471,7 @@ fn a_rank_of_bodies_is_walked_around_and_not_through() {
         Illegal::NoWayThere,
         "но пройти негде"
     );
-    assert!(!st.board.reachable(cell(0, 5), 2).contains(&cell(0, 3)));
+    assert!(!st.board.reachable(&st.field, cell(0, 5), 2).contains(&cell(0, 3)));
 }
 
 #[test]
@@ -708,7 +718,7 @@ fn a_body_may_cross_into_the_other_half() {
     };
     let st = MatchState::begin(setup);
     let (st, _) = act(&st, Action::Move { unit: 0, to: cell(0, 2) });
-    assert_eq!(st.board.cell_of(0).unwrap().side(), Side::Keeper);
+    assert_eq!(st.field.side_of(st.board.cell_of(0).unwrap()), Side::Keeper);
 }
 
 #[test]

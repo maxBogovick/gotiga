@@ -206,6 +206,8 @@ async fn prepare(pool: &PgPool) -> (AppService, Uuid, Uuid) {
                     // заведено вместе с этюдными правилами, и тесты про доску
                     // о нём ничего не говорят намеренно.
                     rules: None,
+                    terrain: vec![],
+                    field: Default::default(),
                 },
                 bot_depth: 1,
                 reward_dust: 25,
@@ -625,6 +627,8 @@ async fn a_challenge_naming_an_unknown_card_is_refused_when_it_is_written(pool: 
                     // заведено вместе с этюдными правилами, и тесты про доску
                     // о нём ничего не говорят намеренно.
                     rules: None,
+                    terrain: vec![],
+                    field: Default::default(),
                 },
                 bot_depth: 1,
                 reward_dust: 0,
@@ -664,6 +668,8 @@ async fn meeting(service: &AppService, slug: &str) -> Uuid {
                     // заведено вместе с этюдными правилами, и тесты про доску
                     // о нём ничего не говорят намеренно.
                     rules: None,
+                    terrain: vec![],
+                    field: Default::default(),
                 },
                 bot_depth: 1,
                 reward_dust: 0,

@@ -17,6 +17,7 @@
   import { t, lang, type TranslationKey } from "$lib/i18n";
   import BattleScene from "$lib/components/BattleScene.svelte";
   import FrameDesk from "$lib/components/studio/FrameDesk.svelte";
+  import BattleFieldDesk from "$lib/components/admin/BattleFieldDesk.svelte";
   import {
     CARD_WIDTHS,
     DEFAULT_FRAMES,
@@ -38,6 +39,8 @@
     TIERS,
     HOUSE_RULES,
     rulesApart,
+    UNSTANDABLE,
+    DEFAULT_FIELD,
     applyInsetDelta,
     badgeReserve,
     clampTier,
@@ -51,8 +54,22 @@
     newOrnament,
     dressOf,
     frameName,
+    frameFor,
     frameForCard,
     isFreeform,
+    isBaked,
+    readyCardDress,
+    pictureInks,
+    mostlyCyrillic,
+    inkByPicture,
+    freeMarkLabel,
+    freeMarkOf,
+    setFreeMark,
+    isFreeBadge,
+    FREE_SLOTS,
+    FREE_TEXT_SLOTS,
+    READY_ASPECT_SLACK,
+    DEFAULT_ASPECT,
     kindOf,
     livePiece,
     normalizeSheet,
@@ -122,9 +139,12 @@
     BattlePlayerSide,
     Bench,
     ChallengeSetup,
+    BattleGround,
+    BattleField,
     AbilityVerb,
     AbilityShape,
     AbilityTrigger,
+    FreeSlot,
     FigurineListItem,
     AdminUserListItem,
     BattleMe,
@@ -142,6 +162,7 @@
     | "races"
     | "keywords"
     | "bench"
+    | "field"
     | "hand"
     | "matches"
     | "errands"
@@ -287,8 +308,11 @@
   // ни оставить мусор в базе, а свойство «журнал переигрывается» проверяется
   // на каждом клике.
 
-  const BENCH_WIDTH = 3;
-  const BENCH_DEPTH = 6;
+  /** Величина поля этюда, открытого на столе. Не константа: этюд выбирает
+   *  её сам (вкладка «Поле боя»), и стол раскладывает ту, что выбрана. */
+  let benchField = $state<BattleField>({ ...DEFAULT_FIELD });
+  let BENCH_WIDTH = $derived(benchField.width);
+  let BENCH_DEPTH = $derived(benchField.depth * 2);
 
   /** Сколько карт на столе гостя: три на доске и три в руке. То же число, что
    *  `DECK_BOARD + DECK_HAND` на сервере, — здесь оно нужно, чтобы понять,
@@ -302,6 +326,9 @@
   );
 
   let benchBoard = $state<Record<string, string>>({});
+  /** Местность этюда по клетке. Рядом с расстановкой, а не внутри неё: на
+   *  укрытии и в топи стоят, и одна клетка несёт и тело, и землю. */
+  let benchTerrain = $state<Record<string, BattleGround>>({});
   let benchHands = $state<{ player: string[]; keeper: string[] }>({
     player: [],
     keeper: [],
@@ -317,7 +344,7 @@
       Object.entries(benchBoard)
         .filter(([key]) => {
           const y = Number(key.split(",")[1]);
-          return half === "keeper" ? y < 3 : y >= 3;
+          return half === "keeper" ? y < benchField.depth : y >= benchField.depth;
         })
         .map(([key, card]) => {
           const [x, y] = key.split(",").map(Number);
@@ -332,8 +359,61 @@
       // играющий домашними правилами при своих у этюда, проверял бы не тот
       // этюд, а хранитель узнавал бы об этом от гостя.
       rules: etudeOwnRules ? etudeRules : null,
+      field: benchField,
+      terrain: Object.entries(benchTerrain).map(([key, ground]) => {
+        const [x, y] = key.split(",").map(Number);
+        return { cell: { x, y }, ground };
+      }),
     };
   });
+
+  /** Стена или овраг под стоящим телом: сервер такую расстановку не примет.
+   *  Стол поля не даёт её нарисовать, но тело могли поставить на стену уже
+   *  ПОСЛЕ — выпадающим списком расстановки, — и сказать об этом надо там. */
+  let wallUnderBody = $derived(
+    Object.entries(benchTerrain).some(
+      ([key, ground]) => UNSTANDABLE.has(ground) && !!benchBoard[key],
+    ),
+  );
+  let terrainCount = $derived(Object.keys(benchTerrain).length);
+
+  /**
+   * Сменить величину поля. Всё, что стоит, держится у ШВА: расстояния через
+   * шов не меняются, и этюд остаётся той же задачей, только на другом поле.
+   * Сдвиг один на обе половины — на разницу глубины. Что за новым краем,
+   * снимается, и стол говорит, сколько: молча пропавшее тело — это этюд,
+   * который сохранили не тем, каким его видели.
+   */
+  function resizeField(next: BattleField) {
+    const shift = next.depth - benchField.depth;
+    const rows = next.depth * 2;
+    const move = <T,>(from: Record<string, T>) => {
+      const out: Record<string, T> = {};
+      let lost = 0;
+      for (const [key, value] of Object.entries(from)) {
+        const [x, y] = key.split(",").map(Number);
+        const ny = y + shift;
+        if (x < next.width && ny >= 0 && ny < rows) out[`${x},${ny}`] = value;
+        else lost += 1;
+      }
+      return { out, lost };
+    };
+    const bodies = move(benchBoard);
+    const ground = move(benchTerrain);
+    benchBoard = bodies.out;
+    benchTerrain = ground.out;
+    benchField = { ...next };
+    benchJournal = [];
+    bench = null;
+    if (bodies.lost || ground.lost) {
+      flash(
+        `${$t("adminBattlesFieldResizedLost")}: ${bodies.lost} / ${ground.lost}`,
+        6000,
+      );
+    }
+  }
+
+
 
   let benchReady = $derived(
     benchSetup.playerBoard.length > 0 && benchSetup.keeperBoard.length > 0,
@@ -515,6 +595,7 @@
   /** Ручки в том порядке, в каком их выбирают: сперва то, что меняет игру
    *  целиком, потом то, что её подкручивает. */
   const RULE_DIALS = [
+    { key: "breakthrough", label: "adminBattlesRuleBreakthrough", kind: "flag" },
     { key: "walkSpendsTurn", label: "adminBattlesRuleWalk", kind: "flag" },
     { key: "retaliation", label: "adminBattlesRuleRetaliation", kind: "flag" },
     { key: "actsPerTurn", label: "adminBattlesRuleActs", kind: "number", min: 1, max: 255 },
@@ -543,7 +624,8 @@
    *  хранителя: половину гостя приносит его стол, и требовать её здесь значило
    *  бы требовать чужого. То же правило, что и на сервере. */
   let etudeReady = $derived(
-    etudeSide === "deck" ? benchSetup.keeperBoard.length > 0 : benchReady,
+    !wallUnderBody &&
+      (etudeSide === "deck" ? benchSetup.keeperBoard.length > 0 : benchReady),
   );
 
   /** Карта, названная расстановкой, но снятая с полки: `benchable` её больше
@@ -585,11 +667,18 @@
     benchJournal = [];
     bench = null;
     benchComplaint = null;
+    benchField = { ...(challenge?.setup.field ?? DEFAULT_FIELD) };
     if (!challenge) {
       benchBoard = {};
+      benchTerrain = {};
       benchHands = { player: [], keeper: [] };
       return;
     }
+    const ground: Record<string, BattleGround> = {};
+    for (const t of challenge.setup.terrain ?? []) {
+      ground[`${t.cell.x},${t.cell.y}`] = t.ground;
+    }
+    benchTerrain = ground;
     const board: Record<string, string> = {};
     for (const p of [
       ...challenge.setup.keeperBoard,
@@ -1244,6 +1333,158 @@
   let draftFreeform = $derived(
     isFreeform(frameForCard(draft, frames, previewLevel)),
   );
+
+  // ── Свой наряд карты, живым объектом ──────────────────────────────────────
+  //
+  // На карте наряд лежит строкой (`frameOverride`), а ручки на ней — значки,
+  // метки, окно — правят ОБЪЕКТ. Объект живёт здесь и сам переписывается в
+  // строку при всякой правке; строка, сменившаяся снаружи (открыли другую
+  // карту, надели пресет, сняли наряд), заново разбирается в объект. Сверка по
+  // последней записанной строке не даёт им гонять друг друга по кругу.
+  //
+  // Без этого ручки на листе писали в РАНГ — то есть двигали значок у всех
+  // карт этого ранга, — а сохранение карты этого не сохраняло.
+
+  let cardDress = $state<FrameOverride | null>(null);
+  let cardDressRaw = "";
+
+  $effect.pre(() => {
+    const raw = draft.frameOverride ?? "";
+    if (raw === cardDressRaw) return;
+    cardDressRaw = raw;
+    cardDress = parseFrameOverride(raw);
+  });
+
+  $effect(() => {
+    if (!cardDress) return;
+    const raw = JSON.stringify(cardDress);
+    if (raw === cardDressRaw) return;
+    cardDressRaw = raw;
+    draft.frameOverride = raw;
+  });
+
+  /** Карта носит готовую картинку целиком (§ 9.10). */
+  let draftBaked = $derived(isBaked(frameForCard(draft, frames, previewLevel)));
+
+  let readyBusy = $state(false);
+
+  /**
+   * Загрузить готовую картинку карты. Первая загрузка надевает наряд «Готовой
+   * карты», повторная меняет только картинку: места надписей на
+   * перерисованной картинке остаются теми же.
+   */
+  async function uploadReadyCard() {
+    const before = parseFrameOverride(draft.frameOverride);
+    // Чужой наряд (своя рамка, пресет) молча уступить место не может: в нём
+    // могла быть работа. Спрашивается до выбора файла, а не после загрузки.
+    if (before && !(before.frameMode === "freeform" && before.artBaked)) {
+      if (!confirm($t("adminBattlesReadyReplaceDress"))) return;
+    }
+    const file = await pickImageFile();
+    if (!file) return;
+    readyBusy = true;
+    try {
+      // Чернила — по самой картинке, пока файл ещё в руках: из файла читать
+      // проще и вернее, чем из адреса, которому ещё предстоит загрузиться.
+      const [art, inkAt] = await Promise.all([
+        api.adminUploadBattleFrameArt(file),
+        pictureInks(file),
+      ]);
+      const ink = frameFor(draft.tier, frames).ink;
+      draft.frameOverride = JSON.stringify(readyCardDress(art.url, before, ink, inkAt));
+      readyImage = { url: art.url, width: art.width, height: art.height };
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      readyBusy = false;
+    }
+  }
+
+  /** Перекрасить слова и числа под картинку — по тем местам, где они стоят
+   *  сейчас. Для карты, расставленной до подбора, и после большого сдвига. */
+  async function inkReadyCard() {
+    const url = cardDress?.frameImage?.trim();
+    if (!cardDress || !url) return;
+    readyBusy = true;
+    try {
+      const inkAt = await pictureInks(url);
+      if (!inkAt) {
+        flash($t("adminBattlesReadyInkFailed"), 6000);
+        return;
+      }
+      inkByPicture(cardDress, inkAt);
+    } finally {
+      readyBusy = false;
+    }
+  }
+
+  /** Чья панель открыта на карте — метки или значка. Список в «Готовой
+   *  карте» открывает её отсюда, чтобы метку не искать на картинке. */
+  let readyHeld = $state<FreeSlot | null>(null);
+
+  function openReadyMark(slot: FreeSlot) {
+    if (!readyShown(slot)) setReadyShown(slot, true);
+    readyHeld = slot;
+  }
+
+  function dropReadyCard() {
+    if (!confirm($t("adminBattlesReadyDropConfirm"))) return;
+    draft.frameOverride = null;
+  }
+
+  /** Размер картинки — чтобы сказать, если она не той формы, что карта. Узнаётся
+   *  при загрузке, а для уже надетой — у самой картинки. */
+  let readyImage = $state<{ url: string; width: number; height: number } | null>(null);
+
+  $effect(() => {
+    const url = draftBaked ? cardDress?.frameImage?.trim() : "";
+    if (!url || readyImage?.url === url) return;
+    const probe = new Image();
+    probe.onload = () => {
+      readyImage = { url, width: probe.naturalWidth, height: probe.naturalHeight };
+    };
+    probe.src = url;
+  });
+
+  /** Форма карты, которую она носит, и форма картинки. Разошлись больше чем
+   *  на три сотых — картинка будет растянута, и об этом говорят словами. */
+  let readyAspect = $derived.by(() => {
+    if (!draftBaked || !readyImage || readyImage.url !== cardDress?.frameImage) return null;
+    const picture = readyImage.width / readyImage.height;
+    const card = cardDress?.aspect || frameForCard(draft, frames).aspect || DEFAULT_ASPECT;
+    return {
+      picture,
+      card,
+      off: Math.abs(picture - card) / card > READY_ASPECT_SLACK,
+      width: readyImage.width,
+      height: readyImage.height,
+    };
+  });
+
+  /** Видна ли метка — с тем же откатом, каким её рисует карта. */
+  function readyShown(slot: FreeSlot): boolean {
+    const frame = frameForCard(draft, frames, previewLevel);
+    if (isFreeBadge(slot)) return frame.freeMarks?.[slot]?.shown ?? false;
+    return freeMarkOf(frame, slot).shown;
+  }
+
+  function setReadyShown(slot: FreeSlot, shown: boolean) {
+    if (!cardDress) return;
+    setFreeMark(cardDress, slot, { shown });
+  }
+
+  /** Вернуть надписи и числа на места по умолчанию. Что видно и как
+   *  выглядит — остаётся: сбрасывается только место. */
+  function readyHome() {
+    if (!cardDress) return;
+    const home = readyCardDress("", null, "");
+    for (const slot of FREE_SLOTS) setFreeMark(cardDress, slot, { x: undefined, y: undefined });
+    for (const key of ["costX", "costY", "powerX", "powerY", "healthX", "healthY"] as const) {
+      if (home[key] != null) cardDress[key] = home[key];
+      else delete cardDress[key];
+    }
+  }
+
 
 
 
@@ -2629,6 +2870,12 @@
           : ''}">{$t("adminBattlesBench")}</button
       >
       <button
+        onclick={() => (view = "field")}
+        class="px-3 py-1 {view === 'field'
+          ? 'bg-[#34251c] text-[#f8f1e7]'
+          : ''}">{$t("adminBattlesFieldView")}</button
+      >
+      <button
         onclick={() => (view = "hand")}
         class="px-3 py-1 {view === 'hand' ? 'bg-[#34251c] text-[#f8f1e7]' : ''}"
         >{$t("adminBattlesHand")}</button
@@ -3589,7 +3836,7 @@
                     >
                       <input
                         type="checkbox"
-                        checked={etudeRules[dial.key]}
+                        checked={!!etudeRules[dial.key]}
                         onchange={(e) =>
                           tune(dial.key, e.currentTarget.checked)}
                       />
@@ -3666,20 +3913,18 @@
 
         <div class="flex flex-wrap gap-8 items-start">
           <!-- Расстановка. Клетка — это просто выпадающий список: перетаскивание
-               здесь ничего не проверяет, а сломать может. -->
-          <div class="w-[22rem]">
+               здесь ничего не проверяет, а сломать может. Лежит ВДОЛЬ, как поле
+               в бою: своя половина слева, хранителя справа, ряды сверху вниз —
+               те же, что видит гость. -->
+          <div class="max-w-full overflow-x-auto">
             <p
               class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
             >
-              {$t("adminBattlesBenchPlace")}
+              {$t("adminBattlesBenchPlace")} · {benchField.width} × {benchField.depth}
             </p>
-            {#each Array.from({ length: BENCH_DEPTH }, (_, y) => y) as y (y)}
-              <div
-                class="flex gap-1 mb-1 {y === 3
-                  ? 'mt-2 pt-2 border-t border-dashed border-[#34251c]/20'
-                  : ''}"
-              >
-                {#each Array.from({ length: BENCH_WIDTH }, (_, x) => x) as x (x)}
+            {#each Array.from({ length: BENCH_WIDTH }, (_, x) => x) as x (x)}
+              <div class="flex gap-1 mb-1">
+                {#each Array.from({ length: BENCH_DEPTH }, (_, i) => BENCH_DEPTH - 1 - i) as y (y)}
                   <select
                     value={benchBoard[`${x},${y}`] ?? ""}
                     onchange={(e) => {
@@ -3689,7 +3934,10 @@
                       else delete next[`${x},${y}`];
                       benchBoard = next;
                     }}
-                    class="flex-1 min-w-0 px-1 py-1 text-[11px] bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                    class="w-[5.5rem] flex-shrink-0 px-1 py-1 text-[11px] bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 {y ===
+                    benchField.depth - 1
+                      ? 'ml-3'
+                      : ''}"
                   >
                     <option value="">·</option>
                     <!-- Карта, снятая с полки после того, как этюд был
@@ -3714,10 +3962,31 @@
             <p
               class="mt-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
             >
-              {$t("adminBattlesBenchKeeperHalf")} ↑ · {$t(
-                "adminBattlesBenchGuestHalf",
-              )} ↓
+              ← {$t("adminBattlesBenchGuestHalf")} · {$t(
+                "adminBattlesBenchKeeperHalf",
+              )} →
             </p>
+          </div>
+
+          <!-- Местность правится на своей вкладке, кистью по доске. Здесь —
+               только сколько её и одна дверь туда: второй редактор той же
+               земли разошёлся бы с первым. -->
+          <div class="w-[12rem]">
+            <p
+              class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+            >
+              {$t("adminBattlesBenchTerrain")} · {terrainCount}
+            </p>
+            <button
+              onclick={() => (view = "field")}
+              class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+              >{$t("adminBattlesFieldOpen")}</button
+            >
+            {#if wallUnderBody}
+              <p class="mt-2 text-[11px] text-[#8f2f22]">
+                {$t("adminBattlesTerrainWallUnderBody")}
+              </p>
+            {/if}
           </div>
 
           <!-- Руки обеих сторон. -->
@@ -4096,6 +4365,23 @@
         </p>
       </div>
     </div>
+  {:else if view === "field"}
+    <BattleFieldDesk
+      {challenges}
+      {etudeId}
+      bind:titleRu={etudeTitleRu}
+      bind:titleEn={etudeTitleEn}
+      bind:board={benchBoard}
+      bind:terrain={benchTerrain}
+      bind:side={etudeSide}
+      field={benchField}
+      cards={benchable}
+      {saving}
+      titleOf={etudeTitleOf}
+      onopen={openEtude}
+      onsave={saveEtude}
+      onresize={resizeField}
+    />
   {:else if view === "matches"}
     <!--
       ── Сыгранные партии ──────────────────────────────────────────────────
@@ -5215,6 +5501,130 @@
                 </div>
               </SheetPanel>
 
+              <!-- ── Готовая карта (§ 9.10) ─────────────────────────────────
+                   Сразу за работой: карту заводят от фигурки, и следующий шаг
+                   — её лицо. Картинка несёт всё; поверх неё стоят слова и
+                   числа карты, и ставят их мышью на самой карте справа. Здесь
+                   — только загрузка и выбор того, что напечатать. -->
+              <SheetPanel
+                wide
+                title={$t("adminBattlesReady")}
+                lead={$t("adminBattlesReadyLead")}
+              >
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onclick={uploadReadyCard}
+                    disabled={readyBusy}
+                    class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] {draftBaked
+                      ? 'border border-[#34251c]/20 hover:bg-[#34251c]/5'
+                      : 'bg-[#34251c] text-[#f8f1e7]'} disabled:opacity-40"
+                    >{readyBusy
+                      ? $t("adminBattlesReadyUploading")
+                      : draftBaked
+                        ? $t("adminBattlesReadyReplace")
+                        : $t("adminBattlesReadyUpload")}</button
+                  >
+                  {#if draftBaked}
+                    <button
+                      type="button"
+                      onclick={inkReadyCard}
+                      disabled={readyBusy}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5 disabled:opacity-40"
+                      >{$t("adminBattlesReadyInkByPicture")}</button
+                    >
+                    <button
+                      type="button"
+                      onclick={readyHome}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 hover:bg-[#34251c]/5"
+                      >{$t("adminBattlesReadyHome")}</button
+                    >
+                    <button
+                      type="button"
+                      onclick={dropReadyCard}
+                      class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 text-[#6f3b24] hover:bg-[#c65f3c]/10"
+                      >{$t("adminBattlesReadyDrop")}</button
+                    >
+                  {/if}
+                </div>
+
+                {#if draftBaked}
+                  {#if readyAspect?.off}
+                    <p class="mt-3 text-[11px] leading-relaxed text-[#8f2f22]">
+                      {$t("adminBattlesReadyAspectOff")
+                        .replace("{w}", String(readyAspect.width))
+                        .replace("{h}", String(readyAspect.height))}
+                    </p>
+                  {/if}
+
+                  <p class="mt-3 text-[11px] leading-relaxed italic text-[#8a6a55]">
+                    {$t("adminBattlesReadyHowTo")}
+                  </p>
+
+                  <!-- Что напечатано. Слова и числа порознь: числа значков
+                       (стоимость, сила, здоровье) живут своим слоем и носят
+                       свою форму и жетон, но включаются здесь же. -->
+                  <div class="mt-4 grid grid-cols-1 gap-4 @2xl:grid-cols-2">
+                    <fieldset>
+                      <legend
+                        class="mb-1.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t("adminBattlesReadyWords")}</legend
+                      >
+                      {#each FREE_TEXT_SLOTS as slot (slot)}
+                        <!-- Галочка — печатать ли; имя — открыть панель этой
+                             вещи на карте. Включает, если была снята. -->
+                        <div class="flex items-center gap-2 py-0.5 text-[12px]">
+                          <input
+                            type="checkbox"
+                            aria-label={$t(freeMarkLabel(slot))}
+                            checked={readyShown(slot)}
+                            onchange={(e) => setReadyShown(slot, e.currentTarget.checked)}
+                          />
+                          <button
+                            type="button"
+                            onclick={() => openReadyMark(slot)}
+                            class="text-left underline decoration-dotted decoration-[#34251c]/30 underline-offset-2 hover:text-[#c65f3c] {readyHeld ===
+                            slot
+                              ? 'text-[#c65f3c]'
+                              : ''}">{$t(freeMarkLabel(slot))}</button
+                          >
+                        </div>
+                      {/each}
+                    </fieldset>
+                    <fieldset>
+                      <legend
+                        class="mb-1.5 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t("adminBattlesReadyNumbers")}</legend
+                      >
+                      {#each FREE_SLOTS.filter((one) => !(FREE_TEXT_SLOTS as readonly FreeSlot[]).includes(one)) as slot (slot)}
+                        <!-- Галочка — печатать ли; имя — открыть панель этой
+                             вещи на карте. Включает, если была снята. -->
+                        <div class="flex items-center gap-2 py-0.5 text-[12px]">
+                          <input
+                            type="checkbox"
+                            aria-label={$t(freeMarkLabel(slot))}
+                            checked={readyShown(slot)}
+                            onchange={(e) => setReadyShown(slot, e.currentTarget.checked)}
+                          />
+                          <button
+                            type="button"
+                            onclick={() => openReadyMark(slot)}
+                            class="text-left underline decoration-dotted decoration-[#34251c]/30 underline-offset-2 hover:text-[#c65f3c] {readyHeld ===
+                            slot
+                              ? 'text-[#c65f3c]'
+                              : ''}">{$t(freeMarkLabel(slot))}</button
+                          >
+                        </div>
+                      {/each}
+                    </fieldset>
+                  </div>
+                {:else if draft.frameOverride}
+                  <p class="mt-3 text-[11px] leading-relaxed italic text-[#8a6a55]">
+                    {$t("adminBattlesReadyOwnDress")}
+                  </p>
+                {/if}
+              </SheetPanel>
+
               <!-- ── What the card says: typed here at a normal size, read live
                    on the card beside it — same `draft`, no second copy. ─────── -->
               <SheetPanel
@@ -5245,6 +5655,14 @@
                         else draft.titleRu = e.currentTarget.value;
                       }}
                     />
+                    <!-- Русские буквы в английском поле карта молча не
+                         печатает (`lineInLang`): имя «не появлялось на карте»,
+                         и причину приходилось угадывать. -->
+                    {#if editLang === "en" && mostlyCyrillic(draft.titleEn ?? "")}
+                      <p class="mt-1 text-[11px] leading-snug text-[#8f2f22]">
+                        {$t("adminBattlesReadyCyrillicHint")}
+                      </p>
+                    {/if}
                   </SheetField>
                   <SheetField label={$t("adminBattlesRace")}>
                     <select
@@ -5296,6 +5714,11 @@
                         else draft.effectRu = e.currentTarget.value || null;
                       }}
                     ></textarea>
+                    {#if editLang === "en" && mostlyCyrillic(draft.effectEn ?? "")}
+                      <p class="mt-1 text-[11px] leading-snug text-[#8f2f22]">
+                        {$t("adminBattlesReadyCyrillicHint")}
+                      </p>
+                    {/if}
                   </SheetField>
                   <!-- Приписка. Карта её печатает, сервер принимает — а поля
                        ввода не было нигде, и задать её можно было только
@@ -5885,6 +6308,8 @@
                   {frames}
                   editable={true}
                   frameEditable={true}
+                  dressTarget={cardDress}
+                  bind:markHeld={readyHeld}
                   {editLang}
                   owned={!facedown}
                   level={previewLevel}

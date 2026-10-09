@@ -4260,6 +4260,9 @@ struct ChannelPost {
     url: String,
     image: Option<String>,
     button: &'static str,
+    /// Род вещи словами («Новая байка») и метка для поиска по каналу («байка»).
+    label: &'static str,
+    tag: &'static str,
 }
 
 /// Знаки слова для сверки: без 0/O, 1/I/L и прочих пар, которые глаз путает.
@@ -5080,7 +5083,12 @@ impl AppService {
             let Some(post) = posts.get(&(kind.clone(), id)) else {
                 continue;
             };
-            let caption = crate::telegram::announcement_caption(&post.title, post.lead.as_deref());
+            let caption = crate::telegram::announcement_caption(
+                post.label,
+                post.tag,
+                &post.title,
+                post.lead.as_deref(),
+            );
 
             // Локально пост не уходит: база здесь своя, а канал настоящий, и
             // стенд объявил бы на людях то, что завёл для пробы. Закон тот же,
@@ -5179,6 +5187,8 @@ impl AppService {
                     url: link(&format!("/figurines/{handle}")),
                     image,
                     button: "Смотреть на сайте",
+                    label: "Новая работа",
+                    tag: "работа",
                 },
             );
         }
@@ -5220,6 +5230,17 @@ impl AppService {
                 "tale" | "guest_story" => "Читать",
                 _ => "Открыть на сайте",
             };
+            // Род называет то, что человек увидит, открыв пост: байку читают,
+            // эскиз смотрят. Прочие листы — просто листы вестника.
+            let (label, tag) = match leaf.kind.as_str() {
+                "tale" => ("Новая байка", "байка"),
+                "guest_story" => ("Гостевая история", "история"),
+                "sketch" => ("Эскиз из мастерской", "эскиз"),
+                "showing" => ("Показ", "показ"),
+                "collage" => ("Коллаж", "коллаж"),
+                "arrival" => ("Новое поступление", "поступление"),
+                _ => ("Лист вестника", "вестник"),
+            };
             posts.insert(
                 ("leaf".to_string(), id),
                 ChannelPost {
@@ -5228,6 +5249,8 @@ impl AppService {
                     url: link(&crate::gazette::leaf_path(&leaf.kind, &leaf.slug)),
                     image,
                     button,
+                    label,
+                    tag,
                 },
             );
         }
@@ -14006,10 +14029,12 @@ impl AppService {
                 .map(|c| crate::battles::to_snapshot_with(c, |want| cards.get(want)))
                 .ok_or_else(|| AppError::BadRequest(format!("Unknown card {slug}")))
         };
+        let field = crate::battles::check_field(setup.field).map_err(|e| AppError::BadRequest(e.into()))?;
         let place = |list: &[crate::models::ChallengePlacement]| -> Result<Vec<_>> {
             list.iter()
                 .map(|p| {
-                    let cell = battle_core::Cell::new(p.x, p.y)
+                    let cell = field
+                        .cell(p.x, p.y)
                         .ok_or_else(|| AppError::BadRequest("No such cell on the field".into()))?;
                     Ok((body(&p.card)?, cell))
                 })
@@ -14022,6 +14047,8 @@ impl AppService {
             player_hand: hand(&setup.player_hand)?,
             keeper_board: place(&setup.keeper_board)?,
             keeper_hand: hand(&setup.keeper_hand)?,
+            terrain: crate::battles::check_terrain(setup).map_err(|e| AppError::BadRequest(e.into()))?,
+            field,
         })
     }
 
@@ -14278,6 +14305,13 @@ impl AppService {
         // общие для обоих родов.
         if challenge.player_side == crate::battles::SIDE_DECK {
             let (board, hand) = self.deck_takes_the_field(user_id).await?;
+            // Стол гостя собран под половину 3 × 3 и стоит у шва. На глубоком
+            // поле он встаёт туда же — к шву, а не в дальний угол: передний
+            // ряд стола остаётся передним рядом половины.
+            let board = board
+                .into_iter()
+                .map(|(card, cell)| (card, crate::battles::deck_cell_on(setup.field, cell)))
+                .collect();
             setup.player_board = board;
             setup.player_hand = hand;
         }

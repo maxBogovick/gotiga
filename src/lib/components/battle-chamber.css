@@ -375,6 +375,13 @@
   display: none;
 }
 
+/* Узкая комната: низ — полоса фиксированной высоты в три колонки, и
+   четвёртому в ней места нет. Местность там названа листком правил; легенда
+   выходит на широком окне (ниже), в пустом ряду справа от поля. */
+.room--fill .scene.scene--fill.scene--chamber .ground-legend {
+  display: none;
+}
+
 .room--fill .scene.scene--fill.scene--chamber .table {
   display: contents;
   max-width: none;
@@ -1521,10 +1528,38 @@
     grid-template-rows: auto minmax(0, 1fr) auto auto;
     grid-template-areas:
       "hand board theirs"
-      "hand board ."
+      "hand board legend"
       "hand board prompt"
       "hand board turn";
     gap: 0.5rem 0.6rem;
+  }
+
+  /* Легенда местности — в пустом ряду справа, между рукой хранителя и
+     подсказкой: рядом с полем, а не за кнопкой листка. */
+  .room--fill .scene.scene--fill.scene--chamber .ground-legend {
+    display: block;
+    grid-area: legend;
+    align-self: center;
+    margin: 0;
+    padding: 0.55rem 0.6rem;
+    border: 1px solid rgba(212, 176, 106, 0.28);
+    background: rgba(10, 7, 5, 0.55);
+    color: #e8dcc0;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .ground-legend-head {
+    color: #d4b06a;
+    font-size: 0.62rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .ground-legend-list {
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.74rem;
+  }
+
+  .room--fill .scene.scene--fill.scene--chamber .ground-legend-list b {
+    color: #f3e7cf;
   }
 
   .room--fill .scene.scene--fill.scene--chamber .well {

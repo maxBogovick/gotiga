@@ -53,6 +53,8 @@ fn crowd(ability: AbilitySnapshot) -> MatchState {
             (boec("Волк", 9, 3), cell(1, 0)),
         ],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     MatchState::begin_with(setup, rules())
 }
@@ -175,6 +177,8 @@ fn a_spell_thrown_at_a_foe_never_spills_onto_your_own() {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 9, 4), cell(0, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     setup.keeper_board.push((boec("Тень", 9, 2), cell(1, 2)));
     let st = MatchState::begin_with(setup, rules());
@@ -220,6 +224,8 @@ fn a_veiled_body_is_reached_by_a_circle_though_it_cannot_be_chosen() {
         player_hand: vec![],
         keeper_board: vec![(boec("Ворон", 9, 4), cell(0, 2)), (boec("Тень", 9, 2), cell(1, 2))],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     setup.keeper_board[0]
         .0
@@ -263,6 +269,8 @@ fn those_caught_by_the_edge_feel_a_splash_and_thorns_do_not_answer_it() {
             (boec("Тень", 9, 2).with_ability(thorns), cell(1, 2)),
         ],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = MatchState::begin_with(setup, rules());
 
@@ -300,6 +308,8 @@ fn a_guard_takes_the_aimed_blow_and_not_the_whole_circle() {
             (boec("Страж", 9, 2).with_ability(guard), cell(1, 2)),
         ],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let st = MatchState::begin_with(setup, rules());
 
@@ -391,6 +401,8 @@ fn everything_offered_can_be_done_for_every_shape() {
                 (boec("Тень", 9, 2), cell(1, 2)),
             ],
             keeper_hand: vec![],
+            terrain: Vec::new(),
+            field: Default::default(),
         };
         let st = MatchState::begin_with(setup, rules());
         for action in legal_actions(&st) {
@@ -418,6 +430,8 @@ fn a_journal_of_mass_spells_folds_back_into_the_same_board() {
             (boec("Сыч", 9, 2), cell(2, 2)),
         ],
         keeper_hand: vec![],
+        terrain: Vec::new(),
+        field: Default::default(),
     };
     let journal = vec![
         cast(0, "уныние", 2),

@@ -14,7 +14,9 @@
   // an ordinary form next to the card instead, writing the same `card`
   // object this component reads, so the preview still never lies. It is off
   // everywhere except the admin card editor.
+  import { tick, untrack } from 'svelte';
   import type {
+    FreeSlot,
     BattleBadgeShape,
     BattleCard,
     BattleFrame,
@@ -36,6 +38,19 @@
     isOverlaid,
     isSliced,
     isFreeform,
+    isBaked,
+    freeMarkOf,
+    freeMarkStyle,
+    freeBadgeShown,
+    setFreeMark,
+    freeMarkLabel,
+    mostlyCyrillic,
+    freeGlyphAt,
+    FREE_GLYPH_BASE,
+    FREE_STAT_SLOTS,
+    type GlyphSlot,
+    FREE_PRINTED_SLOTS,
+    type FreePrintedSlot,
     parseFocal,
     FOCAL_ZOOM_MIN,
     pricesOf,
@@ -45,10 +60,6 @@
     DEFAULT_COST_Y,
     DEFAULT_POWER_X,
     DEFAULT_POWER_Y,
-    DEFAULT_FREE_NAME_X,
-    DEFAULT_FREE_NAME_Y,
-    DEFAULT_FREE_LORE_X,
-    DEFAULT_FREE_LORE_Y,
     type BadgeKind,
     BADGE_SHAPES,
     BADGE_FIELDS,
@@ -98,6 +109,7 @@
   import AppImage from '$lib/components/AppImage.svelte';
   import BattleIcon from '$lib/components/BattleIcon.svelte';
   import BattleBadgeInspector from '$lib/components/BattleBadgeInspector.svelte';
+  import BattleMarkInspector from '$lib/components/BattleMarkInspector.svelte';
 
   let {
     card = $bindable(),
@@ -111,6 +123,8 @@
     editLang = null,
     frameEditable = false,
     frameEditTarget = null,
+    dressTarget = null,
+    markHeld = $bindable(null),
     sliceHeld = $bindable(null),
     onEditStart,
     onEditEnd,
@@ -168,6 +182,16 @@
      *  don't mirror to the opposite side either — a race's own picture is
      *  rarely symmetric. */
     frameEditTarget?: FrameOverride | null;
+    /** Собственный наряд ЭТОЙ карты, в который пишут её ручки — значки, метки
+     *  готовой иллюстрации, окно, полосы. Ставит лист карты, когда карта
+     *  носит свой наряд: иначе перетаскивание на листе одной карты двигало бы
+     *  ранг, то есть все карты этого ранга, а сохранение карты этого не
+     *  сохраняло. Резьбу из деталей отсюда не правят — для неё есть стол рамок. */
+    dressTarget?: FrameOverride | null;
+    /** Чья панель открыта — метки или значка. Связка: открывают её и щелчком
+     *  на карте, и из списка сбоку (лист карты), чтобы метку не приходилось
+     *  искать на картинке наугад. */
+    markHeld?: FreeSlot | null;
     /** Which COPY of which piece is currently in hand — the top-left corner,
      *  say, and not the corner picture in general, since the four corners are
      *  placed apart. `id` is a named slot or an added ornament's own id, which
@@ -287,11 +311,13 @@
    * `showEmpty`), и каждое берётся в руку, как обычная деталь.
    */
   let bareDesk = $derived(
-    frameEditable && !frameEditTarget && frame.frameMode === 'sliced' && !isDressed(frame),
+    frameEditable && !frameEditTarget && !dressTarget && frame.frameMode === 'sliced' && !isDressed(frame),
   );
   let overlaid = $derived(isOverlaid(frame) || bareDesk);
   let sliced = $derived(isSliced(frame) || bareDesk);
   let freeform = $derived(isFreeform(frame));
+  /** Готовая карта: фотография уже нарисована в картинке. */
+  let baked = $derived(isBaked(frame));
   let hasBackArt = $derived(!!frame.backImage?.trim());
   let vars = $derived(frameVars(frame));
 
@@ -478,7 +504,7 @@
    *
    * Считанное в ДОЛЯХ проходит сквозь увеличение само — обе половины дроби
    * увеличены одинаково, — поэтому делить приходится только то немногое, что
-   * переносится точками: черта вставки и сдвиг стола значка.
+   * переносится точками: черта вставки.
    */
   function cardScale(): number {
     const el = root;
@@ -926,13 +952,32 @@
     return frameFor(card.tier, frames);
   }
 
+  /**
+   * Куда пишет ручка на карте: наряд уровня расы, свой наряд карты или ранг.
+   *
+   * Наряд — заплатка: поля, которых он не называет, карта берёт у ранга. Если
+   * писать в такую заплатку приращение, то отсчёт пошёл бы от нуля, а не от
+   * того, что нарисовано, и деталь прыгнула бы в угол при первом же движении.
+   * Поэтому недостающее сперва переписывается в заплатку из того, что карта
+   * носит на самом деле (`frame`), — и только потом к нему прибавляют.
+   */
+  function writeTarget(seed: readonly (keyof BattleFrame)[] = []): BattleFrame | FrameOverride {
+    const target = frameEditTarget ?? dressTarget;
+    if (!target) return rankFrame();
+    const into = target as Record<string, unknown>;
+    for (const key of seed) {
+      if (into[key] == null) into[key] = frame[key];
+    }
+    return target;
+  }
+
   /** What the inset handles actually mutate: a race's own per-level patch
    *  when `frameEditTarget` names one, else the tier's shared frame — the
    *  same fallback `rankFrame` uses, kept separate because `frameEditTarget`
    *  is missing the header/art/foot/badge fields `rankFrame`'s other callers
    *  need. */
   function insetTarget() {
-    return frameEditTarget ?? rankFrame();
+    return writeTarget(['insetTop', 'insetRight', 'insetBottom', 'insetLeft']);
   }
 
   function shareDragStart(kind: ShareKey, event: PointerEvent & { currentTarget: HTMLElement }) {
@@ -950,7 +995,7 @@
     const h = contentEl?.getBoundingClientRect().height;
     if (!h) return;
     const [min, max] = SHARE_BOUNDS[kind];
-    const target = rankFrame();
+    const target = writeTarget([kind]);
     const current = target[kind] ?? 0;
     target[kind] = Math.min(max, Math.max(min, current + event.movementY / h));
   }
@@ -984,7 +1029,7 @@
     if (!size) return;
     const movement = vertical ? event.movementY : event.movementX;
     const delta = ((movement / size) * 100) * INSET_SIGN[kind];
-    applyInsetDelta(insetTarget(), kind, delta, !frameEditTarget);
+    applyInsetDelta(insetTarget(), kind, delta, !frameEditTarget && !dressTarget);
   }
 
   function frameDragMove(event: PointerEvent) {
@@ -1017,7 +1062,7 @@
   /** Off while dressing a race's level, for the same reason the band seams
    *  are: a picture chosen for one level is not the place to re-cut the rank's
    *  carving. The pieces stay chrome everywhere else on the site. */
-  let sliceEditable = $derived(frameEditable && !frameEditTarget && sliced);
+  let sliceEditable = $derived(frameEditable && !frameEditTarget && !dressTarget && sliced);
 
   /** Every copy of every piece the frame is built from — named slots and the
    *  keeper's own flourishes in ONE list, each already carrying the inline
@@ -1275,75 +1320,144 @@
   let badgeDragKind = $state<BadgeKind | null>(null);
   let badgeMoved = false;
   let badgePopoverOpen = $state<BadgeKind | null>(null);
-  /** Where the popover sits, in % of `.slot` (this component's own root) —
-   *  read off the badge itself when it opens rather than reusing
-   *  `frame.costX`/`costY`: the badge hangs off its own centre
-   *  (`translate(-50%, -50%)`) and carries a caption of unknown width, so the
-   *  numbers name a point the popover must not simply repeat.
-   *  Rendered as a sibling of `.card` rather than inside it: an unrelated
-   *  global `.card { overflow: hidden }` rule (see the admin design system)
-   *  would otherwise clip it, the same trap `.frame-popover` sits in. */
-  let badgePopoverPos = $state<{ left: number; top: number } | null>(null);
+  /**
+   * Стол значка или метки — панель, вынесенная ПОВЕРХ страницы (`portal`).
+   *
+   * Внутри карты она жила плохо, и разом тремя способами. Лист карты — это
+   * прокручиваемая колонка под прилипшей шапкой, и панель, поставленная над
+   * верхней меткой, уходила под шапку наполовину; поправка «в пределы экрана»
+   * не знала о шапке. Положенная на карту, она закрывала ровно те надписи,
+   * которые правят. А `.slot` — контейнер (`container-type`), то есть
+   * держатель всякого `position: fixed` внутри себя, и вынуть панель из
+   * карты стилем нельзя — только узлом.
+   *
+   * Поэтому панель встаёт СБОКУ от карты (слева — там лист, справа — если
+   * слева тесно), на высоте взятой вещи, прижатая к краям экрана. Вещь, к
+   * которой она относится, помечена на карте (`--held`). Только когда по
+   * бокам нет места вовсе — под вещью или над ней.
+   */
+  let popAnchor: HTMLElement | null = null;
 
-  /** Сама панель — чтобы её можно было ИЗМЕРИТЬ. Место ей назначено в долях
-   *  карты, а влезает она или нет — вопрос к экрану, и ответить на него можно
-   *  только меркой. */
+  /** Сама панель — чтобы её можно было измерить и поставить. */
   let badgePopoverEl = $state<HTMLElement | null>(null);
 
-  /**
-   * Панель, приведённая в видимое.
-   *
-   * Открывается она под значком, и это верно ровно до нижнего значка: под ним
-   * до края экрана остаётся полсантиметра, панель уезжает вниз, и добраться до
-   * неё нечем — карта не прокручивается вслед за тем, чего у неё нет.
-   *
-   * Сперва ПЕРЕВОРОТ: не влезло под значком — открываем над ним, потому что
-   * подпихивать вверх панель, которая тогда закроет полкарты, значит спорить с
-   * тем, где её открыли. И только потом, если и так не встало, — сдвиг в
-   * пределы экрана.
-   *
-   * Пишет прямо в стиль элемента, а не в состояние: состояние меняло бы
-   * разметку, разметка — мерку, и мерка гоняла бы саму себя по кругу. Проход
-   * ровно один: сбросить, измерить, назначить.
-   */
-  function fitBadgePopover() {
-    const el = badgePopoverEl;
-    if (!el) return;
-    const pad = 8;
-    el.classList.remove('badge-popover--up');
-    el.style.setProperty('--bi-shift-x', '0px');
-    el.style.setProperty('--bi-shift-y', '0px');
-    let box = el.getBoundingClientRect();
-    if (box.bottom > window.innerHeight - pad && box.height + pad * 2 <= window.innerHeight) {
-      el.classList.add('badge-popover--up');
-      box = el.getBoundingClientRect();
-    }
-    let dx = 0;
-    let dy = 0;
-    if (box.bottom > window.innerHeight - pad) dy = window.innerHeight - pad - box.bottom;
-    if (box.top + dy < pad) dy = pad - box.top;
-    if (box.right > window.innerWidth - pad) dx = window.innerWidth - pad - box.right;
-    if (box.left + dx < pad) dx = pad - box.left;
-    // Сдвиг посчитан по краю ЭКРАНА, а вписывается внутрь увеличенной карты:
-    // без перевода стол под четырёхкратным стеклом увёз бы панель вчетверо
-    // дальше, чем просили, — то есть с одного края экрана за другой.
-    const k = cardScale();
-    el.style.setProperty('--bi-shift-x', `${dx / k}px`);
-    el.style.setProperty('--bi-shift-y', `${dy / k}px`);
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
   }
 
-  // Мерить приходится и после открытия, и после всякого движения под панелью:
-  // стол хранителя прокручивается, и панель, поставленная один раз, уехала бы
-  // вместе со значком, но уже без права на своё место.
+  function placePopover() {
+    const el = badgePopoverEl;
+    const anchor = popAnchor?.isConnected ? popAnchor : null;
+    if (!el || !root) return;
+    const pad = 8;
+    const gap = 14;
+    const card = root.getBoundingClientRect();
+    const at = anchor?.getBoundingClientRect() ?? card;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const clampY = (y: number) => Math.max(pad, Math.min(vh - pad - h, y));
+    const clampX = (x: number) => Math.max(pad, Math.min(vw - pad - w, x));
+    let left: number;
+    let top: number;
+    if (card.left - gap - w >= pad) {
+      left = card.left - gap - w;
+      top = clampY(at.top + at.height / 2 - h / 2);
+    } else if (card.right + gap + w <= vw - pad) {
+      left = card.right + gap;
+      top = clampY(at.top + at.height / 2 - h / 2);
+    } else {
+      left = clampX(at.left + at.width / 2 - w / 2);
+      top = at.bottom + gap + h <= vh - pad ? at.bottom + gap : clampY(at.top - gap - h);
+    }
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+  }
+
+  // Ставится при открытии и после всякого движения под панелью: лист
+  // прокручивается, окно меняет размер, метку двигают, а у панели своя
+  // высота, которая меняется вместе с её содержимым.
   $effect(() => {
-    if (!badgePopoverOpen || !badgePopoverPos || !badgePopoverEl) return;
-    fitBadgePopover();
-    const again = () => fitBadgePopover();
+    if (!(badgePopoverOpen || markPopoverOpen) || !badgePopoverEl) return;
+    void frame;
+    placePopover();
+    const again = () => placePopover();
+    const watch = new ResizeObserver(again);
+    watch.observe(badgePopoverEl);
     window.addEventListener('resize', again);
     window.addEventListener('scroll', again, true);
     return () => {
+      watch.disconnect();
       window.removeEventListener('resize', again);
       window.removeEventListener('scroll', again, true);
+    };
+  });
+
+  function closePopovers() {
+    badgePopoverOpen = null;
+    markPopoverOpen = null;
+    popAnchor = null;
+    markHeld = null;
+  }
+
+  /** Открыть панель вещи по её имени — так её открывает список сбоку. Вещь
+   *  ищется на карте после отрисовки: её могли только что включить. */
+  async function openByName(name: FreeSlot) {
+    await tick();
+    const el = root?.querySelector<HTMLElement>(`[data-mark="${name}"]`);
+    if (!el) {
+      markHeld = markPopoverOpen ?? badgePopoverOpen ?? null;
+      return;
+    }
+    popAnchor = el;
+    if (name === 'cost' || name === 'power' || name === 'health') {
+      markPopoverOpen = null;
+      badgePopoverOpen = name;
+    } else {
+      badgePopoverOpen = null;
+      markPopoverOpen = name;
+    }
+    // В узком окне карта стоит над листом и уезжает при прокрутке к списку:
+    // открытая из списка вещь показывается, иначе её правят вслепую.
+    el.scrollIntoView({ block: 'nearest' });
+    el.focus({ preventScroll: true });
+  }
+
+  $effect(() => {
+    const want = markHeld;
+    const now = untrack(() => markPopoverOpen ?? badgePopoverOpen ?? null);
+    if (want === now) return;
+    if (!want) untrack(closePopovers);
+    else void openByName(want);
+  });
+
+  // Закрывается щелчком мимо и Esc. Не прозрачной заслонкой, как прежде:
+  // заслонка лежала на всей карте, и щелчок по соседней метке только закрывал
+  // панель — до соседней приходилось тыкать дважды. Щелчок по метке или значку
+  // этой карты панель не закрывает: их собственный жест её переключит.
+  $effect(() => {
+    if (!(badgePopoverOpen || markPopoverOpen)) return;
+    const down = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (badgePopoverEl?.contains(target)) return;
+      if (root?.contains(target) && (target as Element).closest?.('[data-mark], [data-glyph]')) return;
+      closePopovers();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closePopovers();
+    };
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('pointerdown', down, true);
+      document.removeEventListener('keydown', key);
     };
   });
 
@@ -1363,14 +1477,17 @@
     if (!rect.width || !rect.height) return;
     badgeMoved = true;
     const { x, y } = BADGE_FIELDS[badgeDragKind];
-    const target = rankFrame();
+    const target = writeTarget();
+    // Отсчёт — от того места, где значок НАРИСОВАН: у здоровья, донашивающего
+    // место стоимости, своего числа нет, и отсчёт от нуля отправлял его в угол.
+    const from = badgeAt(frame, badgeDragKind, badgeNumbers[badgeDragKind]);
     const dx = (event.movementX / rect.width) * 100;
     const dy = (event.movementY / rect.height) * 100;
     // Прижато к карте тем же `badgeSpot`, которым значок рисуется: иначе число
     // уезжало бы дальше кружка, и обратный ход начинался бы не сразу.
     const spot = badgeSpot(
-      (target[x] ?? 0) + dx,
-      (target[y] ?? 0) + dy,
+      (target[x] ?? from.x) + dx,
+      (target[y] ?? from.y) + dy,
       frame.aspect || DEFAULT_ASPECT,
       badgeExtent(frame, badgeDragKind, badgeNumbers[badgeDragKind]),
     );
@@ -1390,74 +1507,286 @@
     // already placed it, and popping the editor up too would just be in the way.
     if (badgeMoved) return;
     if (badgePopoverOpen === kind) {
-      badgePopoverOpen = null;
+      closePopovers();
       return;
     }
-    const rootRect = root?.getBoundingClientRect();
-    if (!rootRect || !rootRect.width || !rootRect.height) return;
-    const badgeRect = badgeEl.getBoundingClientRect();
-    badgePopoverPos = {
-      left: ((badgeRect.left + badgeRect.width / 2 - rootRect.left) / rootRect.width) * 100,
-      top: ((badgeRect.top + badgeRect.height / 2 - rootRect.top) / rootRect.height) * 100,
-    };
+    popAnchor = badgeEl;
+    markPopoverOpen = null;
     badgePopoverOpen = kind;
+    markHeld = kind;
   }
 
-  // ── Вольный текст `freeform`: имя и приписка, взятые там, где напечатаны ──
+  // ── Метки готовой иллюстрации (`freeform`) ─────────────────────────────────
   //
-  // То же устройство, что у значков выше — точка на карте, а не строка
-  // формы, — но без всплывающей панели: у текста нет второго числа вроде
-  // формы или заливки, редактируется он в боковой колонке стола рамок, а
-  // здесь только его место.
+  // Тот же жест, что у значков: взял и повёл — метка едет за указателем;
+  // отпустил, не сдвинув, — открылась её панель (текст, шрифт, чернила,
+  // величина, ширина строки). Стрелки двигают взятую метку точно.
 
-  type FreeTextKind = 'name' | 'lore';
-  const FREE_TEXT_FIELDS: Record<FreeTextKind, { x: 'freeNameX' | 'freeLoreX'; y: 'freeNameY' | 'freeLoreY' }> = {
-    name: { x: 'freeNameX', y: 'freeNameY' },
-    lore: { x: 'freeLoreX', y: 'freeLoreY' },
-  };
-  const FREE_TEXT_HOME: Record<FreeTextKind, { x: number; y: number }> = {
-    name: { x: DEFAULT_FREE_NAME_X, y: DEFAULT_FREE_NAME_Y },
-    lore: { x: DEFAULT_FREE_LORE_X, y: DEFAULT_FREE_LORE_Y },
-  };
+  /** Метки, которые эта карта печатает, — уже разрешённые до вида. */
+  let marks = $derived(
+    freeform
+      ? FREE_PRINTED_SLOTS.map((slot) => ({ slot, look: freeMarkOf(frame, slot) }))
+      : [],
+  );
 
-  function freeTextAt(kind: FreeTextKind): { x: number; y: number } {
-    const { x, y } = FREE_TEXT_FIELDS[kind];
-    const home = FREE_TEXT_HOME[kind];
-    return { x: frame[x] ?? home.x, y: frame[y] ?? home.y };
+  /** Что метка говорит. Пусто — метки на карте нет (на столе — заглушка). */
+  function markText(slot: FreePrintedSlot): string {
+    switch (slot) {
+      case 'title': return copy.title;
+      case 'effect': return copy.effect;
+      case 'lore': return copy.lore;
+      case 'kind': return [head.race, head.type].filter(Boolean).join(' · ');
+      case 'traits':
+        return traits.map((one) => (one.text ? `${one.name}: ${one.text}` : one.name)).join('\n');
+      default: return String(card[slot] ?? 0);
+    }
   }
 
-  let freeTextDragKind = $state<FreeTextKind | null>(null);
+  /** Сырой текст места на языке — до `lineInLang`, который молча снимает
+   *  кириллицу из английского поля. Нужен заглушке, чтобы сказать почему. */
+  function markRaw(slot: FreePrintedSlot, side: 'en' | 'ru'): string {
+    const ru = side === 'ru';
+    switch (slot) {
+      case 'title': return ((ru ? card.titleRu : card.titleEn) ?? '').trim();
+      case 'effect': return ((ru ? card.effectRu : card.effectEn) ?? '').trim();
+      case 'lore': return ((ru ? card.loreRu : card.loreEn) ?? '').trim();
+      case 'kind': return ((ru ? card.typeRu : card.typeEn) ?? '').trim();
+      default: return '';
+    }
+  }
 
-  function freeTextDragStart(kind: FreeTextKind, event: PointerEvent & { currentTarget: HTMLElement }) {
-    if (!frameEditable) return;
+  /**
+   * Что пустая метка говорит на столе. Просто имя места — когда не написано
+   * ничего; а когда написано, но не на этом языке или русскими буквами в
+   * английском поле, — так и говорит. Иначе надпись, набранная минуту назад,
+   * «не появлялась на карте», и причину приходилось угадывать.
+   */
+  function markPlaceholder(slot: FreePrintedSlot): string {
+    const label = $t(freeMarkLabel(slot));
+    const side = editLang2;
+    const LANG = side.toUpperCase();
+    const own = markRaw(slot, side);
+    if (side === 'en' && own && mostlyCyrillic(own)) {
+      return $t('adminBattlesReadyCyrillicInEn').replace('{label}', label);
+    }
+    const other = markRaw(slot, side === 'ru' ? 'en' : 'ru');
+    if (!own && other) {
+      return $t('adminBattlesReadyNoLang').replace('{label}', label).replace('{lang}', LANG);
+    }
+    return label;
+  }
+
+
+  /** Ручки меток живы там же, где ручки значков: на столе, который правит
+   *  ранг или свой наряд карты, — но не наряд уровня расы. */
+  let marksLive = $derived(frameEditable && !frameEditTarget && freeform);
+
+  let markDragSlot = $state<FreePrintedSlot | null>(null);
+  let markMoved = false;
+  let markPopoverOpen = $state<FreePrintedSlot | null>(null);
+
+  function markDragStart(slot: FreePrintedSlot, event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!marksLive || event.button !== 0) return;
     onEditStart?.();
     event.preventDefault();
     event.stopPropagation();
-    freeTextDragKind = kind;
+    markDragSlot = slot;
+    markMoved = false;
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function freeTextDragMove(event: PointerEvent) {
-    if (!freeTextDragKind || !cardEl) return;
-    const rect = cardEl.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const { x, y } = FREE_TEXT_FIELDS[freeTextDragKind];
-    const target = rankFrame();
-    const at = freeTextAt(freeTextDragKind);
-    const dx = (event.movementX / rect.width) * 100;
-    const dy = (event.movementY / rect.height) * 100;
-    target[x] = Math.min(100, Math.max(0, at.x + dx));
-    target[y] = Math.min(100, Math.max(0, at.y + dy));
+  function markShift(slot: FreePrintedSlot, dx: number, dy: number) {
+    const at = freeMarkOf(frame, slot);
+    setFreeMark(writeTarget(), slot, {
+      x: Math.min(100, Math.max(0, at.x + dx)),
+      y: Math.min(100, Math.max(0, at.y + dy)),
+    });
   }
 
-  function freeTextDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
-    freeTextDragKind = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+  function markDragMove(event: PointerEvent) {
+    if (!markDragSlot || !cardEl) return;
+    const rect = cardEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    if (!event.movementX && !event.movementY) return;
+    markMoved = true;
+    markShift(
+      markDragSlot,
+      (event.movementX / rect.width) * 100,
+      (event.movementY / rect.height) * 100,
+    );
+  }
+
+  function markDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!markDragSlot) return;
+    const slot = markDragSlot;
+    const el = event.currentTarget;
+    markDragSlot = null;
+    if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
     onEditEnd?.();
+    if (markMoved) return;
+    if (markPopoverOpen === slot) {
+      closePopovers();
+      return;
+    }
+    openMarkPopover(slot, el);
+  }
+
+  /** Стрелки — точная доводка: шаг полпроцента, с Shift — два. Enter и
+   *  пробел открывают панель, как нажатие без сдвига. */
+  function markKey(slot: FreePrintedSlot, event: KeyboardEvent & { currentTarget: HTMLElement }) {
+    const step = event.shiftKey ? 2 : 0.5;
+    const move: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    const delta = move[event.key];
+    if (delta) {
+      event.preventDefault();
+      onEditStart?.();
+      markShift(slot, delta[0], delta[1]);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (markPopoverOpen === slot) markPopoverOpen = null;
+      else openMarkPopover(slot, event.currentTarget);
+    }
+  }
+
+  /** Панель метки — та же, что у значка, и одна закрывает другую: двух
+   *  открытых столов у карты нет. */
+  function openMarkPopover(slot: FreePrintedSlot, el: HTMLElement) {
+    popAnchor = el;
+    badgePopoverOpen = null;
+    markPopoverOpen = slot;
+    markHeld = slot;
+  }
+
+  // ── Отдельный знак числа ────────────────────────────────────────────────
+  //
+  // Тот же жест, что у метки: потянул — едет сам по себе, отдельно от цифры;
+  // щелчок без сдвига — панель ЕГО числа (знак принадлежит числу, своей панели
+  // у него нет).
+
+  let glyphDragSlot = $state<GlyphSlot | null>(null);
+  let glyphMoved = false;
+
+  function glyphDragStart(slot: GlyphSlot, event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!marksLive || event.button !== 0) return;
+    onEditStart?.();
+    event.preventDefault();
+    event.stopPropagation();
+    glyphDragSlot = slot;
+    glyphMoved = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function glyphShift(slot: GlyphSlot, dx: number, dy: number) {
+    const at = freeGlyphAt(frame, slot);
+    if (!at) return;
+    setFreeMark(writeTarget(), slot, {
+      glyphX: Math.min(100, Math.max(0, at.x + dx)),
+      glyphY: Math.min(100, Math.max(0, at.y + dy)),
+    });
+  }
+
+  function glyphDragMove(event: PointerEvent) {
+    if (!glyphDragSlot || !cardEl) return;
+    const rect = cardEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    if (!event.movementX && !event.movementY) return;
+    glyphMoved = true;
+    glyphShift(
+      glyphDragSlot,
+      (event.movementX / rect.width) * 100,
+      (event.movementY / rect.height) * 100,
+    );
+  }
+
+  function glyphOpen(slot: GlyphSlot, el: HTMLElement) {
+    if (slot === 'cost' || slot === 'power' || slot === 'health') {
+      if (badgePopoverOpen === slot) {
+        closePopovers();
+        return;
+      }
+      popAnchor = el;
+      markPopoverOpen = null;
+      badgePopoverOpen = slot;
+      markHeld = slot;
+    } else if (markPopoverOpen === slot) {
+      closePopovers();
+    } else {
+      openMarkPopover(slot, el);
+    }
+  }
+
+  function glyphDragEnd(event: PointerEvent & { currentTarget: HTMLElement }) {
+    if (!glyphDragSlot) return;
+    const slot = glyphDragSlot;
+    const el = event.currentTarget;
+    glyphDragSlot = null;
+    if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
+    onEditEnd?.();
+    if (!glyphMoved) glyphOpen(slot, el);
+  }
+
+  function glyphKey(slot: GlyphSlot, event: KeyboardEvent & { currentTarget: HTMLElement }) {
+    const step = event.shiftKey ? 2 : 0.5;
+    const move: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    const delta = move[event.key];
+    if (delta) {
+      event.preventDefault();
+      onEditStart?.();
+      glyphShift(slot, delta[0], delta[1]);
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      glyphOpen(slot, event.currentTarget);
+    }
+  }
+
+  /** Число значка, набранное в его панели: то же поле карты, что на листе. */
+  function setBadgeValue(kind: BadgeKind, value: number) {
+    if (!Number.isFinite(value)) return;
+    const n = Math.max(0, Math.round(value));
+    if (kind === 'cost') card.cost = Math.min(20, n);
+    else if (kind === 'power') card.power = Math.min(99, n);
+    else card.health = Math.min(99, n);
   }
 </script>
+
+<!-- Отдельный знак числа (§ 9.10): один отрисовщик для значков и для чисел
+     готовой иллюстрации. -->
+  {#snippet apartGlyph(slot: GlyphSlot, at: { x: number; y: number; size: number }, ink: string, extra: string)}
+    {#if marksLive}
+      <button
+        type="button"
+        class="free-glyph free-glyph--live {extra}"
+        class:free-glyph--held={markHeld === slot || glyphDragSlot === slot}
+        data-glyph={slot}
+        style="left:{at.x}%; top:{at.y}%; --fg-size:{(FREE_GLYPH_BASE * at.size).toFixed(3)}cqi; color:{ink}"
+        aria-label={$t(freeMarkLabel(slot))}
+        onpointerdown={(e) => glyphDragStart(slot, e)}
+        onpointermove={glyphDragMove}
+        onpointerup={glyphDragEnd}
+        onpointercancel={glyphDragEnd}
+        onkeydown={(e) => glyphKey(slot, e)}
+      ><BattleIcon name={statMark(slot)} size="100%" weight={1.35} /></button>
+    {:else}
+      <span
+        class="free-glyph {extra}"
+        style="left:{at.x}%; top:{at.y}%; --fg-size:{(FREE_GLYPH_BASE * at.size).toFixed(3)}cqi; color:{ink}"
+        title={$t(freeMarkLabel(slot))}
+        aria-hidden="true"
+      ><BattleIcon name={statMark(slot)} size="100%" weight={1.35} /></span>
+    {/if}
+  {/snippet}
 
 <article
   bind:this={root}
@@ -1486,7 +1815,11 @@
    style:clip-path={torn}
  >
   <div class="content" bind:this={contentEl}>
-  {#if owned && freeform}
+  {#if owned && freeform && baked}
+    <!-- Готовая карта: фотография работы уже нарисована в самой картинке, и
+         вторая под ней ничего не добавила бы, кроме просвета там, где у
+         картинки есть прозрачность. -->
+  {:else if owned && freeform}
     <!-- `freeform`: готовая иллюстрация уже несёт бумагу и резьбу, но НЕ
          несёт согласия между собой и вот этой конкретной картинкой работы —
          где именно в ней вырезана дыра, знает только тот, кто рисовал раму, и
@@ -1790,7 +2123,7 @@
     </div>
   {/if}
 
-  {#if frameEditable}
+  {#if frameEditable && !baked}
     <div
       class="inset-handle inset-handle--top"
       class:active={frameDragKind === 'insetTop'}
@@ -1894,7 +2227,9 @@
              отпечатаны на бумаге раз и навсегда, трескаться им не с чего. -->
         {@const wear = kind === 'health' ? sealed : null}
         {@const word = kind === 'cost' ? costWord : kind === 'power' ? powerWord : false}
-        {@const step = badgeRow[kind]?.show ?? 'always'}
+        <!-- Назначенный меткой готовой иллюстрации значок виден на любой
+             величине: место под него нарисовано на самой картинке. -->
+        {@const step = freeBadgeShown(frame, kind) ? 'cell' : (badgeRow[kind]?.show ?? 'always')}
         <!-- В партии порог ширины не решает: клетка крупнее полки всё равно
              фигура, стоимость на ней молчит, здоровье и сила — нет. -->
         {@const byWidth = !inMatch}
@@ -1915,6 +2250,8 @@
             <button
               type="button"
               class="corner corner--{kind} corner--shape-{shape} corner--editable"
+              class:corner--held={badgePopoverOpen === kind || badgeDragKind === kind}
+              data-mark={kind}
               class:corner--marked={marked}
               class:corner--unfilled={!!fill && badgeUnfilled(fill)}
               class:corner--plate={!!plate}
@@ -1938,6 +2275,7 @@
               style={paint}
               role="img"
               aria-label={named}
+              title={named}
             >
               {#if wear}<span class="corner-wear" style={wear}></span>{/if}
               {@render badgeGlyph(kind, marked)}
@@ -1948,7 +2286,22 @@
         </span>
       {/snippet}
       {#each BADGE_KINDS as kind (kind)}
-        {#if badgeRow[kind] && badgeRow[kind].show !== 'never' && !(inMatch && kind === 'cost')}{@render badge(kind)}{/if}
+        {@const marked = freeBadgeShown(frame, kind)}
+        {#if (marked ?? (!!badgeRow[kind] && badgeRow[kind].show !== 'never')) && !(inMatch && kind === 'cost')}
+          {@render badge(kind)}
+          <!-- Отдельный знак значка — в слое значков: виден там же, где число,
+               включая клетку боя. Чернила — числа. -->
+          {@const apart = freeGlyphAt(frame, kind)}
+          {#if apart}
+            {@const step = marked ? 'cell' : (badgeRow[kind]?.show ?? 'always')}
+            {@render apartGlyph(
+              kind,
+              apart,
+              badgeText(frame, kind, 'ink') || frame.ink,
+              !inMatch && step === 'large' ? 'row--large' : !inMatch && step === 'always' ? 'row--shelf' : !inMatch && step === 'cellOnly' ? 'row--only-cell' : '',
+            )}
+          {/if}
+        {/if}
       {/each}
     </div>
   {/if}
@@ -2072,48 +2425,59 @@
     {/if}
   {/if}
 
-  {#if freeform && owned}
-    <!-- Имя и приписка «сертификата»: стоят там, куда их перетащил хранитель,
-         а не в измеренной полосе, — бумага под ними уже нарисована в самой
-         иллюстрации, и полосы здесь не существует. Тот же приём, что у
-         значков стоимости и силы выше: слой над всей картой, глухой к
-         указателю везде, кроме двух собственных меток, потому что метка,
-         которую тащат за пределы своего блока, не может собирать нажатия
-         только внутри него. -->
-    {@const nameAt = freeTextAt('name')}
-    {@const loreAt = freeTextAt('lore')}
-    {@const freeLive = frameEditable && !frameEditTarget}
+  {#if freeform && owned && !inMatch}
+    <!-- Метки готовой иллюстрации: слова и числа карты там, куда их поставил
+         хранитель, — бумага под ними уже нарисована в самой картинке, и полос
+         здесь нет. Слой над всей картой, глухой к указателю везде, кроме самих
+         меток: метка, которую тащат за пределы её коробки, не должна терять
+         нажатие на резьбе под ней.
+
+         В бою и в клетке боя (меньше 160 px) слов нет — только значки: текст в
+         четыре пикселя не читается, а здоровье и сила там нужны. -->
     <div class="free-text-layer">
-      {#if copy.title || freeLive}
-        {#if freeLive}
-          <button
-            type="button"
-            class="free-text free-title"
-            style="left:{nameAt.x}%; top:{nameAt.y}%"
-            onpointerdown={(e) => freeTextDragStart('name', e)}
-            onpointermove={freeTextDragMove}
-            onpointerup={freeTextDragEnd}
-            onpointercancel={freeTextDragEnd}
-          >{copy.title || $t('adminBattlesFreeName')}</button>
-        {:else}
-          <h3 class="free-text free-title" style="left:{nameAt.x}%; top:{nameAt.y}%">{copy.title}</h3>
+      {#snippet markGlyph(slot: FreePrintedSlot)}
+        {#if slot !== 'title' && slot !== 'kind' && slot !== 'effect' && slot !== 'traits' && slot !== 'lore'}
+          <span class="free-mark-glyph" aria-hidden="true">
+            <BattleIcon name={statMark(slot)} size="100%" weight={1.35} />
+          </span>
         {/if}
-      {/if}
-      {#if copy.lore || freeLive}
-        {#if freeLive}
-          <button
-            type="button"
-            class="free-text free-lore"
-            style="left:{loreAt.x}%; top:{loreAt.y}%"
-            onpointerdown={(e) => freeTextDragStart('lore', e)}
-            onpointermove={freeTextDragMove}
-            onpointerup={freeTextDragEnd}
-            onpointercancel={freeTextDragEnd}
-          >{copy.lore || $t('adminBattlesLore')}</button>
-        {:else}
-          <p class="free-text free-lore" style="left:{loreAt.x}%; top:{loreAt.y}%">{copy.lore}</p>
+      {/snippet}
+      {#each marks as { slot, look } (slot)}
+        {@const said = markText(slot)}
+        {#if look.shown && (said || marksLive)}
+          {#if marksLive}
+            <button
+              type="button"
+              class="free-mark"
+              class:free-mark--caps={look.caps}
+              class:free-mark--stat={!look.width}
+              class:free-mark--empty={!said}
+              class:free-mark--held={markPopoverOpen === slot || markDragSlot === slot}
+              data-mark={slot}
+              style={freeMarkStyle(look)}
+              aria-label={$t(freeMarkLabel(slot))}
+              onpointerdown={(e) => markDragStart(slot, e)}
+              onpointermove={markDragMove}
+              onpointerup={markDragEnd}
+              onpointercancel={markDragEnd}
+              onkeydown={(e) => markKey(slot, e)}
+            >{#if said && look.glyph}{@render markGlyph(slot)}{/if}{said || markPlaceholder(slot)}</button>
+          {:else}
+            <!-- Число подписано и при наведении: знак угадывают не все. -->
+            <p
+              class="free-mark"
+              class:free-mark--caps={look.caps}
+              class:free-mark--stat={!look.width}
+              style={freeMarkStyle(look)}
+              title={look.width ? undefined : `${$t(freeMarkLabel(slot))}: ${said}`}
+            >{#if look.glyph}{@render markGlyph(slot)}{/if}{said}</p>
+          {/if}
+          {#if said && (FREE_STAT_SLOTS as readonly string[]).includes(slot)}
+            {@const apart = freeGlyphAt(frame, slot as GlyphSlot)}
+            {#if apart}{@render apartGlyph(slot as GlyphSlot, apart, look.ink, '')}{/if}
+          {/if}
         {/if}
-      {/if}
+      {/each}
     </div>
   {/if}
  </div>
@@ -2141,32 +2505,34 @@
    ></i>
  {/if}
 
- {#if badgePopoverOpen && badgePopoverPos}
-   <!-- Стол значка. Прицеплен к экранному месту самого значка, а не к
-        `frame.costX`/`powerX`: у значка есть подпись неизвестной ширины, и он
-        висит на своём центре. Сосед `.card`, а не его ребёнок — посторонее
-        правило `.card { overflow: hidden }` иначе обрезало бы стол. -->
-   <button
-     type="button"
-     class="frame-backdrop"
-     aria-label={$t('adminBattlesFrameClose')}
-     onclick={() => (badgePopoverOpen = null)}
-   ></button>
-   <div
-     class="badge-popover"
-     bind:this={badgePopoverEl}
-     style="left:{badgePopoverPos.left}%; top:{badgePopoverPos.top}%"
-   >
-     <BattleBadgeInspector
-       kind={badgePopoverOpen}
-       value={badgeNumbers[badgePopoverOpen]}
-       {frame}
-       write={rankFrame}
-       {onEditStart}
-       onArtUpload={onBadgeArtUpload}
-       onArtStore={onBadgeArtStore}
-       onclose={() => (badgePopoverOpen = null)}
-     />
+ {#if markPopoverOpen || badgePopoverOpen}
+   <!-- Стол метки или значка. Вынесен поверх страницы (`portal`) и стоит
+        сбоку от карты — см. `placePopover`. -->
+   <div class="badge-popover" bind:this={badgePopoverEl} use:portal>
+     {#if markPopoverOpen}
+       <BattleMarkInspector
+         slot={markPopoverOpen}
+         bind:card
+         {frame}
+         lang={editLang2}
+         textEditable={editable}
+         write={() => writeTarget()}
+         {onEditStart}
+         onclose={closePopovers}
+       />
+     {:else if badgePopoverOpen}
+       <BattleBadgeInspector
+         kind={badgePopoverOpen}
+         value={badgeNumbers[badgePopoverOpen]}
+         {frame}
+         write={() => writeTarget()}
+         onValue={editable ? (n) => setBadgeValue(badgePopoverOpen!, n) : undefined}
+         {onEditStart}
+         onArtUpload={onBadgeArtUpload}
+         onArtStore={onBadgeArtStore}
+         onclose={closePopovers}
+       />
+     {/if}
    </div>
  {/if}
 </article>
@@ -2415,50 +2781,115 @@
     pointer-events: none;
   }
 
-  .free-text {
+  .free-mark {
     position: absolute;
-    max-width: 90%;
+    max-width: 96%;
     margin: 0;
+    padding: 0;
     transform: translate(-50%, -50%);
-    text-align: center;
+    font-size: calc(var(--fm-size, 4.4cqi) * var(--type-scale, 1));
+    line-height: 1.2;
+    white-space: pre-line;
+    overflow-wrap: break-word;
     background: none;
     border: none;
+  }
+
+  /* Число стоит в одну строку и шириной в себя: перенос «1» и «2» на две
+     строки — это два числа. */
+  .free-mark--stat {
+    white-space: nowrap;
+    line-height: 1;
+    font-variant-numeric: lining-nums;
+  }
+
+  /* Знак, стоящий отдельно от числа: своё место и своя величина. Слой его
+     глух к указателю (см. `.badges-layer`), поэтому ловит нажатия только он. */
+  .free-glyph {
+    position: absolute;
+    width: var(--fg-size, 7cqi);
+    height: var(--fg-size, 7cqi);
     padding: 0;
-    font-family: inherit;
-    color: inherit;
-    cursor: inherit;
+    transform: translate(-50%, -50%);
+    background: none;
+    border: none;
+    line-height: 0;
   }
 
-  .free-title {
-    font-family: var(--title-face, inherit);
-    color: var(--title-ink, var(--ink));
-    font-size: calc(7cqi * var(--free-name-size, 1) * var(--type-scale, 1));
-    line-height: 1.15;
-    font-weight: 400;
-    letter-spacing: 0.01em;
-  }
-
-  .free-lore {
-    font-family: var(--free-lore-face, inherit);
-    color: var(--free-lore-ink, var(--ink));
-    font-size: calc(4.4cqi * var(--free-lore-size, 1) * var(--type-scale, 1));
-    line-height: 1.4;
-    font-style: italic;
-  }
-
-  button.free-text {
+  .free-glyph--live {
     pointer-events: auto;
     cursor: grab;
     touch-action: none;
-    /* An empty label still needs a place to grab — a hairline box says
-       "put something here", the same job `.corner--editable.corner--unfilled`
-       does for a badge with no plate under it yet. */
-    outline: 1px dashed color-mix(in oklab, var(--ink) 35%, transparent);
-    outline-offset: 4px;
+    border-radius: 2px;
+    outline: 1px dashed rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(20, 12, 8, 0.45);
   }
 
-  button.free-text:active {
+  .free-glyph--live:active {
     cursor: grabbing;
+  }
+
+  .free-glyph--live:focus-visible,
+  .free-glyph--live.free-glyph--held {
+    outline: 2px solid #f8f1e7;
+    box-shadow: 0 0 0 4px #c65f3c;
+  }
+
+  /* Знак числа — перед цифрой, в её строку и в её чернилах. */
+  .free-mark-glyph {
+    display: inline-block;
+    width: 0.62em;
+    height: 0.62em;
+    margin-right: 0.12em;
+    vertical-align: 0.02em;
+  }
+
+  .free-mark--caps {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  /* На столе метку должно быть видно на ЛЮБОЙ картинке, а не только там,
+     где её чернила случайно контрастны: тёмная надпись на тёмной резьбе
+     невидима, и хранитель тыкал по карте наугад. Поэтому рамка двухцветная —
+     светлый пунктир по тёмной кайме, — и видна она и на чёрном, и на белом.
+     Цвет самой надписи она не трогает: на столе видно то, что увидит гость. */
+  button.free-mark {
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+    font: inherit;
+    font-size: calc(var(--fm-size, 4.4cqi) * var(--type-scale, 1));
+    border-radius: 1px;
+    outline: 1px dashed rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(20, 12, 8, 0.45);
+  }
+
+  button.free-mark:active {
+    cursor: grabbing;
+  }
+
+  button.free-mark:focus-visible,
+  button.free-mark.free-mark--held {
+    outline: 2px solid #f8f1e7;
+    box-shadow: 0 0 0 4px #c65f3c;
+  }
+
+  /* Пустая метка — подпись места, а не текст карты: печатается на светлой
+     плашке домашними чернилами, чтобы её было видно и найти. */
+  .free-mark--empty {
+    color: #34251c !important;
+    background: rgba(248, 241, 231, 0.85);
+    font-style: italic;
+  }
+
+  /* Клетка боя: слов нет, только значки. */
+  @container (max-width: 160px) {
+    .free-text-layer {
+      display: none;
+    }
   }
 
   /* The paper the card is written on, under everything. A cut-out frame has
@@ -2820,10 +3251,19 @@
   /* Со снятой заливкой хватать нечего: цифра мельче своей коробки, и хранитель
      тянул бы за воздух. Волосяная обводка — ТОЛЬКО на столе (`--editable`), на
      полке значка без заливки не видно, и в этом весь смысл. */
+  /* Двухцветная, как у меток готовой иллюстрации: значок без подложки
+     стоит на чужой картинке, и одноцветная обводка пропадала бы на ней. */
   .corner--editable.corner--unfilled,
   .corner--editable.corner--shape-none {
-    outline: 1px dashed color-mix(in oklab, var(--ink) 35%, transparent);
+    outline: 1px dashed rgba(255, 255, 255, 0.9);
     outline-offset: -1px;
+    box-shadow: 0 0 0 2px rgba(20, 12, 8, 0.45);
+  }
+
+  .corner--editable.corner--held {
+    outline: 2px solid #f8f1e7;
+    outline-offset: 0;
+    box-shadow: 0 0 0 4px #c65f3c;
   }
 
   .corner--editable:active {
@@ -3829,21 +4269,13 @@
      волосок: считать отвод от старой величины значит отходить на пустое
      место, которого на карте больше нет. Сдвиг — в пикселях: он не про карту, а про экран,
      и назначает его `fitBadgePopover`. */
+  /* Поверх страницы, а не карты (`portal`): место назначает `placePopover`
+     в точках экрана. Слой выше прилипших шапок листа. */
   .badge-popover {
-    position: absolute;
-    z-index: 6;
-    transform: translate(
-      calc(-50% + var(--bi-shift-x, 0px)),
-      calc(5.75cqi + 6px + var(--bi-shift-y, 0px))
-    );
-  }
-
-  /* Над значком — когда под ним до края экрана не осталось места. */
-  .badge-popover--up {
-    transform: translate(
-      calc(-50% + var(--bi-shift-x, 0px)),
-      calc(-100% - 5.75cqi - 6px + var(--bi-shift-y, 0px))
-    );
+    position: fixed;
+    left: -9999px;
+    top: 0;
+    z-index: 1000;
   }
 
   /* A tilting, sweeping card is decoration; the card without it is the whole

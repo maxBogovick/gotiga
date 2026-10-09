@@ -412,6 +412,7 @@ pub fn normalize_rules(raw: &battle_core::Rules) -> battle_core::Rules {
         max_rounds: raw.max_rounds.clamp(1, CHALLENGE_MAX_ROUNDS),
         long_shot_power: raw.long_shot_power.min(100),
         point_blank_power: raw.point_blank_power.min(100),
+        breakthrough: raw.breakthrough,
     }
 }
 
@@ -422,6 +423,62 @@ pub fn rules_of(setup: &crate::models::ChallengeSetup) -> battle_core::Rules {
         .as_ref()
         .map(normalize_rules)
         .unwrap_or_default()
+}
+
+/// Величина поля, как её можно оставить: та, которую умеет движок, или отказ
+/// словами. Не зажимается молча, как в движке: хранитель, выбравший 4 × 6,
+/// должен узнать, что такого поля нет, а не получить 4 × 5 без объяснений.
+pub fn check_field(field: battle_core::Field) -> Result<battle_core::Field, &'static str> {
+    if field.normalized() != field {
+        return Err("No field of that size");
+    }
+    Ok(field)
+}
+
+/// Клетка стола гостя на поле этюда. Стол собирается на половине 3 × 3
+/// (ряды 3–5); на глубоком поле его передний ряд встаёт к шву, как и был.
+pub fn deck_cell_on(field: battle_core::Field, cell: battle_core::Cell) -> battle_core::Cell {
+    let back = cell.y.saturating_sub(3);
+    battle_core::Cell::new(cell.x, field.depth + back).unwrap_or(cell)
+}
+
+/// Сколько клеток местности держит этюд. Половина поля: поле, где стен больше,
+/// чем клеток, — это уже не поле, а коридор, и решает его не бой.
+pub const TERRAIN_MAX: usize = 9;
+
+/// Местность этюда, как её можно оставить.
+///
+/// Отказывает словами, а не отбрасывает молча, как движок: стол хранителя
+/// должен узнать, что его стена не легла, до того как гость увидит поле без
+/// неё. Стена или овраг под стоящим телом — отказ: тело на стене означало бы,
+/// что хранитель имел в виду одно из двух, а угадывать здесь некому.
+pub fn check_terrain(setup: &crate::models::ChallengeSetup) -> Result<Vec<battle_core::Tile>, &'static str> {
+    if setup.terrain.len() > TERRAIN_MAX {
+        return Err("Too much terrain on one field");
+    }
+    let field = check_field(setup.field)?;
+    let mut kept: Vec<battle_core::Tile> = Vec::with_capacity(setup.terrain.len());
+    for tile in &setup.terrain {
+        if !field.contains(tile.cell) {
+            return Err("No such cell on the field");
+        }
+        if kept.iter().any(|t| t.cell == tile.cell) {
+            return Err("Two grounds on one cell");
+        }
+        let stood = setup
+            .player_board
+            .iter()
+            .chain(&setup.keeper_board)
+            .any(|p| p.x == tile.cell.x && p.y == tile.cell.y);
+        if stood && tile.ground == battle_core::Ground::Wall {
+            return Err("A body stands where the wall is");
+        }
+        if stood && tile.ground == battle_core::Ground::Ravine {
+            return Err("A body stands over the ravine");
+        }
+        kept.push(*tile);
+    }
+    Ok(kept)
 }
 
 pub const DECK_BOARD: usize = 3;
@@ -1587,6 +1644,11 @@ pub struct FrameOverride {
     pub free_lore_font: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub free_lore_ink: Option<String>,
+    /// «Готовая карта» (§ 9.10): фотография уже нарисована в картинке.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art_baked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_marks: Option<BTreeMap<String, FreeMark>>,
 }
 
 /// The clamps a `FrameOverride` patch must pass however it arrives — alone or
@@ -1707,6 +1769,8 @@ fn clean_frame_override(parsed: FrameOverride) -> Option<FrameOverride> {
             .map(|v| clamp_scale(v, BADGE_SCALE_MIN, BADGE_SCALE_MAX)),
         free_lore_font: text(parsed.free_lore_font),
         free_lore_ink: text(parsed.free_lore_ink),
+        art_baked: parsed.art_baked.filter(|baked| *baked),
+        free_marks: parsed.free_marks.map(normalize_free_marks).filter(|m| !m.is_empty()),
     };
     if cleaned.says_nothing() {
         return None;
@@ -1785,6 +1849,8 @@ impl FrameOverride {
             free_lore_size,
             free_lore_font,
             free_lore_ink,
+            art_baked,
+            free_marks,
         } = self;
         [
             frame_image.is_none(),
@@ -1851,6 +1917,8 @@ impl FrameOverride {
             free_lore_size.is_none(),
             free_lore_font.is_none(),
             free_lore_ink.is_none(),
+            art_baked.is_none(),
+            free_marks.is_none(),
         ]
         .iter()
         .all(|missing| *missing)
@@ -2586,6 +2654,98 @@ pub struct BattleFrame {
     pub free_lore_font: String,
     #[serde(default)]
     pub free_lore_ink: String,
+    /// `freeform`: картинка — карта целиком, фотографию под неё не кладут.
+    /// Надевает это «Готовая карта» на одну карту; у ранга не бывает, но
+    /// пресет, снятый с такой карты, обязан донести это слово.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art_baked: Option<bool>,
+    /// `freeform`: метки поверх иллюстрации — слова и числа карты, каждая со
+    /// своим местом и видом (`FreeMark`). Имя и приписка, пока своей метки
+    /// нет, читаются из прежних `free_name_*`/`free_lore_*`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_marks: Option<BTreeMap<String, FreeMark>>,
+}
+
+/// Одна метка готовой иллюстрации. Всякое поле необязательно: пустое значит
+/// «как по умолчанию» (на клиенте — `freeMarkOf`), а не ноль.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreeMark {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ink: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown: Option<bool>,
+    /// Знак рядом с числом. Пусто — знак есть.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph: Option<bool>,
+    /// Знак отдельно от числа: его центр, % карты, и величина. Пусто — знак
+    /// стоит в строке цифры.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph_x: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph_y: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glyph_size: Option<f32>,
+}
+
+/// Места меток. Зеркало `FREE_SLOTS` в `battles.ts`, менять вместе.
+pub const FREE_SLOTS: &[&str] = &[
+    "title", "kind", "effect", "traits", "lore", "cost", "power", "health", "mana", "armor",
+    "ward", "reach", "step", "speed", "mend",
+];
+pub const FREE_MARK_ALIGNS: &[&str] = &["left", "center", "right"];
+/// Пределы. Зеркало в `battles.ts`, менять вместе.
+pub const FREE_MARK_SIZE_MIN: f32 = 0.3;
+pub const FREE_MARK_SIZE_MAX: f32 = 4.0;
+pub const FREE_MARK_WIDTH_MIN: f32 = 10.0;
+pub const FREE_MARK_WIDTH_MAX: f32 = 100.0;
+
+/// Неизвестное место выбрасывается (его некому нарисовать), числа прижимаются,
+/// пустые строки снимаются, метка без единого поля — тоже.
+pub fn normalize_free_marks(raw: BTreeMap<String, FreeMark>) -> BTreeMap<String, FreeMark> {
+    let num = |v: Option<f32>, min: f32, max: f32| {
+        v.filter(|v| v.is_finite()).map(|v| v.clamp(min, max))
+    };
+    let text = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    raw.into_iter()
+        .filter(|(slot, _)| FREE_SLOTS.contains(&slot.as_str()))
+        .map(|(slot, mark)| {
+            let clean = FreeMark {
+                x: num(mark.x, 0.0, 100.0),
+                y: num(mark.y, 0.0, 100.0),
+                size: num(mark.size, FREE_MARK_SIZE_MIN, FREE_MARK_SIZE_MAX),
+                width: num(mark.width, FREE_MARK_WIDTH_MIN, FREE_MARK_WIDTH_MAX),
+                align: mark.align.filter(|a| FREE_MARK_ALIGNS.contains(&a.as_str())),
+                font: text(mark.font),
+                ink: text(mark.ink),
+                bold: mark.bold,
+                italic: mark.italic,
+                shown: mark.shown,
+                glyph: mark.glyph,
+                glyph_x: num(mark.glyph_x, 0.0, 100.0),
+                glyph_y: num(mark.glyph_y, 0.0, 100.0),
+                glyph_size: num(mark.glyph_size, FREE_MARK_SIZE_MIN, FREE_MARK_SIZE_MAX),
+            };
+            (slot, clean)
+        })
+        .filter(|(_, mark)| *mark != FreeMark::default())
+        .collect()
 }
 
 pub const LAYOUTS: &[&str] = &["corners", "plaque"];
@@ -2786,6 +2946,8 @@ fn painted(
         free_lore_size: 1.0,
         free_lore_font: String::new(),
         free_lore_ink: String::new(),
+        art_baked: None,
+        free_marks: None,
     }
 }
 
@@ -2999,6 +3161,12 @@ pub fn normalize_frame(mut found: BattleFrame, fallback: BattleFrame) -> BattleF
     found.free_lore_size = clamp_scale(found.free_lore_size, BADGE_SCALE_MIN, BADGE_SCALE_MAX);
     found.free_lore_font = found.free_lore_font.trim().to_string();
     found.free_lore_ink = found.free_lore_ink.trim().to_string();
+    found.art_baked = found.art_baked.filter(|baked| *baked);
+    found.free_marks = found
+        .free_marks
+        .take()
+        .map(normalize_free_marks)
+        .filter(|m| !m.is_empty());
     found
 }
 
@@ -4367,6 +4535,51 @@ mod tests {
         assert!(normalize_frame_override(Some(r#"{"frameMode":"gilded"}"#)).is_none());
     }
 
+    /// Готовая карта: картинка, метки и слово «фотография нарисована» едут в
+    /// наряде карты и переживают сохранение; чужие места, мусорные числа и
+    /// пустые метки — нет.
+    #[test]
+    fn a_ready_card_keeps_its_marks() {
+        let raw = r#"{
+            "frameMode": "freeform", "artBaked": true, "frameImage": "/static/frames/a.webp",
+            "freeMarks": {
+                "title": {"x": 50, "y": 140, "size": 9, "align": "left", "font": " fraunces ", "shown": true},
+                "effect": {"width": 3, "align": "sideways", "ink": "  "},
+                "mana": {"shown": true, "x": 12.5, "glyphX": 140, "glyphY": 20, "glyphSize": 0},
+                "health": {"shown": false, "glyph": false},
+                "nonsense": {"shown": true},
+                "lore": {}
+            }
+        }"#;
+        let kept = normalize_frame_override(Some(raw)).expect("a ready card is a dress");
+        let back: FrameOverride = serde_json::from_str(&kept).unwrap();
+        assert_eq!(back.art_baked, Some(true));
+        let marks = back.free_marks.expect("marks survive");
+        let title = &marks["title"];
+        assert_eq!(title.y, Some(100.0));
+        assert_eq!(title.size, Some(FREE_MARK_SIZE_MAX));
+        assert_eq!(title.align.as_deref(), Some("left"));
+        assert_eq!(title.font.as_deref(), Some("fraunces"));
+        let effect = &marks["effect"];
+        assert_eq!(effect.width, Some(FREE_MARK_WIDTH_MIN));
+        assert_eq!(effect.align, None);
+        assert_eq!(effect.ink, None);
+        assert_eq!(marks["mana"].x, Some(12.5));
+        assert_eq!(marks["mana"].glyph_x, Some(100.0));
+        assert_eq!(marks["mana"].glyph_y, Some(20.0));
+        assert_eq!(marks["mana"].glyph_size, Some(FREE_MARK_SIZE_MIN));
+        assert_eq!(marks["health"].shown, Some(false));
+        assert_eq!(marks["health"].glyph, Some(false));
+        assert!(!marks.contains_key("nonsense"));
+        assert!(!marks.contains_key("lore"));
+    }
+
+    /// `artBaked: false` — не выбор, а отсутствие: наряд из одного него пуст.
+    #[test]
+    fn an_unbaked_flag_alone_is_no_dress() {
+        assert!(normalize_frame_override(Some(r#"{"artBaked":false,"freeMarks":{}}"#)).is_none());
+    }
+
     #[test]
     fn a_dress_is_held_to_the_ranges_a_rank_is() {
         let raw = r#"{"artShare":9,"headerShare":9,"insetTop":90,"costX":900,"aspect":9}"#;
@@ -4603,6 +4816,93 @@ mod tests {
         assert_eq!(kept.second_side_coin, 0);
         assert_eq!(kept.long_shot_power, 100);
         assert_eq!(kept.point_blank_power, 100);
+    }
+
+    fn ground(x: u8, y: u8, ground: battle_core::Ground) -> battle_core::Tile {
+        battle_core::Tile { cell: battle_core::Cell::new(x, y).unwrap(), ground }
+    }
+
+    #[test]
+    fn terrain_rides_inside_the_arrangement_and_old_ones_have_none() {
+        let setup = crate::models::ChallengeSetup {
+            terrain: vec![ground(1, 2, battle_core::Ground::Wall)],
+            ..Default::default()
+        };
+        let written = serde_json::to_string(&setup).unwrap();
+        let read: crate::models::ChallengeSetup = serde_json::from_str(&written).unwrap();
+        assert_eq!(read.terrain, setup.terrain);
+
+        let older: crate::models::ChallengeSetup =
+            serde_json::from_str(r#"{"keeperHand":["vedma"]}"#).unwrap();
+        assert!(older.terrain.is_empty());
+        assert!(!serde_json::to_string(&older).unwrap().contains("terrain"));
+    }
+
+    #[test]
+    fn a_field_the_engine_does_not_know_is_refused_in_words() {
+        assert!(check_field(battle_core::Field { width: 4, depth: 5 }).is_ok());
+        assert_eq!(
+            check_field(battle_core::Field { width: 4, depth: 6 }),
+            Err("No field of that size")
+        );
+        // Клетка, которой нет на поле этюда, — отказ, даже если на большем поле
+        // она была бы.
+        let setup = crate::models::ChallengeSetup {
+            terrain: vec![ground(3, 1, battle_core::Ground::Cover)],
+            ..Default::default()
+        };
+        assert_eq!(check_terrain(&setup), Err("No such cell on the field"));
+        let wide = crate::models::ChallengeSetup {
+            field: battle_core::Field { width: 4, depth: 3 },
+            ..setup
+        };
+        assert!(check_terrain(&wide).is_ok());
+    }
+
+    #[test]
+    fn a_guest_table_stands_at_the_seam_of_any_field() {
+        let deep = battle_core::Field { width: 3, depth: 5 };
+        let front = battle_core::Cell::new(1, 3).unwrap();
+        let back = battle_core::Cell::new(1, 5).unwrap();
+        assert_eq!(deck_cell_on(deep, front), battle_core::Cell::new(1, 5).unwrap());
+        assert_eq!(deck_cell_on(deep, back), battle_core::Cell::new(1, 7).unwrap());
+        assert_eq!(deck_cell_on(battle_core::Field::default(), back), back);
+    }
+
+    #[test]
+    fn a_wall_under_a_body_is_refused_in_words() {
+        let setup = crate::models::ChallengeSetup {
+            keeper_board: vec![crate::models::ChallengePlacement { card: "vedma".into(), x: 1, y: 1 }],
+            terrain: vec![ground(1, 1, battle_core::Ground::Wall)],
+            ..Default::default()
+        };
+        assert_eq!(check_terrain(&setup), Err("A body stands where the wall is"));
+
+        // Укрытие и топь под телом — законны: на них стоят.
+        let fine = crate::models::ChallengeSetup {
+            terrain: vec![ground(1, 1, battle_core::Ground::Cover)],
+            ..setup
+        };
+        assert!(check_terrain(&fine).is_ok());
+    }
+
+    #[test]
+    fn terrain_is_counted_and_not_doubled() {
+        let doubled = crate::models::ChallengeSetup {
+            terrain: vec![ground(0, 0, battle_core::Ground::Mire), ground(0, 0, battle_core::Ground::Wall)],
+            ..Default::default()
+        };
+        assert_eq!(check_terrain(&doubled), Err("Two grounds on one cell"));
+
+        let crowded = crate::models::ChallengeSetup {
+            terrain: battle_core::Field::default()
+                .cells()
+                .take(TERRAIN_MAX + 1)
+                .map(|cell| battle_core::Tile { cell, ground: battle_core::Ground::Cover })
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(check_terrain(&crowded), Err("Too much terrain on one field"));
     }
 
     #[test]

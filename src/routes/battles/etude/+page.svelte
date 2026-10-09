@@ -14,7 +14,7 @@
   import { fade } from 'svelte/transition';
   import { t, lang, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
-  import { HOUSE_RULES, deckFaultLine, rulesApart } from '$lib/battles';
+  import { HOUSE_RULES, deckFaultLine, rulesApart, terrainLines } from '$lib/battles';
   import { authStore } from '$lib/stores/auth.svelte';
   import BattleScene from '$lib/components/BattleScene.svelte';
   import BattleDoor from '$lib/components/BattleDoor.svelte';
@@ -64,7 +64,10 @@
   const noteOf = (c: BattleChallenge) => ($lang === 'ru' ? c.noteRu : c.noteEn);
   /** Чем правила этого боя отличаются от домашних. Пусто — обычный бой, и
    *  говорить нечего. */
-  const apart = (c: BattleChallenge) => rulesApart(c.setup.rules);
+  const apart = (c: BattleChallenge) => [
+    ...rulesApart(c.setup.rules),
+    ...terrainLines(c.setup.terrain),
+  ];
 
   function loginFrom(challenge?: BattleChallenge) {
     const dest = challenge ? `/battles/etude?play=${challenge.id}` : '/battles/etude';
