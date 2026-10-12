@@ -5,7 +5,7 @@
   import { t, lang, brandName } from '$lib/i18n';
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
-  import { observeWork } from '$lib/analytics';
+  import { interact, observeWork } from '$lib/analytics';
   import { api } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
@@ -142,6 +142,44 @@
     }
     searchDebounce = setTimeout(() => runKeeper(q), 350);
     return () => clearTimeout(searchDebounce);
+  });
+
+  // What people look for, and whether the archive had it. One row per phrase
+  // the visitor settled on (a pause, not every keystroke), with how many works
+  // it showed: a phrase that showed none is the list of things to make or to
+  // name differently. Reads `resultList` too, so the count is taken after the
+  // semantic answer lands rather than from the instant local match.
+  let searchSettle: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const found = resultList.length;
+    clearTimeout(searchSettle);
+    if (q.length < 2) return;
+    searchSettle = setTimeout(() => interact('search', q.slice(0, 60), found), 1500);
+    return () => clearTimeout(searchSettle);
+  });
+
+  // Which facets people reach for. Changes in the first moments after the page
+  // opens are the saved view being restored, not a choice, and are skipped.
+  const archiveOpenedAt = Date.now();
+  let lastFacets: Record<string, string> | null = null;
+  $effect(() => {
+    const facets = {
+      status: mainFilter,
+      year: yearFilter,
+      technique: techniqueFilter,
+      series: seriesFilter,
+      material: materialFilter,
+      sort: sortMode,
+    } as Record<string, string>;
+    const before = lastFacets;
+    lastFacets = { ...facets };
+    if (!before || Date.now() - archiveOpenedAt < 1500) return;
+    for (const [key, value] of Object.entries(facets)) {
+      if (value !== before[key] && value !== 'all' && value !== 'curated') {
+        interact('filter', `${key}=${String(value).slice(0, 40)}`);
+      }
+    }
   });
 
   async function runKeeper(q: string) {
@@ -664,7 +702,7 @@
                 class="block w-full text-left relative focus:outline-none"
                 aria-label="{figurine.name}"
                 data-sveltekit-preload-data="hover"
-                onclick={(e) => { if (doorShut(figurine)) { e.preventDefault(); return; } markViewed(figurine.id); }}
+                onclick={(e) => { if (doorShut(figurine)) { e.preventDefault(); return; } interact('work_click', `archive:${i + 1}`, i + 1, false); markViewed(figurine.id); }}
               >
                 <div
                   class="fig-media relative aspect-[3/4]"

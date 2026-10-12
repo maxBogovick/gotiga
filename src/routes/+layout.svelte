@@ -1,7 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount, onDestroy } from 'svelte';
-  import { onNavigate } from '$app/navigation';
+  import { beforeNavigate, onNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import SiteFooter from '$lib/components/SiteFooter.svelte';
@@ -13,7 +13,7 @@
   import { loadSiteFonts } from '$lib/load-fonts';
   import { api } from '$lib/api';
   import { matchChrome } from '$lib/stores/match-chrome.svelte';
-  import { enterRoom, leaveRoom } from '$lib/analytics';
+  import { enterRoom, leaveRoom, noteNavigation, installErrorReporting, startVitals } from '$lib/analytics';
   import type { Lang } from '$lib/i18n';
 
   type ViewTransition = { finished: Promise<void>; ready: Promise<void> };
@@ -60,6 +60,14 @@
     enterRoom(page.url.pathname, page.route.id);
   });
 
+  // Where the visitor came from and where they are going, said before the
+  // address changes: by the time a room is closed, `location` already points
+  // at the destination, and "where did they go next" is one of the answers the
+  // visit report exists to give.
+  beforeNavigate((navigation) => {
+    noteNavigation(navigation.from?.url, navigation.to?.url);
+  });
+
   // Keep <html lang> in sync with the active language. app.html hard-codes lang="ru",
   // but the default content language is English (i18n getInitialLang) and the reader
   // can switch — a stale lang attribute mispronounces in screen readers and misleads
@@ -97,6 +105,11 @@
 
   onMount(() => {
     stopFontLoader = loadSiteFonts();
+
+    // Breakage and speed, from the visitor's side. Both are no-ops for the
+    // admin, for Do Not Track and for the owner's own browser (`canTrack`).
+    installErrorReporting();
+    startVitals();
 
     if ('serviceWorker' in navigator && import.meta.env.VITE_BUILD_TARGET === 'web') {
       import('virtual:pwa-register').then(({ registerSW }) => {

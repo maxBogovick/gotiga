@@ -3,6 +3,7 @@
   import BrassLens from '$lib/components/BrassLens.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
   import { resolveWebpUrl } from '$lib/api';
+  import { repairPicture } from '$lib/hydrate-image';
   import { t } from '$lib/i18n';
 
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
@@ -61,7 +62,13 @@
           aria-current={ctx.activeImageIndex === i ? 'true' : undefined}
         >
           <span class="thumb-v-media">
-            <picture>
+            <picture
+              use:repairPicture={{
+                webp: resolveWebpUrl(img.thumbUrl ?? img.url),
+                srcset: null,
+                src: ctx.resolveUrl(img.thumbUrl ?? img.url),
+              }}
+            >
               <source type="image/webp" srcset={resolveWebpUrl(img.thumbUrl ?? img.url) ?? undefined} />
               <img
                 src={ctx.resolveUrl(img.thumbUrl ?? img.url)}

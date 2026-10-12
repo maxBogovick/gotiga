@@ -22,3 +22,41 @@ export function syncAttr(el: Element | null | undefined, name: string, want: str
         el.removeAttribute(name);
     }
 }
+
+export type PictureWant = {
+    /** srcset of the `<source type="image/webp">`, if the picture has one. */
+    webp?: string | null;
+    /** srcset of the fallback `<img>`. */
+    srcset?: string | null;
+    /** src of the fallback `<img>`. */
+    src?: string | null;
+};
+
+/**
+ * Svelte action: keep a `<picture>`'s `<source>` and `<img>` pointing at what the
+ * component currently wants, including right after hydration (see `syncAttr`).
+ *
+ * The `<source>` is the one that bites: a browser that decodes WebP picks it over the
+ * `<img>`'s own srcset, so a stale prerendered `<source>` shows the build-time photo on
+ * top of a correct `<img>` — two different photographs stacked in one frame. Runs on
+ * mount and on every change of the parameters, and is a no-op when the DOM already agrees.
+ */
+export function repairPicture(node: HTMLElement, want: PictureWant) {
+    const apply = (w: PictureWant) => {
+        const source = node.querySelector('source[type="image/webp"]');
+        const img = node.querySelector('img');
+        if (source) syncAttr(source, 'srcset', w.webp);
+        // The <source> first: the browser re-runs its selection when the <img>'s own
+        // src/srcset is touched, so the sources must already be correct by then.
+        syncAttr(img, 'srcset', w.srcset);
+        syncAttr(img, 'src', w.src);
+    };
+    apply(want);
+    return { update: apply };
+}
+
+/** Same repair for a lone `<img>` that is not inside a `<picture>`. */
+export function repairSrc(node: HTMLImageElement, src: string | null | undefined) {
+    syncAttr(node, 'src', src);
+    return { update: (next: string | null | undefined) => syncAttr(node, 'src', next) };
+}

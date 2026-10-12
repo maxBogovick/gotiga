@@ -33,6 +33,9 @@ export interface FigurineListItem {
     material?: string | null;
     dimensions?: string | null;
     isFeatured?: boolean;
+    /** False for a work hidden from the public archive. Only the admin list carries
+     *  hidden works; public reads omit them, so absent/true both mean "shown". */
+    isVisible?: boolean;
     createdAt?: string | null;
     /** When the work was last edited (status, photo, text). Drives the home
      *  "since your visit" ledger's "refreshed" signal. */
@@ -617,9 +620,18 @@ export interface LifeOfHouseTrend {
 }
 
 export interface AnalyticsEventPayload {
-    eventType: 'figurine_view' | 'figurine_engaged' | 'figurine_cta_click' | 'page_view' | 'page_engaged';
+    eventType:
+        | 'figurine_view'
+        | 'figurine_engaged'
+        | 'figurine_cta_click'
+        | 'page_view'
+        | 'page_engaged'
+        | 'interaction'
+        | 'client_error'
+        | 'not_found'
+        | 'web_vitals';
     /** Required for figurine_view/figurine_engaged/figurine_cta_click; absent
-     * for site-wide page_view/page_engaged events. */
+     * for every site-wide event. */
     figurineId?: string | null;
     path: string;
     referrer?: string | null;
@@ -637,6 +649,30 @@ export interface AnalyticsEventPayload {
     lang?: string | null;
     /** Which on-site block a figurine-card click came from, e.g. "home_afisha". */
     internalSource?: string | null;
+    /** Arm of a running experiment (`scene:on` | `scene:off`); see `sceneAb.ts`. */
+    variant?: string | null;
+    /** `interaction`: what the visitor did (`search`, `filter`, …). `client_error`:
+     * the kind (`js`, `promise`, `image`, `api`, `resource`, `render`). */
+    name?: string | null;
+    /** What it was about. On `page_view` / `figurine_view`: the room the visitor
+     * came from, when they came from one. */
+    detail?: string | null;
+    /** How many or how much: results found, a frame number, seconds. */
+    value?: number | null;
+    /** Whether this browser had been here on an earlier day; null when unknown. */
+    isReturning?: boolean | null;
+    /** `page_engaged` / `figurine_engaged`: where the visitor went next —
+     * `/path`, `ext:host`, or `hide`. */
+    exitTo?: string | null;
+    /** `page_engaged`: the last heading the deepest scroll reached. */
+    lastSection?: string | null;
+    /** `web_vitals`, milliseconds; CLS in thousandths. */
+    vitalLcp?: number | null;
+    vitalInp?: number | null;
+    vitalCls?: number | null;
+    vitalTtfb?: number | null;
+    conn?: string | null;
+    viewportW?: number | null;
 }
 
 /** One room's engagement — every public page except the figurine one, which
@@ -4284,4 +4320,217 @@ export interface SaveBattleRaceRequest {
     iconUrl?: string | null;
     levelFrames?: string | null;
     motionWear?: string | null;
+}
+
+
+/** One arm of the tale-scene experiment on one tale. Counts only: the panel
+ * builds rates and the verdict from them. */
+export interface SceneExperimentArm {
+    /** Tale path without a query. */
+    path: string;
+    /** `scene:on` | `scene:off`. */
+    variant: string;
+    views: number;
+    engaged: number;
+    /** Engaged visits that scrolled at least half the page. */
+    deep: number;
+    quickExit: number;
+    medianDurationMs: number | null;
+    medianScrollDepth: number | null;
+}
+
+export interface SceneExperimentResponse {
+    from: string;
+    to: string;
+    rawDataFrom: string;
+    arms: SceneExperimentArm[];
+}
+
+// ── Behaviour tab (see AnalyticsInsights.svelte) ────────────────────────────
+
+/** How long and how far people went in one room, as counts of visits per
+ * bucket, plus the new/returning split. Rollup-backed: covers the whole range. */
+export interface EngagementShape {
+    pathGroup: string;
+    visits: number;
+    durLt10: number;
+    dur1030: number;
+    dur3060: number;
+    dur60180: number;
+    durGe180: number;
+    scrollLt25: number;
+    scroll2549: number;
+    scroll5074: number;
+    scrollGe75: number;
+    newVisits: number;
+    returningVisits: number;
+    /** Visits longer than 30 s, split the same way. */
+    newLong: number;
+    returningLong: number;
+}
+
+export interface ExitRow {
+    pathGroup: string;
+    /** `to:<room>`, `ext:<host>` or `hide`. */
+    exitTo: string;
+    visits: number;
+}
+
+export interface SectionRow {
+    pathGroup: string;
+    section: string;
+    visits: number;
+    medianActiveMs: number | null;
+}
+
+export interface InteractionRow {
+    name: string;
+    detail: string;
+    events: number;
+    visitors: number;
+    zeroEvents: number;
+    valueSum: number;
+}
+
+export interface TaleReadRow {
+    slug: string;
+    /** `scene:on` / `scene:off`, or empty for a tale outside the experiment. */
+    variant: string;
+    opened: number;
+    engaged: number;
+    quickExits: number;
+    finished: number;
+    medianActiveMs: number | null;
+    medianScroll: number | null;
+    cameBack: number;
+}
+
+export interface BehaviourReport {
+    from: string;
+    to: string;
+    rawDataFrom: string;
+    shape: EngagementShape[];
+    exits: ExitRow[];
+    sections: SectionRow[];
+    interactions: InteractionRow[];
+    tales: TaleReadRow[];
+}
+
+export interface VitalsRow {
+    pathGroup: string;
+    deviceClass: string;
+    samples: number;
+    lcpN: number;
+    lcpP75: number | null;
+    lcpGood: number;
+    inpN: number;
+    inpP75: number | null;
+    inpGood: number;
+    clsN: number;
+    /** Thousandths. */
+    clsP75: number | null;
+    clsGood: number;
+    ttfbP75: number | null;
+}
+
+export interface ErrorRow {
+    kind: string;
+    pathGroup: string;
+    detail: string;
+    events: number;
+    visitors: number;
+}
+
+export interface DeadLinkSource {
+    path: string;
+    cameFrom: string;
+    events: number;
+}
+
+export interface DataTrust {
+    pageViews: number;
+    pageEngaged: number;
+    figurineViews: number;
+    figurineEngaged: number;
+    webVitals: number;
+    returningKnown: number;
+    returningTotal: number;
+    errors: number;
+}
+
+export interface PipelineHealth {
+    accepted: number;
+    written: number;
+    droppedQueueFull: number;
+    failedBatches: number;
+    failedEvents: number;
+    skippedBot: number;
+    skippedAdmin: number;
+    skippedDnt: number;
+}
+
+export interface HealthReport {
+    from: string;
+    to: string;
+    rawDataFrom: string;
+    vitals: VitalsRow[];
+    errors: ErrorRow[];
+    deadLinks: DeadLinkSource[];
+    trust: DataTrust;
+    pipeline: PipelineHealth;
+}
+
+export interface BattleFunnelRow {
+    slug: string | null;
+    title: string | null;
+    started: number;
+    players: number;
+    finished: number;
+    won: number;
+    abandoned: number;
+    avgActionsWhenAbandoned: number | null;
+    avgRounds: number | null;
+    avgMinutes: number | null;
+}
+
+export interface BattleReport {
+    from: string;
+    to: string;
+    challenges: BattleFunnelRow[];
+    visitors: number;
+}
+
+
+// === Сцена байки (стол рассказов; `TaleSceneEditor`) ===
+
+/** Типы переходов, которые знает плита; список зеркалит сервер. */
+export type SceneTransitionType = 'fade' | 'push' | 'bloom' | 'wipe' | 'rise' | 'flush' | 'surge';
+
+export interface SceneFrame {
+    url: string;
+    /** Что на картинке: по подписи алгоритм находит место в тексте. */
+    caption: string;
+    /** `object-position` этого кадра, если фигура стоит в нём не там, где в остальных. */
+    position?: string;
+}
+
+export interface SceneTransition {
+    type: SceneTransitionType;
+    /** Где идёт переход, долей чтения 0 … 1. */
+    at: number;
+    /** Сколько он длится, долей чтения. */
+    span: number;
+    /** Момент назначил человек: пересчёт его не трогает. */
+    manual?: boolean;
+}
+
+export interface TaleSceneData {
+    enabled: boolean;
+    /** `ширина / высота` плиты: `3 / 4`, `4 / 5`, `1 / 1`, `1 / 2`. */
+    ratio: string;
+    /** `object-position` кадров, например `50% 40%`. */
+    position: string;
+    frames: SceneFrame[];
+    /** На один меньше, чем кадров: переход `i` ведёт из кадра `i` в `i + 1`. */
+    transitions: SceneTransition[];
 }

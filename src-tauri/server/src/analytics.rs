@@ -1,6 +1,8 @@
 use crate::db::Repository;
 use crate::error::Result;
-use crate::models::{AnalyticsEventRecord, AnalyticsEventRequest, AnalyticsEventType};
+use crate::models::{
+    AnalyticsEventRecord, AnalyticsEventRequest, AnalyticsEventType, EventSignals,
+};
 use chrono::{Duration as ChronoDuration, Utc};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -35,6 +37,35 @@ pub const RETENTION_DAYS: i64 = 30;
 /// enough that the visitor plainly didn't engage. Single source of truth for the
 /// quick-exit-rate query in `get_admin_site_page_engagement`.
 pub const QUICK_EXIT_MS: i32 = 10_000;
+
+/// A visit longer than this is a tab left open, not a visit. The client counts
+/// only foreground time, but a clock can still be set back or a tab restored
+/// from sleep; the ceiling keeps one such row from moving a median.
+pub const MAX_ACTIVE_MS: i32 = 3 * 60 * 60 * 1000;
+
+/// Process-lifetime counters behind the "can I trust the numbers" panel.
+/// Statics rather than fields: they are read by one admin endpoint and written
+/// from three places (the request path, the writer, the bot filter), and a
+/// shared handle would have to be threaded through all three for no gain.
+pub mod health {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub static ACCEPTED: AtomicU64 = AtomicU64::new(0);
+    pub static SKIPPED_BOT: AtomicU64 = AtomicU64::new(0);
+    pub static SKIPPED_ADMIN: AtomicU64 = AtomicU64::new(0);
+    pub static SKIPPED_DNT: AtomicU64 = AtomicU64::new(0);
+    pub static FAILED_BATCHES: AtomicU64 = AtomicU64::new(0);
+    pub static FAILED_EVENTS: AtomicU64 = AtomicU64::new(0);
+    pub static WRITTEN: AtomicU64 = AtomicU64::new(0);
+
+    pub fn bump(counter: &AtomicU64, by: u64) {
+        counter.fetch_add(by, Ordering::Relaxed);
+    }
+
+    pub fn read(counter: &AtomicU64) -> u64 {
+        counter.load(Ordering::Relaxed)
+    }
+}
 
 #[derive(Clone)]
 pub struct AnalyticsRuntime {
@@ -107,7 +138,10 @@ impl AnalyticsRuntime {
             return false;
         };
         match sender.try_send(event) {
-            Ok(()) => true,
+            Ok(()) => {
+                health::bump(&health::ACCEPTED, 1);
+                true
+            }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 self.dropped_total.fetch_add(1, Ordering::Relaxed);
                 false
@@ -153,7 +187,15 @@ pub fn build_event_record(
     req: AnalyticsEventRequest,
     ctx: AnalyticsRequestContext<'_>,
 ) -> Result<Option<AnalyticsEventRecord>> {
-    if should_skip_request(ctx.headers, ctx.admin_api_key) {
+    if let Some(why) = skip_reason(ctx.headers, ctx.admin_api_key) {
+        health::bump(
+            match why {
+                Skip::Dnt => &health::SKIPPED_DNT,
+                Skip::Admin => &health::SKIPPED_ADMIN,
+                Skip::Bot => &health::SKIPPED_BOT,
+            },
+            1,
+        );
         return Ok(None);
     }
 
@@ -214,13 +256,15 @@ pub fn build_event_record(
         device_class,
         browser_family,
         country_code: ctx.country_code,
-        duration_ms: req.duration_ms,
+        duration_ms: req.duration_ms.map(|d| d.min(MAX_ACTIVE_MS)),
         scroll_depth: req.scroll_depth,
         works_seen: req.works_seen,
         cta_type: clean_optional(req.cta_type, 80),
         user_id: None,
         lang,
         internal_source: clean_optional(req.internal_source, 60),
+        variant: clean_variant(req.variant),
+        signals: clean_signals(req.signals, req.event_type),
     }))
 }
 
@@ -236,11 +280,7 @@ fn validate_event(req: &AnalyticsEventRequest) -> Result<()> {
     if req.path.trim().is_empty() || req.path.len() > 512 {
         return Err(crate::error::AppError::BadRequest("Invalid path".into()));
     }
-    let site_wide = matches!(
-        req.event_type,
-        AnalyticsEventType::PageView | AnalyticsEventType::PageEngaged
-    );
-    if !site_wide
+    if req.event_type.needs_figurine()
         && req
             .figurine_id
             .as_deref()
@@ -280,7 +320,188 @@ fn validate_event(req: &AnalyticsEventRequest) -> Result<()> {
             "ctaType is required for cta events".into(),
         ));
     }
+    validate_signals(req)
+}
+
+/// Kinds a `client_error` may name. A closed list: the report groups by it, and
+/// a free word from a browser would grow a group per typo.
+const ERROR_KINDS: [&str; 6] = ["js", "promise", "image", "api", "resource", "render"];
+
+fn bad(message: &str) -> crate::error::AppError {
+    crate::error::AppError::BadRequest(message.into())
+}
+
+fn is_signal_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
+        && name.len() >= 2
+        && name.len() <= 32
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+fn validate_signals(req: &AnalyticsEventRequest) -> Result<()> {
+    let sig = &req.signals;
+    let name = sig.name.as_deref().map(str::trim).unwrap_or("");
+    match req.event_type {
+        AnalyticsEventType::Interaction => {
+            if !is_signal_name(name) {
+                return Err(bad("name is required for interaction events"));
+            }
+        }
+        AnalyticsEventType::ClientError => {
+            if !ERROR_KINDS.contains(&name) {
+                return Err(bad("unknown error kind"));
+            }
+            if sig.detail.as_deref().map(str::trim).unwrap_or("").is_empty() {
+                return Err(bad("detail is required for error events"));
+            }
+        }
+        AnalyticsEventType::WebVitals => {
+            if sig.vital_lcp.is_none()
+                && sig.vital_inp.is_none()
+                && sig.vital_cls.is_none()
+                && sig.vital_ttfb.is_none()
+            {
+                return Err(bad("web_vitals needs at least one metric"));
+            }
+        }
+        _ => {}
+    }
+    let in_range = |v: Option<i32>, max: i32| v.is_none_or(|n| (0..=max).contains(&n));
+    if !in_range(sig.vital_lcp, 120_000)
+        || !in_range(sig.vital_inp, 60_000)
+        || !in_range(sig.vital_cls, 10_000)
+        || !in_range(sig.vital_ttfb, 60_000)
+        || !in_range(sig.value, 1_000_000_000)
+    {
+        return Err(bad("signal value out of range"));
+    }
+    if sig.viewport_w.is_some_and(|w| !(1..=20_000).contains(&w)) {
+        return Err(bad("viewportW out of range"));
+    }
     Ok(())
+}
+
+/// The stored form of the newer fields. Everything free-form is cut short and
+/// stripped of what could identify a person: this table is read by whoever
+/// opens the admin panel, and a search box or an error message is exactly
+/// where an address or a token ends up by accident.
+fn clean_signals(sig: EventSignals, event_type: AnalyticsEventType) -> EventSignals {
+    let name = sig
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| match event_type {
+            AnalyticsEventType::Interaction => is_signal_name(n),
+            AnalyticsEventType::ClientError => ERROR_KINDS.contains(n),
+            _ => false,
+        })
+        .map(str::to_string);
+    let detail_max = if event_type == AnalyticsEventType::ClientError { 160 } else { 120 };
+    EventSignals {
+        name,
+        detail: sig.detail.as_deref().map(|d| scrub_detail(d, detail_max)).filter(|d| !d.is_empty()),
+        value: sig.value.filter(|v| *v >= 0),
+        is_returning: sig.is_returning,
+        exit_to: sig.exit_to.as_deref().and_then(clean_exit),
+        last_section: clean_optional(sig.last_section, 80),
+        vital_lcp: sig.vital_lcp,
+        vital_inp: sig.vital_inp,
+        vital_cls: sig.vital_cls,
+        vital_ttfb: sig.vital_ttfb,
+        conn: sig
+            .conn
+            .as_deref()
+            .map(|c| c.trim().to_ascii_lowercase())
+            .filter(|c| matches!(c.as_str(), "slow-2g" | "2g" | "3g" | "4g")),
+        viewport_w: sig.viewport_w,
+    }
+}
+
+/// Free text from a browser, made safe to keep: tokens that look like an
+/// address or a link with a query string lose the identifying part, control
+/// characters go, and the whole is cut to `max`.
+fn scrub_detail(raw: &str, max: usize) -> String {
+    let cleaned: Vec<String> = raw
+        .split_whitespace()
+        .filter(|t| !t.contains('@'))
+        .map(|t| match t.find(['?', '#']) {
+            Some(i) if t.contains('/') => t[..i].to_string(),
+            _ => t.to_string(),
+        })
+        .collect();
+    truncate(cleaned.join(" ").trim().to_string(), max)
+}
+
+/// `/path` (query dropped), `ext:host`, or `hide`; anything else is not stored.
+fn clean_exit(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if t == "hide" {
+        return Some("hide".into());
+    }
+    if let Some(host) = t.strip_prefix("ext:") {
+        let ok = !host.is_empty()
+            && host.len() <= 120
+            && host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        return ok.then(|| format!("ext:{}", host.to_ascii_lowercase()));
+    }
+    if t.starts_with('/') && !t.starts_with("//") {
+        let path = t.split(['?', '#']).next().unwrap_or("");
+        return Some(truncate(path, 200));
+    }
+    None
+}
+
+/// Fold repeats of one visit's rolling events into a single record before the
+/// insert. `INSERT … ON CONFLICT DO UPDATE` cannot touch the same row twice in
+/// one statement, so two snapshots of one visit that landed in the same batch
+/// must be merged here; snapshots in different batches are merged by the
+/// database (`bulk_insert_analytics_events`).
+pub fn merge_visit_snapshots(events: Vec<AnalyticsEventRecord>) -> Vec<AnalyticsEventRecord> {
+    use std::collections::HashMap;
+    let mut out: Vec<AnalyticsEventRecord> = Vec::with_capacity(events.len());
+    let mut seen: HashMap<(Uuid, &'static str), usize> = HashMap::new();
+    for event in events {
+        let per_visit = matches!(
+            event.event_type,
+            "figurine_engaged" | "page_engaged" | "web_vitals"
+        );
+        let Some(pv) = event.page_view_id.filter(|_| per_visit) else {
+            out.push(event);
+            continue;
+        };
+        match seen.get(&(pv, event.event_type)) {
+            None => {
+                seen.insert((pv, event.event_type), out.len());
+                out.push(event);
+            }
+            Some(&i) => {
+                let keep = &mut out[i];
+                let max = |a: Option<i32>, b: Option<i32>| match (a, b) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (a, b) => a.or(b),
+                };
+                keep.duration_ms = max(keep.duration_ms, event.duration_ms);
+                keep.scroll_depth = max(keep.scroll_depth, event.scroll_depth);
+                keep.works_seen = max(keep.works_seen, event.works_seen);
+                keep.signals.vital_lcp = max(keep.signals.vital_lcp, event.signals.vital_lcp);
+                keep.signals.vital_inp = max(keep.signals.vital_inp, event.signals.vital_inp);
+                keep.signals.vital_cls = max(keep.signals.vital_cls, event.signals.vital_cls);
+                keep.signals.vital_ttfb = max(keep.signals.vital_ttfb, event.signals.vital_ttfb);
+                // The latest word on where the visitor went wins.
+                if event.signals.exit_to.is_some() {
+                    keep.signals.exit_to = event.signals.exit_to;
+                }
+                if event.signals.last_section.is_some() {
+                    keep.signals.last_section = event.signals.last_section;
+                }
+                keep.signals.is_returning = keep.signals.is_returning.or(event.signals.is_returning);
+            }
+        }
+    }
+    out
 }
 
 async fn writer_loop(repo: Repository, mut rx: mpsc::Receiver<AnalyticsEventRecord>) {
@@ -315,10 +536,15 @@ async fn flush_batch(repo: &Repository, batch: &mut Vec<AnalyticsEventRecord>) {
     if batch.is_empty() {
         return;
     }
-    let events = std::mem::take(batch);
+    let events = merge_visit_snapshots(std::mem::take(batch));
     let count = events.len();
-    if let Err(e) = repo.bulk_insert_analytics_events(&events).await {
-        tracing::warn!(count, error = %e, "analytics batch insert failed");
+    match repo.bulk_insert_analytics_events(&events).await {
+        Ok(_) => health::bump(&health::WRITTEN, count as u64),
+        Err(e) => {
+            health::bump(&health::FAILED_BATCHES, 1);
+            health::bump(&health::FAILED_EVENTS, count as u64);
+            tracing::warn!(count, error = %e, "analytics batch insert failed");
+        }
     }
 }
 
@@ -368,24 +594,45 @@ async fn refresh_hot_window_gated(repo: &Repository, gate: &Mutex<Option<Instant
     Ok(())
 }
 
-fn should_skip_request(headers: &axum::http::HeaderMap, admin_api_key: &str) -> bool {
+enum Skip {
+    Dnt,
+    Admin,
+    Bot,
+}
+
+fn skip_reason(headers: &axum::http::HeaderMap, admin_api_key: &str) -> Option<Skip> {
     if header_str(headers, "dnt").as_deref() == Some("1") {
-        return true;
+        return Some(Skip::Dnt);
     }
     if header_str(headers, "authorization")
         .as_deref()
         .is_some_and(|v| v == format!("Bearer {admin_api_key}"))
     {
-        return true;
+        return Some(Skip::Admin);
     }
     let ua = header_str(headers, "user-agent")
         .unwrap_or_default()
         .to_ascii_lowercase();
-    ua.contains("bot")
-        || ua.contains("crawler")
-        || ua.contains("spider")
-        || ua.contains("preview")
-        || ua.contains("lighthouse")
+    const ROBOT_MARKS: [&str; 12] = [
+        "bot",
+        "crawler",
+        "spider",
+        "preview",
+        "lighthouse",
+        "headless",
+        "phantomjs",
+        "curl/",
+        "wget/",
+        "python-requests",
+        "go-http-client",
+        "scrapy",
+    ];
+    ROBOT_MARKS.iter().any(|m| ua.contains(m)).then_some(Skip::Bot)
+}
+
+#[cfg(test)]
+fn should_skip_request(headers: &axum::http::HeaderMap, admin_api_key: &str) -> bool {
+    skip_reason(headers, admin_api_key).is_some()
 }
 
 fn client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
@@ -562,6 +809,17 @@ fn header_str(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// A variant is `<experiment>:<arm>` and nothing else. Anything that does not
+/// look like that is dropped rather than stored: the field is written by the
+/// browser, and a report that groups by it must not grow a row per typo.
+fn clean_variant(value: Option<String>) -> Option<String> {
+    let v = clean_optional(value, 40)?;
+    let ok = v.contains(':')
+        && v.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == ':' || c == '_' || c == '-');
+    ok.then_some(v)
+}
+
 fn clean_optional(value: Option<String>, max: usize) -> Option<String> {
     value
         .map(|s| truncate(s.trim(), max))
@@ -658,6 +916,17 @@ mod tests {
     }
 
     #[test]
+    fn variant_keeps_only_experiment_arm_shape() {
+        assert_eq!(clean_variant(Some("scene:on".into())).as_deref(), Some("scene:on"));
+        assert_eq!(clean_variant(Some(" scene:off ".into())).as_deref(), Some("scene:off"));
+        assert_eq!(clean_variant(Some("scene".into())), None);
+        assert_eq!(clean_variant(Some("Scene:On".into())), None);
+        assert_eq!(clean_variant(Some("scene:on;drop".into())), None);
+        assert_eq!(clean_variant(Some("".into())), None);
+        assert_eq!(clean_variant(None), None);
+    }
+
+    #[test]
     fn rejects_invalid_scroll_depth() {
         let req = AnalyticsEventRequest {
             event_type: AnalyticsEventType::FigurineEngaged,
@@ -675,6 +944,8 @@ mod tests {
             client_ts: None,
             lang: None,
             internal_source: None,
+            variant: None,
+            signals: Default::default(),
         };
         assert!(validate_event(&req).is_err());
     }
@@ -697,6 +968,8 @@ mod tests {
             client_ts: None,
             lang: None,
             internal_source: None,
+            variant: None,
+            signals: Default::default(),
         };
         assert!(validate_event(&req).is_err());
     }
@@ -719,6 +992,8 @@ mod tests {
             client_ts: None,
             lang: Some("ru".into()),
             internal_source: None,
+            variant: None,
+            signals: Default::default(),
         };
         assert!(validate_event(&req).is_ok());
     }
@@ -741,6 +1016,8 @@ mod tests {
             client_ts: None,
             lang: None,
             internal_source: None,
+            variant: None,
+            signals: Default::default(),
         };
         assert!(validate_event(&req).is_err());
     }
@@ -763,6 +1040,8 @@ mod tests {
             client_ts: None,
             lang: Some("RU".into()),
             internal_source: None,
+            variant: None,
+            signals: Default::default(),
         };
         assert!(validate_event(&req).is_ok());
     }
@@ -794,6 +1073,8 @@ mod tests {
             client_ts: None,
             lang: Some("en".into()),
             internal_source: Some("home_afisha".into()),
+            variant: Some("scene:on".into()),
+            signals: Default::default(),
         };
         let record = build_event_record(
             req,
@@ -814,5 +1095,6 @@ mod tests {
         assert_ne!(record.visitor_hash.as_deref(), Some("192.168.10.22"));
         assert_eq!(record.lang.as_deref(), Some("en"));
         assert_eq!(record.internal_source.as_deref(), Some("home_afisha"));
+        assert_eq!(record.variant.as_deref(), Some("scene:on"));
     }
 }

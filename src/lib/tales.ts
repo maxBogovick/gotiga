@@ -46,6 +46,8 @@ export type TaleBlock =
   | { kind: 'heading'; text: string; runs: TaleRun[] }
   /** A link on a line of its own: the author set it apart, so it stands apart. */
   | { kind: 'card'; ref: SiteRef }
+  /** A line opening with `>`: a line the author sets apart, a sharp remark. */
+  | { kind: 'quote'; text: string; runs: TaleRun[] }
   | { kind: 'ornament' };
 
 /** A lone ✦ on its own line: a turn in the tale, not just a new paragraph. */
@@ -107,8 +109,9 @@ export function taleRuns(text: string): TaleRun[] {
  * written without blank lines around it sits *inside* a paragraph chunk, and
  * splitting on blank lines first would hoist it above the prose it divides.
  *
- * Not markdown as a whole and deliberately not HTML — only `# heading` and
- * `**bold**`, the two things the author actually types. Otherwise: the body is written by
+ * Not markdown as a whole and deliberately not HTML — only `# heading`,
+ * `> a set-apart line` and `**bold**`, the three things the author actually
+ * types. Otherwise: the body is written by
  * one person in one house and rendered as text, so nothing here can carry
  * markup into the page — which is why the reading room needs no sanitizer.
  * Links to this house are the one thing recognised inside the text, and they
@@ -117,6 +120,9 @@ export function taleRuns(text: string): TaleRun[] {
 export function renderTale(body: string | null | undefined): TaleBlock[] {
   const blocks: TaleBlock[] = [];
   let held: string[] = [];
+  // The line just read was a `>` line with nothing between it and this one:
+  // the two are one remark broken across lines, not two remarks.
+  let inQuote = false;
 
   const flush = () => {
     const text = held.join(' ').replace(/\s+/g, ' ').trim();
@@ -128,8 +134,23 @@ export function renderTale(body: string | null | undefined): TaleBlock[] {
     const line = raw.trim();
     const card = line ? lineLink(line) : null;
     const heading = line.match(/^#{1,6}\s+(.+?)(?:\s+#+)?$/);
-    if (!line) {
+    const quote = line.match(/^>\s*(.*)$/);
+    const wasQuote = inQuote;
+    inQuote = false;
+    if (!line || (quote && !quote[1].trim())) {
+      // A lone `>` says nothing: it ends the remark above it like a blank line.
       flush();
+    } else if (quote) {
+      flush();
+      inQuote = true;
+      const last = blocks[blocks.length - 1];
+      if (wasQuote && last?.kind === 'quote') {
+        last.text = `${last.text} ${quote[1].trim()}`;
+        last.runs = taleRuns(last.text);
+      } else {
+        const text = quote[1].trim();
+        blocks.push({ kind: 'quote', text, runs: taleRuns(text) });
+      }
     } else if (heading) {
       flush();
       blocks.push({ kind: 'heading', text: heading[1], runs: taleRuns(heading[1]) });

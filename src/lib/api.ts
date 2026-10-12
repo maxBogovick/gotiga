@@ -1,4 +1,5 @@
 // src/lib/api.ts
+import { formOutcome, reportApiFailure } from '$lib/analytics';
 import type {
     FigurineListItem,
     Figurine,
@@ -538,8 +539,21 @@ function isNotFoundError(err: unknown): boolean {
 //    global fetch hits the real backend and a 404 is swallowed by each loader's `.catch()`.
 async function webFetch<T>(path: string, options?: RequestInit, loadFetch?: typeof fetch): Promise<T> {
     const doFetch = typeof window !== 'undefined' && loadFetch ? loadFetch : fetch;
-    const res = await doFetch(`${webApiBase()}${path}`, options);
+    let res: Response;
+    try {
+        res = await doFetch(`${webApiBase()}${path}`, options);
+    } catch (err) {
+        // The network itself failed. A request cancelled on purpose is not a
+        // failure, and leaving the page cancels the ones in flight.
+        if ((err as { name?: string })?.name !== 'AbortError') {
+            reportApiFailure(options?.method ?? 'GET', path, 'network');
+        }
+        throw err;
+    }
     if (!res.ok) {
+        // Only what the visitor can feel as the house's fault: a 4xx is the
+        // visitor's own request being refused, and has its own screens.
+        if (res.status >= 500) reportApiFailure(options?.method ?? 'GET', path, res.status);
         const text = await res.text().catch(() => '');
         throw new ApiError(res.status, text);
     }
@@ -717,6 +731,38 @@ export const api = {
         return webFetch(`/admin/analytics/pages${qs}`, { headers: authHeaders() });
     },
 
+    async getBehaviourReport(opts?: AdminAnalyticsQuery): Promise<import('./types/api').BehaviourReport> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/behaviour${qs}`, { headers: authHeaders() });
+    },
+
+    async getHealthReport(opts?: AdminAnalyticsQuery): Promise<import('./types/api').HealthReport> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/health${qs}`, { headers: authHeaders() });
+    },
+
+    async getBattleReport(opts?: AdminAnalyticsQuery): Promise<import('./types/api').BattleReport> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/battles${qs}`, { headers: authHeaders() });
+    },
+
+    async getSceneExperiment(opts?: AdminAnalyticsQuery): Promise<import('./types/api').SceneExperimentResponse> {
+        const p = new URLSearchParams();
+        if (opts?.from) p.set('from', opts.from);
+        if (opts?.to) p.set('to', opts.to);
+        const qs = p.toString() ? `?${p}` : '';
+        return webFetch(`/admin/analytics/scene-experiment${qs}`, { headers: authHeaders() });
+    },
+
     async getVisitorSessions(opts?: { from?: string; to?: string; limit?: number; offset?: number; onlyActions?: boolean }): Promise<import('./types/api').AdminVisitorSessionsPage> {
         const p = new URLSearchParams();
         if (opts?.from) p.set('from', opts.from);
@@ -829,6 +875,7 @@ export const api = {
     async getAllFigurinesAdmin(): Promise<FigurineListItem[]> {
         const res = await webFetch<{ items: FigurineListItem[] } | FigurineListItem[]>('/figurines?visible=false', {
             headers: authHeaders(),
+            cache: 'no-store',
         });
         return Array.isArray(res) ? res : res.items;
     },
@@ -862,6 +909,31 @@ export const api = {
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(figurine),
         });
+        // The public reads carry `Cache-Control: max-age=60, stale-while-revalidate=600`,
+        // so this browser would keep serving the pre-save list and work (cover, second
+        // angle, sort order) for minutes. `reload` refetches and overwrites those entries.
+        const base = webApiBase();
+        void Promise.allSettled([
+            fetch(`${base}/figurines?visible=true`, { cache: 'reload' }),
+            fetch(`${base}/figurines/${figurine.id}`, { cache: 'reload' }),
+        ]);
+    },
+
+    /**
+     * A work as it is stored right now, for the admin editor. `getFigurine` is the
+     * public read and may come out of the HTTP cache (up to ~11 minutes stale), which
+     * made a just-saved cover / second angle look unsaved on reopening — and, worse, let
+     * the stale copy be saved back over the new one (▲▼ in the registry, bulk refresh).
+     * The Authorization header keeps the server from marking it cacheable; `no-store`
+     * keeps the browser from reusing an earlier copy.
+     */
+    async getFigurineFresh(id: string): Promise<Figurine | null> {
+        try {
+            return await webFetch(`/figurines/${id}`, { headers: authHeaders(), cache: 'no-store' });
+        } catch (e: unknown) {
+            if (e instanceof Error && e.message.includes('404')) return null;
+            throw e;
+        }
     },
 
     /**
@@ -1011,6 +1083,22 @@ export const api = {
      * For every figurine with at least two images, mark the second image
      * (by display order) as the "detail" (second angle) image.
      */
+    /**
+     * Save the registry's order: `ids` top to bottom become sort order 1, 2, 3, ….
+     * Send the WHOLE list — works left out keep their old number and would collide.
+     */
+    async reorderFigurines(ids: string[]): Promise<BulkOpResult> {
+        invalidateReadPrefix('figurines:');
+        const res = await webFetch<BulkOpResult>('/admin/figurines/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ ids }),
+        });
+        // Same reason as saveFigurine: the public list is HTTP-cached for minutes.
+        void fetch(`${webApiBase()}/figurines?visible=true`, { cache: 'reload' }).catch(() => {});
+        return res;
+    },
+
     async bulkSetSecondAngle(): Promise<BulkOpResult> {
         return webFetch('/admin/figurines/bulk/set-second-angle', {
             method: 'POST',
@@ -2214,6 +2302,36 @@ export const api = {
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ of }),
         });
+    },
+
+    /** Сцена байки для читателя; `null` — сцены нет или она выключена. */
+    async getTaleScene(taleId: string): Promise<import('./types/api').TaleSceneData | null> {
+        return (await webFetch<import('./types/api').TaleSceneData | null>(`/tales/${taleId}/scene`)) ?? null;
+    },
+
+    /** Сцена байки для стола: и выключенная тоже. */
+    async adminGetTaleScene(taleId: string): Promise<import('./types/api').TaleSceneData | null> {
+        return (
+            (await webFetch<import('./types/api').TaleSceneData | null>(`/admin/tales/${taleId}/scene`, {
+                headers: authHeaders(),
+            })) ?? null
+        );
+    },
+
+    /** Записать сцену; сервер приводит её в порядок и возвращает как легла. */
+    async adminPutTaleScene(
+        taleId: string,
+        scene: import('./types/api').TaleSceneData,
+    ): Promise<import('./types/api').TaleSceneData> {
+        return webFetch(`/admin/tales/${taleId}/scene`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(scene),
+        });
+    },
+
+    async adminDeleteTaleScene(taleId: string): Promise<void> {
+        await webFetch(`/admin/tales/${taleId}/scene`, { method: 'DELETE', headers: authHeaders() });
     },
 
     // === IMPRESSIONS ("Book of Impressions") ===
@@ -4141,3 +4259,42 @@ export const api = {
         return res.blob();
     },
 };
+
+// ── Forms: the answer is reported where it is known ─────────────────────
+//
+// Every call that sends a visitor's form says, once, whether it was accepted.
+// Done here and not in each form: a form that must remember to report its own
+// result is one that, one day, does not — and the abandonment report would then
+// count a sent form as left half-filled.
+const FORM_CALLS: Record<string, string> = {
+    submitOrder: 'order',
+    submitBooking: 'booking',
+    joinWaitlist: 'waitlist',
+    submitCommission: 'commission',
+    submitContactMessage: 'contact',
+    submitImpression: 'impression',
+    subscribe: 'subscribe',
+    submitComment: 'comment',
+    submitTaleComment: 'comment',
+    watchGazetteLeaf: 'gazette_watch',
+    setTaleSequelWish: 'tale_wish',
+    voteTalePoll: 'tale_poll',
+};
+
+for (const [method, form] of Object.entries(FORM_CALLS)) {
+    const target = api as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+    const original = target[method];
+    if (typeof original !== 'function') continue;
+    target[method] = async (...args: unknown[]) => {
+        try {
+            const result = await original.apply(api, args);
+            formOutcome(form, true);
+            return result;
+        } catch (err) {
+            // A short word for why: the status, or "network". Never the text of
+            // the answer, which can carry what the visitor wrote.
+            formOutcome(form, false, (err as { status?: number })?.status ?? 'network');
+            throw err;
+        }
+    };
+}

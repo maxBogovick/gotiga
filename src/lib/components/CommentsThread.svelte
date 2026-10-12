@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trackForm } from '$lib/analytics';
   import { onMount } from 'svelte';
   import { api, resolveMediaUrl } from '$lib/api';
   import { t } from '$lib/i18n';
@@ -131,7 +132,7 @@
       <p class="comment-sent">{$t('commentsSent')}</p>
       <button class="comment-again" onclick={() => sent = false}>↩</button>
     {:else}
-      <form class="comment-form" onsubmit={handleSubmit} novalidate>
+      <form class="comment-form" use:trackForm={'comment'} onsubmit={handleSubmit} novalidate>
         {#if !authStore.isLoggedIn}
           <div class="form-row form-row--half">
             <div class="form-field">

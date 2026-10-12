@@ -141,6 +141,8 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/tales/:id/stats", get(handlers::get_tale_stats))
             // === БАЙКИ: ПОСЛЕ ПОСЛЕДНЕЙ СТРОКИ ===
             .route("/tales/:id/sequel", post(handlers::set_tale_sequel_wish))
+            // Сцена на полях байки: её правит стол рассказов, а страница читает.
+            .route("/tales/:id/scene", get(handlers::get_tale_scene))
             .route("/tales/doors", get(handlers::get_tale_doors))
             .route("/tales/poll", get(handlers::get_tale_poll))
             .route("/tales/poll/:id/vote", post(handlers::vote_tale_poll))
@@ -531,6 +533,16 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 post(handlers::admin_close_tale_poll).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
+            )
+            .route(
+                "/admin/tales/:id/scene",
+                get(handlers::admin_get_tale_scene)
+                    .put(handlers::admin_put_tale_scene)
+                    .delete(handlers::admin_delete_tale_scene)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
             )
             .route(
                 "/admin/tales/:id/sequel",
@@ -1258,8 +1270,32 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 ),
             )
             .route(
+                "/admin/analytics/behaviour",
+                get(handlers::admin_get_behaviour).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/health",
+                get(handlers::admin_get_health).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/battles",
+                get(handlers::admin_get_battle_report).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/analytics/pages",
                 get(handlers::admin_get_site_page_engagement).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/scene-experiment",
+                get(handlers::admin_get_scene_experiment).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )
@@ -1440,6 +1476,13 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/admin/figurines/bulk/set-second-angle",
                 post(handlers::bulk_set_second_angle).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/figurines/reorder",
+                post(handlers::reorder_figurines).route_layer(middleware::from_fn_with_state(
                     config.clone(),
                     auth_middleware,
                 )),

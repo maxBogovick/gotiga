@@ -14,6 +14,9 @@
   import { resolveSiteRefs, siteRefsIn, type SiteRefInfo } from '$lib/siteLinks';
   import TaleProse from '../TaleProse.svelte';
   import TalePollDesk from './TalePollDesk.svelte';
+  import TaleSceneEditor from './TaleSceneEditor.svelte';
+  import TaleShelfPicker from './TaleShelfPicker.svelte';
+  import WorkPicker from './WorkPicker.svelte';
   import type {
     AdminSequelWish,
     AdminTaleCommentDto,
@@ -45,7 +48,6 @@
   let saving = $state(false);
   let savedAt = $state<Date | null>(null);
   let message = $state('');
-  let listQuery = $state('');
   let ready = $state(false);
 
   let selectedId = $state<string | null>(null);
@@ -69,11 +71,11 @@
   let editLang = $state<Lang>('en');
   let both = $state(false);
   let focus = $state(false);
+  // Сцена на полях стоит вместо бумаги на всю ширину стола: у неё свой скролл.
+  let sceneMode = $state(false);
   let sealed = $state(false);
   let uploading = $state(false);
 
-  let figQuery = $state('');
-  let figOpen = $state(false);
   let restorable = $state<Record<string, unknown> | null>(null);
   // Full figurine detail, fetched for its photo gallery — the list row only
   // carries the face photo, and the picker below needs the whole set.
@@ -143,8 +145,6 @@
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   let reorderTimer: ReturnType<typeof setTimeout> | null = null;
   let sealTimer: ReturnType<typeof setTimeout> | null = null;
-  let dragFrom = $state<number | null>(null);
-  let dragOver = $state<number | null>(null);
   let syncing = false;
 
   let selectedFig = $derived(figurines.find((f) => f.id === figurineId) ?? null);
@@ -172,18 +172,6 @@
   );
   let slugEditable = $derived(!!selectedId && !onDisplay && !addressFixed);
 
-  let visible = $derived.by(() => {
-    const q = listQuery.trim().toLowerCase();
-    if (!q) return tales;
-    return tales.filter((tale) =>
-      `${tale.titleEn} ${tale.titleRu} ${tale.figurineName ?? ''}`.toLowerCase().includes(q),
-    );
-  });
-  let figMatches = $derived.by(() => {
-    const q = figQuery.trim().toLowerCase();
-    const list = q ? figurines.filter((f) => f.name.toLowerCase().includes(q)) : figurines;
-    return list.slice(0, 12);
-  });
 
   function fieldsKey(): string {
     return JSON.stringify({
@@ -318,7 +306,6 @@
     scheduledAt = null;
     updatedAt = '';
     savedAt = null;
-    figQuery = '';
     restorable = null;
     extraFig = null;
     comments = [];
@@ -349,7 +336,6 @@
     pinned = leaf.pinned;
     scheduledAt = leaf.scheduledAt;
     updatedAt = leaf.updatedAt;
-    figQuery = '';
     snapshot = fieldsKey();
   }
 
@@ -762,11 +748,9 @@
 
   // ── The shelf ──────────────────────────────────────────────────────────────
 
-  function onDrop(to: number) {
-    const from = dragFrom;
-    dragFrom = null;
-    dragOver = null;
-    if (from == null || from === to) return;
+  /** Строку перетащили в списке выбора: индексы — в полном порядке полки. */
+  function moveTale(from: number, to: number) {
+    if (from === to) return;
     const next = [...tales];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
@@ -847,13 +831,6 @@
     return (editLang === 'ru' ? tale.titleRu : tale.titleEn) || tale.titleEn || tale.titleRu || $t('adminTalesUntitled');
   }
 
-  const STATUS_TONE: Record<GazetteStatus, string> = {
-    draft: 'bg-[#b9a68f]',
-    scheduled: 'bg-amber-500',
-    published: 'bg-emerald-600',
-    archived: 'bg-[#b0a08e]',
-  };
-
   onMount(async () => {
     try {
       const [_, figs] = await Promise.all([loadTales(), api.getAllFigurines(), loadStats()]);
@@ -893,176 +870,121 @@
 
 <svelte:window on:keydown={deskKeys} />
 
-<div class="h-full flex text-[#34251c]" class:focus-mode={focus}>
-  <!-- ── The shelf ──────────────────────────────────────────────────────── -->
-  <aside class="shelf-pane w-[260px] flex-shrink-0 border-r border-[#34251c]/10 flex flex-col">
-    <div class="p-3 border-b border-[#34251c]/10 space-y-2">
-      <button
-        onclick={startNew}
-        class="w-full py-2 text-[10px] uppercase tracking-[0.18em] border border-[#c65f3c]/40 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors"
-      >{$t('adminTalesNew')}</button>
-      <button
-        onclick={() => (pollDesk = !pollDesk)}
-        class="w-full py-1.5 text-[10px] uppercase tracking-[0.16em] border transition-colors
-          {pollDesk ? 'border-[#34251c]/40 bg-[#34251c]/5 text-[#34251c]' : 'border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c]'}"
-      >{$t('adminTalesPollButton')}</button>
-      <input
-        bind:value={listQuery}
-        placeholder={$t('adminTalesSearch')}
-        class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 focus:border-[#34251c]/35 outline-none"
-      />
-    </div>
+<div class="panel" class:focus-mode={focus}>
+  {#if focus}
+    <button class="focus-exit" onclick={() => (focus = false)}>{$t('adminTalesFocusExit')}</button>
+  {/if}
 
-    <div class="flex-1 overflow-y-auto">
-      {#if loading}
-        <p class="p-3 text-xs text-[#5f4636]">…</p>
-      {:else if visible.length === 0}
-        <p class="p-3 text-xs italic text-[#5f4636]">{$t('adminTalesEmpty')}</p>
-      {:else}
-        <p class="px-3 py-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t('adminTalesDragHint')}</p>
-        <ul class="pb-4">
-          {#each visible as tale, i (tale.id)}
-            <li
-              draggable={!listQuery}
-              ondragstart={() => (dragFrom = i)}
-              ondragover={(e) => { e.preventDefault(); dragOver = i; }}
-              ondragleave={() => { if (dragOver === i) dragOver = null; }}
-              ondrop={(e) => { e.preventDefault(); onDrop(i); }}
-              ondragend={() => { dragFrom = null; dragOver = null; }}
-              class="border-b border-[#34251c]/5 {dragOver === i ? 'bg-[#c65f3c]/10' : ''} {dragFrom === i ? 'opacity-40' : ''}"
-            >
-              <button
-                onclick={() => openTale(tale)}
-                class="w-full text-left px-3 py-2.5 flex gap-2 items-start hover:bg-[#34251c]/[0.04] transition-colors
-                  {selectedId === tale.id ? 'bg-[#34251c]/[0.06]' : ''}"
-              >
-                <span class="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 {STATUS_TONE[tale.status]}"></span>
-                <span class="min-w-0">
-                  <span class="block text-[13px] leading-snug truncate" style="font-family: 'Cormorant Garamond', Georgia, serif;">
-                    {titleOf(tale)}
-                  </span>
-                  {#if tale.figurineName}
-                    <span class="block text-[10px] text-[#8a6a55] truncate">{tale.figurineName}</span>
-                  {/if}
-                  <!-- Половина сайта без текста видна в списке, а не только
-                       на открытой байке: иначе её находят читатели. Пишется
-                       только недостающее — «EN RU» у каждой строки было бы шумом. -->
-                  {#if (tale.bodyEn ?? '').trim() && !(tale.bodyRu ?? '').trim()}
-                    <span class="lang-gap">{$t('adminTalesLangGap').replace('{lang}', 'RU')}</span>
-                  {:else if (tale.bodyRu ?? '').trim() && !(tale.bodyEn ?? '').trim()}
-                    <span class="lang-gap">{$t('adminTalesLangGap').replace('{lang}', 'EN')}</span>
-                  {/if}
-                </span>
-                {#if (stats[tale.id]?.pendingComments ?? 0) > 0}
-                  <span class="ml-auto text-[#c65f3c] text-[10px]" title={$t('adminTalesPending')}>
-                    {stats[tale.id].pendingComments}✍
-                  </span>
-                {/if}
-                <!-- Сколько ждут продолжения — видно в списке, а не только на
-                     открытой байке: это ответ на вопрос «что писать дальше». -->
-                {#if (stats[tale.id]?.sequelWishes ?? 0) > 0}
-                  <span class="ml-auto text-[#6f3b24] text-[10px] whitespace-nowrap" title={$t('adminTalesSequelWishes')}>
-                    +{stats[tale.id].sequelWishes}
-                  </span>
-                {/if}
-                {#if tale.pinned}<span class="ml-auto text-[#c65f3c] text-[10px]">◆</span>{/if}
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
-  </aside>
+  <!-- ── Шапка: какой рассказ открыт ───────────────────────────────────── -->
+  <header class="bar desk-chrome">
+    <TaleShelfPicker
+      {tales}
+      {stats}
+      {selectedId}
+      draftTitle={titleNow || otherTitle}
+      lang={editLang}
+      {loading}
+      onopen={openTale}
+      onmove={moveTale}
+    />
+    <button class="btn btn--accent" onclick={startNew}>+ {$t('adminTalesNew')}</button>
+    <button class="btn" class:on={pollDesk} aria-pressed={pollDesk} onclick={() => (pollDesk = !pollDesk)}>
+      {$t('adminTalesPollButton')}
+    </button>
+    <span class="grow"></span>
+    <span class="saved" aria-live="polite">
+      {#if saving}{$t('adminTalesSaving')}
+      {:else if savedAt}{$t('adminTalesSaved').replace('{time}', clock(savedAt))}
+      {:else if dirty}{$t('adminTalesUnsaved')}{/if}
+    </span>
+  </header>
 
-  <!-- ── The desk ───────────────────────────────────────────────────────── -->
-  <div class="flex-1 flex flex-col min-w-0 bg-[#f8f1e7]">
-    {#if pollDesk}
-      <TalePollDesk {figurines} {tales} onWrite={writeChosen} onBack={() => (pollDesk = false)} />
-    {:else}
-    <div class="desk-chrome flex items-center gap-3 px-4 py-2 border-b border-[#34251c]/10 text-[10px] uppercase tracking-[0.16em]">
-      <div class="flex border border-[#34251c]/15">
+  {#if pollDesk}
+    <TalePollDesk {figurines} {tales} onWrite={writeChosen} onBack={() => (pollDesk = false)} />
+  {:else}
+    <!-- ── Инструменты письма ───────────────────────────────────────────── -->
+    <div class="tools desk-chrome">
+      <div class="seg" role="group" aria-label="Language">
         {#each ['en', 'ru'] as code}
           <button
+            class:on={editLang === code}
             onclick={() => (editLang = code as Lang)}
-            class="px-2 py-1 transition-colors {editLang === code ? 'bg-[#34251c]/10 text-[#34251c]' : 'text-[#8a6a55]'}"
             title={bodyMissing[code as Lang] ? $t('adminTalesLangEmpty') : undefined}
-          >{code}{#if bodyMissing[code as Lang] && open}<span class="lang-hollow" aria-label={$t('adminTalesLangEmpty')}>○</span>{/if}</button>
+          >{code.toUpperCase()}{#if bodyMissing[code as Lang] && open}<span class="lang-hollow" aria-label={$t('adminTalesLangEmpty')}>○</span>{/if}</button>
         {/each}
       </div>
+      <button class="tb" class:on={both} aria-pressed={both} onclick={() => (both = !both)}>{$t('adminTalesBoth')}</button>
+      <button class="tb tb--icon" onclick={insertOrnament} title={$t('adminTalesOrnament')} aria-label={$t('adminTalesOrnament')}>{ORNAMENT}</button>
+      <span class="sep" aria-hidden="true"></span>
+      <button class="tb" class:on={markupOpen} aria-expanded={markupOpen} onclick={() => (markupOpen = !markupOpen)}>{$t('adminTalesMarkup')}</button>
+      <button class="tb" class:on={reading} aria-pressed={reading} onclick={() => (reading = !reading)}>
+        {reading ? $t('adminTalesReadingOff') : $t('adminTalesReadingOn')}
+      </button>
       <button
-        onclick={() => (both = !both)}
-        class="px-2 py-1 border transition-colors {both ? 'border-[#c65f3c]/50 text-[#c65f3c]' : 'border-[#34251c]/15 text-[#8a6a55]'}"
-      >{$t('adminTalesBoth')}</button>
-      <button
-        onclick={insertOrnament}
-        class="px-2 py-1 border border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c] transition-colors"
-        title={$t('adminTalesOrnament')}
-        aria-label={$t('adminTalesOrnament')}
-      >{ORNAMENT}</button>
-      <button
-        onclick={() => (focus = !focus)}
-        class="px-2 py-1 border border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c] transition-colors"
-      >{focus ? $t('adminTalesFocusExit') : $t('adminTalesFocus')}</button>
-      <button
-        onclick={() => (markupOpen = !markupOpen)}
-        class="px-2 py-1 border transition-colors {markupOpen ? 'border-[#34251c]/40 text-[#34251c]' : 'border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c]'}"
-        aria-expanded={markupOpen}
-      >{$t('adminTalesMarkup')}</button>
-      <button
-        onclick={() => (reading = !reading)}
-        class="px-2 py-1 border transition-colors {reading ? 'border-[#c65f3c]/50 text-[#c65f3c]' : 'border-[#34251c]/15 text-[#8a6a55] hover:text-[#34251c]'}"
-        aria-pressed={reading}
-      >{reading ? $t('adminTalesReadingOff') : $t('adminTalesReadingOn')}</button>
+        class="tb"
+        class:on={sceneMode}
+        aria-pressed={sceneMode}
+        onclick={() => (sceneMode = !sceneMode)}
+        disabled={!selectedId}
+        title={selectedId ? undefined : $t('adminSceneSaveFirst')}
+      >{sceneMode ? $t('adminSceneBack') : $t('adminSceneMode')}</button>
+
+      <span class="grow"></span>
 
       <!-- Где байка живёт на сайте. Ссылка — только у той, что на людях:
            у черновика адрес отвечает «не найдено», и ссылка туда была бы
            обещанием, которое страница не сдержит. -->
       {#if siteHref}
         {#if status === 'published'}
-          <a href={siteHref} target="_blank" rel="noopener" class="normal-case tracking-normal text-[11px] text-[#c65f3c] hover:underline">{siteHref} ↗</a>
+          <a href={siteHref} target="_blank" rel="noopener" class="slug-link">{siteHref} ↗</a>
         {:else if slugEditable}
-          <label class="normal-case tracking-normal text-[11px] text-[#8a6a55] flex items-center" title={$t('adminTalesSlugHint')}>
-            /tales/<input
+          <label class="slug" title={$t('adminTalesSlugHint')}>
+            <span>/tales/</span><input
               bind:value={slugDraft}
               onblur={commitSlug}
               onkeydown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); else if (e.key === 'Escape') { slugDraft = slug; e.currentTarget.blur(); } }}
               maxlength="120"
               aria-label={$t('adminTalesSlugHint')}
-              class="slug-input w-[16ch] px-1 py-0.5 bg-transparent border-b border-[#34251c]/20 focus:border-[#34251c]/50 outline-none text-[#34251c]"
+              class="slug-input"
             />
           </label>
         {:else}
-          <span class="normal-case tracking-normal text-[11px] text-[#8a6a55]" title={addressFixed ? $t('adminTalesSlugFixed') : $t('adminTalesSiteHidden')}>{siteHref}</span>
+          <span class="slug-fixed" title={addressFixed ? $t('adminTalesSlugFixed') : $t('adminTalesSiteHidden')}>{siteHref}</span>
         {/if}
       {/if}
-
-      <span class="ml-auto normal-case tracking-normal text-[11px] text-[#8a6a55]">
-        {#if saving}{$t('adminTalesSaving')}
-        {:else if savedAt}{$t('adminTalesSaved').replace('{time}', clock(savedAt))}
-        {:else if dirty}{$t('adminTalesUnsaved')}{/if}
-      </span>
+      <button class="tb" onclick={() => (focus = true)}>{$t('adminTalesFocus')}</button>
     </div>
 
     {#if markupOpen}
       <!-- Что понимает тело байки. Разметки ровно столько, сколько знает
            renderTale; остальное печатается как написано. -->
-      <div class="desk-chrome markup px-4 py-3 border-b border-[#34251c]/10">
+      <div class="desk-chrome markup">
         <dl>
           <dt># {$t('adminTalesMarkupHeadEx')}</dt><dd>{$t('adminTalesMarkupHead')}</dd>
           <dt>**{$t('adminTalesMarkupBoldEx')}**</dt><dd>{$t('adminTalesMarkupBold')}</dd>
+          <dt>&gt; {$t('adminTalesMarkupQuoteEx')}</dt><dd>{$t('adminTalesMarkupQuote')}</dd>
           <dt>{ORNAMENT}</dt><dd>{$t('adminTalesMarkupOrnament')}</dd>
           <dt>ritunia.com/figurines/…</dt><dd>{$t('adminTalesMarkupLink')}</dd>
         </dl>
       </div>
     {/if}
 
-    <div class="flex-1 overflow-y-auto">
-      <div class="desk mx-auto px-6 py-8">
+
+    {#if sceneMode && selectedId}
+      <div class="scroll">
+        {#key selectedId}
+          <TaleSceneEditor taleId={selectedId} {slug} {bodyEn} {bodyRu} lang={editLang} />
+        {/key}
+      </div>
+    {:else}
+      <div class="scroll">
+        <div class="stage" style="--paper: {both ? 1020 : 780}px">
+          <div class="col">
         {#if restorable}
-          <div class="mb-6 px-3 py-2 border border-[#c65f3c]/35 bg-[#c65f3c]/5 text-xs flex items-center gap-3">
-            <span class="flex-1">{$t('adminTalesRestore')}</span>
-            <button onclick={restoreDraft} class="uppercase tracking-[0.14em] text-[10px] text-[#c65f3c]">{$t('adminTalesRestoreDo')}</button>
-            <button onclick={dropDraft} class="uppercase tracking-[0.14em] text-[10px] text-[#8a6a55]">{$t('adminTalesRestoreDrop')}</button>
+          <div class="restore">
+            <span class="grow">{$t('adminTalesRestore')}</span>
+            <button onclick={restoreDraft} class="link link--accent">{$t('adminTalesRestoreDo')}</button>
+            <button onclick={dropDraft} class="link">{$t('adminTalesRestoreDrop')}</button>
           </div>
         {/if}
 
@@ -1273,15 +1195,74 @@
             {/if}
           </section>
         {/if}
+          </div>
+
+          <!-- ── Свойства: работа, обложка, продолжение ─────────────────── -->
+          <aside class="inspector desk-chrome" aria-label={$t('adminTalesDetails')}>
+            <section class="blk">
+              <h4>{$t('adminTalesWork')}</h4>
+              <WorkPicker {figurines} bind:value={figurineId} />
+            </section>
+
+            <section class="blk">
+              <h4>{$t('adminTalesCover')}</h4>
+              <div class="cover">
+                {#if plate}
+                  <img class="cover-img" src={plate} alt="" />
+                {:else}
+                  <div class="cover-img cover-img--none">{$t('adminTalesCoverEmpty')}</div>
+                {/if}
+                <div class="cover-acts">
+                  <button class="link" onclick={uploadPhoto} disabled={uploading}>
+                    {uploading ? '…' : $t('adminTalesUpload')}
+                  </button>
+                  {#if plate}
+                    <button class="link link--danger" onclick={() => (imageUrls = [])}>{$t('adminTalesDropPhoto')}</button>
+                  {/if}
+                </div>
+              </div>
+
+              {#if frames.length > 0}
+                <p class="sub-h">{$t('adminTalesWorkPhotos')} · {frames.length}</p>
+                <div class="frames">
+                  {#each frames as url (url)}
+                    <button
+                      type="button"
+                      onclick={() => pickFrame(url)}
+                      title={$t('adminTalesUseWorkPhoto')}
+                      class="frame"
+                      class:on={plate === url}
+                    ><img src={url} alt="" loading="lazy" /></button>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+
+            <!-- Продолжение: кто просил продолжение начала, получит письмо, когда
+                 эта байка выйдет. Только у сохранённой байки — у несохранённой
+                 нет id, на который сослаться. -->
+            {#if selectedId}
+              <section class="blk">
+                <h4>{$t('adminTalesSequelOf')}</h4>
+                <select value={mine?.sequelOf ?? ''} onchange={(e) => setSequel(e.currentTarget)} class="select" aria-label={$t('adminTalesSequelOf')}>
+                  <option value="">{$t('adminTalesSequelNone')}</option>
+                  {#each tales.filter((other) => other.id !== selectedId) as other (other.id)}
+                    <option value={other.id}>{titleOf(other)}</option>
+                  {/each}
+                </select>
+              </section>
+            {/if}
+          </aside>
+        </div>
       </div>
-    </div>
+    {/if}
 
     {#if preflight}
       {@const p = preflight}
       <!-- Листок перед выходом. Стоит над лентой, у той самой кнопки, а не
            окном поверх бумаги: байку под ним видно, и замечание можно
            проверить глазами, не закрывая его. -->
-      <div class="preflight desk-chrome border-t border-[#c65f3c]/30 px-4 py-3 text-xs" role="alertdialog" aria-label={$t('adminTalesPreflight')}>
+      <div class="preflight desk-chrome" role="alertdialog" aria-label={$t('adminTalesPreflight')}>
         <p class="pf-head">{p.target === 'scheduled' ? $t('adminTalesPreflightScheduled') : $t('adminTalesPreflight')}</p>
         {#if p.warnings.length}
           <ul class="pf-warn">
@@ -1305,158 +1286,366 @@
             {/if}
           {/if}
         </p>
-        <div class="flex gap-3 mt-2">
+        <div class="pf-acts">
           <button
             onclick={confirmRelease}
-            class="px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] border border-[#c65f3c]/50 text-[#c65f3c] hover:bg-[#c65f3c]/5"
+            class="btn btn--accent"
           >{p.target === 'scheduled' ? $t('adminTalesPreflightSchedule') : $t('adminTalesPreflightGo')}</button>
-          <button onclick={cancelRelease} class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-[#34251c]">
+          <button onclick={cancelRelease} class="btn">
             {$t('adminTalesPreflightBack')}
           </button>
         </div>
       </div>
     {/if}
 
-    <!-- ── The margin: the work, the status, the seal ──────────────────── -->
-    <div class="desk-chrome border-t border-[#34251c]/10 px-4 py-3 flex items-start gap-5 text-xs">
-      <div class="w-[220px] flex-shrink-0">
-        <p class="text-[9px] uppercase tracking-[0.16em] text-[#8a6a55] mb-1.5">{$t('adminTalesWork')}</p>
-        {#if selectedFig}
-          <div class="flex gap-2 items-start">
-            {#if plate}
-              <img src={plate} alt="" class="w-12 h-14 object-cover border border-[#d8c6b1] bg-[#1a120e]" />
-            {/if}
-            <div class="min-w-0">
-              <p class="truncate">{selectedFig.name}</p>
-              <div class="flex flex-wrap gap-2 mt-1 text-[10px]">
-                <button onclick={() => { figurineId = ''; }} class="text-[#8a6a55] hover:text-[#34251c]">{$t('adminTalesWorkClear')}</button>
-                <button onclick={uploadPhoto} class="text-[#8a6a55] hover:text-[#34251c]" disabled={uploading}>
-                  {uploading ? '…' : $t('adminTalesUpload')}
-                </button>
-                {#if plate}
-                  <button onclick={() => (imageUrls = [])} class="text-[#8a6a55] hover:text-[#34251c]">{$t('adminTalesDropPhoto')}</button>
-                {/if}
-              </div>
-              {#if frames.length > 0}
-                <div class="flex flex-wrap gap-1.5 mt-2">
-                  {#each frames as url (url)}
-                    <button
-                      type="button"
-                      onclick={() => pickFrame(url)}
-                      title={$t('adminTalesUseWorkPhoto')}
-                      class="w-8 h-10 p-0 overflow-hidden border {plate === url ? 'border-[#c65f3c]' : 'border-[#d8c6b1] hover:border-[#8a6a55]'}"
-                    >
-                      <img src={url} alt="" class="w-full h-full object-cover" />
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          </div>
-        {:else}
-          <div class="relative">
-            <input
-              bind:value={figQuery}
-              onfocus={() => (figOpen = true)}
-              onblur={() => setTimeout(() => (figOpen = false), 150)}
-              placeholder={$t('adminTalesWorkSearch')}
-              class="w-full px-2 py-1 bg-transparent border border-[#34251c]/15 focus:border-[#34251c]/35 outline-none text-xs"
-            />
-            {#if figOpen && figMatches.length}
-              <ul class="absolute bottom-full left-0 right-0 mb-1 max-h-56 overflow-y-auto bg-[#f8f1e7] border border-[#34251c]/15 shadow-lg z-20">
-                {#each figMatches as fig (fig.id)}
-                  <li>
-                    <button
-                      onclick={() => { figurineId = fig.id; figQuery = ''; figOpen = false; }}
-                      class="w-full text-left px-2 py-1.5 hover:bg-[#34251c]/5 truncate"
-                    >{fig.name}</button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-        {/if}
+    <!-- ── Подвал: статус и выход ─────────────────────────────────────── -->
+    <footer class="foot desk-chrome">
+      <div class="seg" role="group" aria-label={$t('adminTalesState')}>
+        {#each [['draft', 'adminTalesStatusDraft'], ['scheduled', 'adminTalesStatusScheduled'], ['published', 'adminTalesStatusPublished'], ['archived', 'adminTalesStatusArchived']] as [value, label]}
+          <button
+            class:on={status === value || (value === 'scheduled' && scheduling)}
+            onclick={() => setStatus(value as GazetteStatus)}
+            disabled={!open}
+          >{$t(label as never)}</button>
+        {/each}
       </div>
 
-      <div class="flex-1 min-w-0">
-        <p class="text-[9px] uppercase tracking-[0.16em] text-[#8a6a55] mb-1.5">{$t('adminTalesState')}</p>
-        <div class="flex flex-wrap items-center gap-2">
-          {#each [['draft', 'adminTalesStatusDraft'], ['scheduled', 'adminTalesStatusScheduled'], ['published', 'adminTalesStatusPublished'], ['archived', 'adminTalesStatusArchived']] as [value, label]}
-            <button
-              onclick={() => setStatus(value as GazetteStatus)}
-              disabled={!open}
-              class="px-2 py-1 text-[10px] uppercase tracking-[0.14em] border transition-colors
-                {status === value || (value === 'scheduled' && scheduling) ? 'border-[#34251c]/40 bg-[#34251c]/5 text-[#34251c]' : 'border-[#34251c]/12 text-[#8a6a55] hover:text-[#34251c]'}"
-            >{$t(label as never)}</button>
-          {/each}
-
-          {#if status === 'scheduled' || scheduling}
-            <!-- Дата уходит через тот же листок, что и «Опубликовать»: в
-                 назначенный час байка разойдётся письмами так же. -->
-            <input
-              type="datetime-local"
-              value={scheduledAt ? localInput(scheduledAt) : ''}
-              onchange={(e) => pickSchedule(e.currentTarget.value)}
-              class="px-2 py-1 bg-transparent border border-[#34251c]/15 text-[11px]"
-            />
-            {#if scheduling && status !== 'scheduled'}
-              <span class="text-[10px] text-[#8a6a55]">{$t('adminTalesPickDate')}</span>
-            {/if}
-          {/if}
-
-          <label class="flex items-center gap-1.5 text-[10px] text-[#5f4636] ml-2">
-            <input type="checkbox" bind:checked={pinned} class="accent-[#c65f3c]" />
-            {$t('adminTalesPinned')}
-          </label>
-        </div>
-        <!-- Продолжение: кто просил продолжение начала, получит письмо, когда
-             эта байка выйдет. Только у сохранённой байки — у несохранённой
-             нет id, на который сослаться. -->
-        {#if selectedId}
-          <label class="mt-2 flex items-center gap-2 text-[10px] text-[#5f4636]">
-            <span class="uppercase tracking-[0.14em] text-[#8a6a55]">{$t('adminTalesSequelOf')}</span>
-            <select
-              value={mine?.sequelOf ?? ''}
-              onchange={(e) => setSequel(e.currentTarget)}
-              class="max-w-[260px] px-1.5 py-1 bg-transparent border border-[#34251c]/15 text-[11px]"
-            >
-              <option value="">{$t('adminTalesSequelNone')}</option>
-              {#each tales.filter((other) => other.id !== selectedId) as other (other.id)}
-                <option value={other.id}>{titleOf(other)}</option>
-              {/each}
-            </select>
-          </label>
+      {#if status === 'scheduled' || scheduling}
+        <!-- Дата уходит через тот же листок, что и «Опубликовать»: в
+             назначенный час байка разойдётся письмами так же. -->
+        <input
+          type="datetime-local"
+          value={scheduledAt ? localInput(scheduledAt) : ''}
+          onchange={(e) => pickSchedule(e.currentTarget.value)}
+          class="date"
+          aria-label={$t('adminTalesStatusScheduled')}
+        />
+        {#if scheduling && status !== 'scheduled'}
+          <span class="hint">{$t('adminTalesPickDate')}</span>
         {/if}
-      </div>
+      {/if}
 
-      <div class="flex-shrink-0 flex items-center gap-3">
+      <label class="check">
+        <input type="checkbox" bind:checked={pinned} />
+        {$t('adminTalesPinned')}
+      </label>
+
+      <div class="acts">
         {#if sealed}
           <span class="seal">{$t('adminTalesPublishedSeal')}</span>
+        {/if}
+        {#if selectedId}
+          <button onclick={destroy} class="link link--danger">{$t('adminTalesDelete')}</button>
         {/if}
         <button
           onclick={publish}
           disabled={!open || saving || preflightBusy || preflight !== null}
-          class="px-3 py-2 text-[10px] uppercase tracking-[0.18em] border border-[#c65f3c]/50 text-[#c65f3c] hover:bg-[#c65f3c]/5 transition-colors disabled:opacity-40"
+          class="btn btn--solid"
         >{$t('adminTalesPublish')}</button>
-        {#if selectedId}
-          <button onclick={destroy} class="text-[10px] uppercase tracking-[0.14em] text-[#8a6a55] hover:text-red-700">
-            {$t('adminTalesDelete')}
-          </button>
-        {/if}
       </div>
-    </div>
-    {/if}
+    </footer>
+  {/if}
 
-    {#if message}
-      <p class="px-4 py-2 text-xs border-t border-[#34251c]/10 text-[#6f3b24]">{message}</p>
-    {/if}
-  </div>
+  {#if message}
+    <p class="message">{message}</p>
+  {/if}
 </div>
 
 <style>
+
+  /* ── Каркас: шапка, инструменты, бумага со свойствами, подвал ───────────
+     Кнопки не наследуют размер от родителя: глобальное `button { font-size:
+     .9375rem }` перебивает его, и «10 px заглавными» на контейнере давало
+     15-пиксельные кнопки с разрядкой, а не строку инструментов. Поэтому
+     размер, трекинг и высота названы у самих классов. */
+  .panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-width: 0;
+    background: #f8f1e7;
+    color: #34251c;
+  }
+
+  .grow { flex: 1 1 0; min-width: 0; }
+
+  .bar,
+  .tools,
+  .foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 20px;
+    flex-wrap: wrap;
+  }
+  .bar { padding-top: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(52, 37, 28, 0.1); }
+  .tools { padding-top: 7px; padding-bottom: 7px; border-bottom: 1px solid rgba(52, 37, 28, 0.1); background: rgba(52, 37, 28, 0.02); }
+  .foot { gap: 12px; padding-top: 10px; padding-bottom: 10px; border-top: 1px solid rgba(52, 37, 28, 0.12); background: #f4ecdf; }
+
+  .acts { display: flex; align-items: center; gap: 16px; margin-left: auto; }
+
+  .saved { font-size: 11px; color: #8a6a55; white-space: nowrap; }
+
+  .btn,
+  .tb {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid rgba(52, 37, 28, 0.2);
+    border-radius: 0;
+    background: transparent;
+    font: 500 11px/1 Inter, system-ui, sans-serif;
+    letter-spacing: 0.06em;
+    color: #5f4636;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  .btn:hover:not(:disabled),
+  .tb:hover:not(:disabled) { border-color: rgba(52, 37, 28, 0.5); color: #34251c; }
+  .btn:disabled,
+  .tb:disabled { opacity: 0.4; cursor: default; }
+  .btn.on,
+  .tb.on { border-color: rgba(52, 37, 28, 0.5); background: rgba(52, 37, 28, 0.07); color: #34251c; }
+  .btn--accent { border-color: rgba(198, 95, 60, 0.5); color: #c65f3c; }
+  .btn--accent:hover:not(:disabled) { border-color: #c65f3c; background: rgba(198, 95, 60, 0.07); color: #c65f3c; }
+  .btn--solid { height: 34px; padding: 0 20px; border-color: #c65f3c; background: #c65f3c; color: #fff8f0; letter-spacing: 0.1em; text-transform: uppercase; }
+  .btn--solid:hover:not(:disabled) { background: #b3522f; border-color: #b3522f; color: #fff8f0; }
+
+  .tb { height: 28px; padding: 0 10px; border-color: transparent; }
+  .tb--icon { width: 28px; padding: 0; font-size: 14px; }
+
+  .sep { width: 1px; height: 18px; margin: 0 4px; background: rgba(52, 37, 28, 0.15); }
+
+  .link {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: 500 12px/1.2 Inter, system-ui, sans-serif;
+    color: #8a6a55;
+    text-decoration: underline;
+    text-decoration-color: rgba(138, 106, 85, 0.4);
+    text-underline-offset: 3px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .link:hover:not(:disabled) { color: #34251c; }
+  .link:disabled { opacity: 0.5; cursor: progress; }
+  .link--accent { color: #c65f3c; }
+  .link--danger:hover:not(:disabled) { color: #a33; }
+
+  /* Переключатель из соседних кнопок: один из, а не россыпь. */
+  .seg { display: inline-flex; border: 1px solid rgba(52, 37, 28, 0.2); }
+  .seg button {
+    height: 28px;
+    padding: 0 12px;
+    border: 0;
+    border-right: 1px solid rgba(52, 37, 28, 0.2);
+    border-radius: 0;
+    background: transparent;
+    font: 500 11px/1 Inter, system-ui, sans-serif;
+    letter-spacing: 0.06em;
+    color: #8a6a55;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover:not(:disabled) { color: #34251c; }
+  .seg button.on { background: #34251c; color: #f8f1e7; }
+  .seg button:disabled { opacity: 0.45; cursor: default; }
+
+  .slug-link,
+  .slug-fixed,
+  .slug { font: 400 12px/1 Inter, system-ui, sans-serif; color: #8a6a55; }
+  .slug-link { color: #c65f3c; text-decoration: none; }
+  .slug-link:hover { text-decoration: underline; }
+  .slug { display: inline-flex; align-items: center; }
+  .slug-input {
+    width: 18ch;
+    height: 26px;
+    padding: 0 4px;
+    border: 0;
+    border-bottom: 1px solid rgba(52, 37, 28, 0.25);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    font: 400 12px Inter, system-ui, sans-serif;
+    color: #34251c;
+    outline: none;
+  }
+  .slug-input:focus { border-color: #34251c; box-shadow: none; background: transparent; }
+
+  .date,
+  .select {
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid rgba(52, 37, 28, 0.2);
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.5);
+    font: 400 12px Inter, system-ui, sans-serif;
+    color: #34251c;
+  }
+  .select { width: 100%; text-overflow: ellipsis; }
+  .date:focus,
+  .select:focus { border-color: #34251c; box-shadow: none; }
+
+  .hint { font-size: 11px; color: #8a6a55; }
+
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font: 400 12px/1.2 Inter, system-ui, sans-serif;
+    color: #5f4636;
+    cursor: pointer;
+  }
+  .check input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    padding: 0;
+    accent-color: #c65f3c;
+    cursor: pointer;
+  }
+
+  .message {
+    margin: 0;
+    padding: 8px 20px;
+    border-top: 1px solid rgba(52, 37, 28, 0.1);
+    font-size: 12px;
+    color: #6f3b24;
+  }
+
+  .focus-exit {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    z-index: 30;
+    height: 28px;
+    padding: 0 12px;
+    border: 1px solid rgba(52, 37, 28, 0.2);
+    border-radius: 0;
+    background: rgba(248, 241, 231, 0.92);
+    font: 500 11px/1 Inter, system-ui, sans-serif;
+    letter-spacing: 0.06em;
+    color: #8a6a55;
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.15s;
+  }
+  .focus-exit:hover { opacity: 1; color: #34251c; }
+
+  .restore {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 24px;
+    padding: 9px 14px;
+    border: 1px solid rgba(198, 95, 60, 0.35);
+    background: rgba(198, 95, 60, 0.05);
+    font-size: 12px;
+  }
+
+  /* ── Бумага и свойства рядом ───────────────────────────────────────── */
+  .scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    container-type: size;
+  }
+
+  .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 40px;
+    align-items: start;
+    max-width: calc(var(--paper, 780px) + 340px + 48px);
+    margin: 0 auto;
+    padding: 32px 24px 48px;
+  }
+  .col { min-width: 0; }
+
+  .inspector {
+    position: sticky;
+    top: 24px;
+    display: grid;
+    gap: 22px;
+    max-height: calc(100cqh - 48px);
+    overflow-y: auto;
+    padding: 16px 16px 18px;
+    border: 1px solid #d8c6b1;
+    background: rgba(255, 255, 255, 0.4);
+  }
+  .blk h4 {
+    margin: 0 0 8px;
+    font: 500 10px/1.2 Inter, system-ui, sans-serif;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #8a6a55;
+  }
+
+  .cover { display: flex; gap: 14px; align-items: flex-start; margin-top: 2px; }
+  .cover-img {
+    flex: none;
+    width: 96px;
+    aspect-ratio: 4 / 5;
+    object-fit: cover;
+    border: 1px solid #d8c6b1;
+    background: #1a120e;
+  }
+  .cover-img--none {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border-style: dashed;
+    border-color: rgba(52, 37, 28, 0.3);
+    background: rgba(52, 37, 28, 0.04);
+    font: italic 11px/1.3 Inter, system-ui, sans-serif;
+    text-align: center;
+    color: #8a6a55;
+  }
+  .cover-acts { display: grid; gap: 10px; padding-top: 2px; }
+
+  .sub-h { margin: 16px 0 8px; font: 400 11px/1.2 Inter, system-ui, sans-serif; color: #8a6a55; }
+  .frames {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+    gap: 6px;
+    max-height: 124px;
+    overflow-y: auto;
+    padding: 2px;
+  }
+  .frame {
+    padding: 0;
+    aspect-ratio: 4 / 5;
+    overflow: hidden;
+    border: 1px solid #d8c6b1;
+    border-radius: 0;
+    background: #1a120e;
+    cursor: pointer;
+  }
+  .frame:hover { border-color: #8a6a55; }
+  .frame.on { border-color: #c65f3c; box-shadow: 0 0 0 1px #c65f3c; }
+  .frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+  /* Узкое окно: свойства уходят под бумагу, а не сжимают её. */
+  @container (max-width: 1000px) {
+    .stage { grid-template-columns: minmax(0, 1fr); gap: 28px; max-width: calc(var(--paper, 780px) + 48px); }
+    .inspector { position: static; max-height: none; }
+  }
+
+  /* Nothing but paper. */
+  .focus-mode :global(.desk-chrome) { display: none; }
+  .focus-mode .stage { grid-template-columns: minmax(0, 1fr); max-width: calc(var(--paper, 780px) + 48px); }
+
   /* The desk is the paper: same faces, same measure, same colour the room
      will read it in. Nothing here is a labelled field. */
-  .desk { max-width: 780px; }
 
   .paper-title,
   .paper-epigraph,
@@ -1676,14 +1865,6 @@
     to { transform: scale(1) rotate(-2deg); opacity: 1; }
   }
 
-  .lang-gap {
-    display: inline-block;
-    margin-top: 2px;
-    font-size: 9px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: #c65f3c;
-  }
   .lang-hollow { margin-left: 3px; font-size: 8px; color: #c65f3c; }
 
   .markup dl {
@@ -1698,16 +1879,18 @@
   .markup dt { font-family: ui-monospace, Menlo, monospace; color: #34251c; }
   .markup dd { margin: 0; }
 
-  .preflight { background: rgba(198, 95, 60, 0.04); }
+  .preflight {
+    padding: 12px 20px;
+    border-top: 1px solid rgba(198, 95, 60, 0.3);
+    background: rgba(198, 95, 60, 0.05);
+    font-size: 12px;
+  }
+  .pf-acts { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .pf-head { margin: 0 0 6px; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: #6f3b24; }
   .pf-warn { margin: 0 0 6px; padding-left: 16px; color: #6f3b24; line-height: 1.5; }
   .pf-letters { margin: 0; color: #34251c; line-height: 1.5; max-width: 80ch; }
   .pf-letters b { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 16px; font-weight: 500; }
   .pf-nomail { display: block; margin-top: 4px; color: #8a2a2a; }
-
-  /* Nothing but paper. */
-  .focus-mode :global(.shelf-pane),
-  .focus-mode :global(.desk-chrome) { display: none; }
 
   @media (prefers-reduced-motion: reduce) {
     .seal { animation: none; }

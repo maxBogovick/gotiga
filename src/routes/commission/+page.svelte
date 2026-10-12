@@ -7,7 +7,7 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { keepEmail } from '$lib/utils/nameEmail';
   import { isValidEmail } from '$lib/validation';
-  import { roomCta } from '$lib/analytics';
+  import { interact, roomCta, trackForm } from '$lib/analytics';
   import type { AttachmentInput, Figurine, FigurineListItem } from '$lib/types/api';
 
   const STORE_KEY = 'gotiga_commissions';
@@ -23,6 +23,12 @@
 
   let step = $state(1);
   const TOTAL_STEPS = 3;
+
+  // Which step the letter reached. Step 1 is not recorded: arriving on it is
+  // not progress, and `commission_form_start` already says who began.
+  $effect(() => {
+    if (step > 1) interact('form_step', `commission:${step}`);
+  });
 
   // Step 1 — the idea
   let title = $state('');
@@ -347,7 +353,7 @@
         {/each}
       </div>
 
-      <form class="letter" onsubmit={(e) => { e.preventDefault(); if (step < TOTAL_STEPS) next(); else submit(); }}>
+      <form class="letter" use:trackForm={'commission'} onsubmit={(e) => { e.preventDefault(); if (step < TOTAL_STEPS) next(); else submit(); }}>
         <!-- Honeypot -->
         <input class="hp" type="text" name="website" tabindex="-1" autocomplete="off" bind:value={website} aria-hidden="true" />
 

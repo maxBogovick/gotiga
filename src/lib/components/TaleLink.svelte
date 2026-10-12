@@ -2,21 +2,15 @@
   /**
    * A link to this house, written into a tale.
    *
-   * Two forms, chosen by how the author wrote it. Inside a sentence it stays in
-   * the sentence: the name of what it leads to, a thumbnail arch the height of
-   * a capital, and on hover a small card with the photograph. On a line of its
-   * own the author set it apart, so it stands apart: a tipped-in card with the
-   * arch, the kind of room, the name and a line of its description.
+   * Two forms, chosen by how the author wrote it. Inside a sentence it is
+   * only the name of what it leads to, in italics with a hairline under it:
+   * no thumbnail, no hover card — anything else in the line moves the text
+   * around it. On a line of its own the author set it apart, so it stands
+   * apart: a tipped-in card with the arch, the kind of room, the name and a
+   * line of its description. The card is a block and may use `AppImage`.
    *
-   * The inline form lives inside `<p>`, so its markup is spans and an `<img>`
-   * only — `AppImage` wraps itself in a `<div>`, and a `<div>` in a paragraph
-   * makes the parser close the paragraph early (see the `<details>` note in
-   * CLAUDE.md). The card is a block of its own and may use `AppImage`.
-   *
-   * Both depend on `ArchClip` being on the page (`#tale-arch`).
+   * The card depends on `ArchClip` being on the page (`#tale-arch`).
    */
-  import { onMount } from 'svelte';
-  import { resolveMediaUrl, resolveSrcset } from '$lib/api';
   import { t, lang } from '$lib/i18n';
   import type { TranslationKey } from '$lib/i18n';
   import { leafCopy } from '$lib/gazette';
@@ -58,15 +52,7 @@
   });
 
   let image = $derived(info?.image ?? '');
-  let thumb = $derived(resolveSrcset(image));
-  let thumbSrc = $derived(resolveMediaUrl(image) ?? '');
   let kicker = $derived($t(KICKERS[ref.room]));
-
-  // The hover card is drawn only in the browser. Prerendered, its words would
-  // sit inside the paragraph's text — the name twice and a kicker in the middle
-  // of a sentence, for anything that reads the HTML rather than looks at it.
-  let awake = $state(false);
-  onMount(() => (awake = true));
 </script>
 
 {#if card}
@@ -86,10 +72,9 @@
     <span class="tc-go" aria-hidden="true">→</span>
   </a>
 {:else}
-  <!-- One line on purpose: this sits inside a sentence, and every newline
-       between these tags would print as a space inside the link — before the
-       comma that follows it. -->
-  <a class="tl" href={ref.href}>{#if thumbSrc}<span class="tl-arch" aria-hidden="true"><img src={thumbSrc} srcset={thumb?.jpeg} sizes="24px" alt="" loading="lazy" decoding="async" /></span>{/if}<span class="tl-name">{named.title}</span>{#if awake && (thumbSrc || named.dek)}<span class="tl-peek" aria-hidden="true">{#if thumbSrc}<span class="tl-peek-arch"><img src={thumbSrc} srcset={thumb?.jpeg} sizes="72px" alt="" loading="lazy" decoding="async" /></span>{/if}<span class="tl-peek-copy"><span class="tl-peek-kicker">{kicker}</span><span class="tl-peek-title">{named.title}</span>{#if named.dek}<span class="tl-peek-dek">{named.dek}</span>{/if}</span></span>{/if}</a>
+  <!-- One line on purpose: this sits inside a sentence, and a newline between
+       the tags would print as a space inside the link. -->
+  <a class="tl" href={ref.href}>{named.title}</a>
 {/if}
 
 <style>
@@ -118,100 +103,7 @@
     background-size: 100% 1px, 100% 1px;
   }
 
-  .tl-arch {
-    display: inline-block;
-    width: 0.8em;
-    height: 1.05em;
-    margin: 0 0.28em 0 0.04em;
-    vertical-align: -0.14em;
-    overflow: hidden;
-    background: #1a120e;
-    clip-path: url(#tale-arch);
-    transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
-  }
-  .tl:hover .tl-arch { transform: translateY(-2px); }
-  .tl-arch img,
-  .tl-peek-arch img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-
-  .tl-name { font-style: italic; }
-
-  /* The card that rises over the link. Hover only — on a touch screen the
-     first tap is already the trip, and a card that appears for the length of
-     that tap is a flicker, not a preview. */
-  .tl-peek {
-    position: absolute;
-    left: -0.4em;
-    bottom: calc(100% + 12px);
-    z-index: 20;
-    display: none;
-    align-items: center;
-    gap: 14px;
-    width: max-content;
-    max-width: min(300px, 78vw);
-    padding: 12px 16px 12px 12px;
-    background: var(--cream, #f8f1e7);
-    border: 1px solid var(--line, #d8c6b1);
-    outline: 1px solid rgba(216, 198, 177, 0.55);
-    outline-offset: 3px;
-    box-shadow: 0 10px 28px rgba(52, 37, 28, 0.16);
-    transform: rotate(-1deg);
-    pointer-events: none;
-    font-style: normal;
-    color: var(--ink, #34251c);
-  }
-  @media (hover: hover) {
-    .tl:hover .tl-peek,
-    .tl:focus-visible .tl-peek {
-      display: flex;
-      animation: tl-rise 0.32s cubic-bezier(0.2, 0.8, 0.3, 1) both;
-    }
-  }
-  @keyframes tl-rise {
-    from { opacity: 0; transform: translateY(6px) rotate(-1deg); }
-    to { opacity: 1; transform: translateY(0) rotate(-1deg); }
-  }
-
-  .tl-peek-arch {
-    flex-shrink: 0;
-    width: 60px;
-    aspect-ratio: 3 / 4;
-    overflow: hidden;
-    background: #1a120e;
-    clip-path: url(#tale-arch);
-  }
-  .tl-peek-copy { display: grid; gap: 4px; min-width: 0; }
-  .tl-peek-kicker {
-    font-family: Inter, system-ui, sans-serif;
-    font-size: 8.5px;
-    font-weight: 600;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--copper, #c65f3c);
-  }
-  .tl-peek-title {
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: 18px;
-    line-height: 1.15;
-    text-wrap: balance;
-  }
-  .tl-peek-dek {
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: 14px;
-    font-style: italic;
-    line-height: 1.35;
-    color: var(--muted, #5f4636);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
+  .tl { font-style: italic; }
 
   /* ── On a line of its own ──────────────────────────────────────────── */
 
@@ -312,9 +204,8 @@
   .tc:hover .tc-go { transform: translateX(4px); opacity: 1; }
 
   @media (prefers-reduced-motion: reduce) {
-    .tl, .tl-arch, .tc, .tc-go { transition: none; }
+    .tl, .tc, .tc-go { transition: none; }
     .tc, .tc:hover, .tc:focus-visible { transform: none; }
-    .tl:hover .tl-arch, .tc:hover .tc-go { transform: none; }
-    .tl:hover .tl-peek, .tl:focus-visible .tl-peek { animation: none; }
+    .tc:hover .tc-go { transform: none; }
   }
 </style>

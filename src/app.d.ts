@@ -44,6 +44,8 @@ declare global {
 			readonly isPageTurning: boolean;
 			readonly isCandleLit: boolean;
 			readonly hasHistorySection: boolean;
+			/** Байки об этой работе, в порядке полки; пусто — блока нет. */
+			readonly workTales: import('$lib/types/api').GazetteLeaf[];
 			readonly hasMakingSection: boolean;
 			readonly hasVideoSection: boolean;
 			readonly hasWorkStorySection: boolean;

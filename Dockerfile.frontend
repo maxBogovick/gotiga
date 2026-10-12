@@ -47,9 +47,10 @@ ARG CACHEBUST=0
 # escape hatch documented above. The markdown-twin generator (scripts/
 # generate-markdown.mjs) only makes sense when there's prerendered HTML to convert,
 # so it's gated on the same variable rather than folded into a second npm script
-# that Dockerfile would then have to choose between.
+# that Dockerfile would then have to choose between. fix-inlined-css.mjs is gated
+# the same way: it only edits prerendered HTML (see the script for what it repairs).
 RUN echo "cache-bust: ${CACHEBUST}" && npm run build && \
-    if [ "$VITE_BUILD_TARGET" = "web" ]; then node scripts/generate-markdown.mjs build; fi
+    if [ "$VITE_BUILD_TARGET" = "web" ]; then node scripts/fix-inlined-css.mjs build && node scripts/generate-markdown.mjs build; fi
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM nginx:1.27-alpine

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trackForm } from '$lib/analytics';
   /**
    * ImpressionsForm — the "Book of Impressions": a single-page ledger where a
    * visitor leaves a free-form reaction to the exhibition as a whole (not tied
@@ -100,7 +101,7 @@
       </div>
 
       <div class="page page-form">
-        <form class="leave-form" onsubmit={submit} novalidate>
+        <form class="leave-form" use:trackForm={'impression'} onsubmit={submit} novalidate>
           {#if sealing}
             <div class="seal-press" in:scale={{ start: 0.4, duration: 400 }} aria-hidden="true">
               <span class="wax wax-pressing"><span class="wax-mark">❧</span></span>

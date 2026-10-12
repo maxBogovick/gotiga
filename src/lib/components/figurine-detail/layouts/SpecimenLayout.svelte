@@ -2,6 +2,7 @@
   import { getContext } from 'svelte';
   import { figurineHref } from '$lib/figurineHref';
   import { resolveWebpUrl } from '$lib/api';
+  import { repairPicture } from '$lib/hydrate-image';
   import { t } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import FigurineImageViewer from '../FigurineImageViewer.svelte';
@@ -22,6 +23,7 @@
     parseCatalogLists,
   } from '$lib/catalog-lists';
   import '$lib/styles/figurine-detail/layout-catalog.css';
+  import WorkTaleExcerpt from '$lib/components/figurine-detail/WorkTaleExcerpt.svelte';
 
   import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
 
@@ -200,6 +202,10 @@
             </div>
           </section>
         {/if}
+
+        <div class="catalog-tale">
+          <WorkTaleExcerpt tales={ctx.workTales} />
+        </div>
         </div>
 
         <div class="catalog-stage">
@@ -229,7 +235,13 @@
                     aria-current={ctx.activeImageIndex === i ? 'true' : undefined}
                     title="{ctx.imageTypeLabel(img.imageType)} · {i + 1}/{ctx.sortedImages.length}"
                   >
-                    <picture>
+                    <picture
+                      use:repairPicture={{
+                        webp: resolveWebpUrl(img.thumbUrl ?? img.url),
+                        srcset: null,
+                        src: ctx.resolveUrl(img.thumbUrl ?? img.url),
+                      }}
+                    >
                       <source type="image/webp" srcset={resolveWebpUrl(img.thumbUrl ?? img.url) ?? undefined} />
                       <img
                         src={ctx.resolveUrl(img.thumbUrl ?? img.url)}

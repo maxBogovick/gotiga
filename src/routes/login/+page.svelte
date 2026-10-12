@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { interact } from '$lib/analytics';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { t , brandName } from '$lib/i18n';
@@ -19,6 +20,14 @@
   let step = $state(1);
   let email = $state('');
   let error = $state('');
+
+  // Same question as on the way in: which screen of the key do people stop at.
+  $effect(() => {
+    interact('auth_step', `login:${step}`);
+  });
+  $effect(() => {
+    if (error) interact('auth_error', `login:${step}:${error.slice(0, 30)}`);
+  });
   let loading = $state(false);
   let forgotOpen = $state(false);
   let forgotEmail = $state('');
@@ -151,6 +160,7 @@
     // На случай ответа без него имя спрашивается отдельно, потому что без
     // имени страница не знает, кто вошёл.
     authStore.setSession(sessionToken, user ?? (await api.userMe(sessionToken)));
+    interact('auth_done', 'login');
 
     // Расписки гостя из localStorage: каждая запись gotiga_claims_* — это
     // ClaimData[], и у каждой вещи там свой `.token`.

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { setOwnerBrowser } from '$lib/analytics';
     import { onMount } from 'svelte';
     import { api } from '$lib/api';
     import type { Figurine, FigurineListItem, GazetteSeed, ShowingRoom } from '$lib/types/api';
@@ -68,6 +69,9 @@
                 sessionStorage.setItem('gotiga_admin', '1');
             }
             isAuthenticated = true;
+            // The author's own browser stops counting as a visitor (the switch
+            // is in the Analytics panel).
+            setOwnerBrowser(true);
             await loadFigurines();
             await loadShowingRooms();
         } catch {
@@ -217,11 +221,78 @@
         selectedFigurine !== null && JSON.stringify(selectedFigurine) !== savedSnapshot
     );
 
-    let filteredFigurines = $derived(
-        searchQuery.trim()
-            ? figurines.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
-            : figurines
-    );
+    // Registry list: thumbnails, a status/problem filter and a sort. The view and sort are
+    // per-browser conveniences (localStorage), never state anyone else depends on.
+    type RegistryView = 'list' | 'grid';
+    type RegistryFilter = 'all' | FigurineListItem['status'] | 'hidden' | 'noCover' | 'noAngle';
+    type RegistrySort = 'site' | 'newest' | 'name';
+    let registryView = $state<RegistryView>('list');
+    let registryFilter = $state<RegistryFilter>('all');
+    let registrySort = $state<RegistrySort>('site');
+
+    function setRegistryView(v: RegistryView) {
+        registryView = v;
+        try { localStorage.setItem('gotiga_admin_registry_view', v); } catch { /* private window */ }
+    }
+    function setRegistrySort(v: RegistrySort) {
+        registrySort = v;
+        try { localStorage.setItem('gotiga_admin_registry_sort', v); } catch { /* private window */ }
+    }
+
+    const REGISTRY_STATUSES: { key: FigurineListItem['status']; label: TranslationKey }[] = [
+        { key: 'available', label: 'adminFieldStatusAvail' },
+        { key: 'reserved', label: 'adminFieldStatusRes' },
+        { key: 'sold', label: 'adminFieldStatusSold' },
+        { key: 'in_progress', label: 'adminFieldStatusWip' },
+    ];
+    const STATUS_DOT: Record<FigurineListItem['status'], string> = {
+        available: 'bg-emerald-700/80',
+        reserved: 'bg-amber-600',
+        sold: 'bg-[#34251c]/45',
+        in_progress: 'bg-[#c65f3c]',
+    };
+
+    function registryMatches(f: FigurineListItem, filter: RegistryFilter): boolean {
+        if (filter === 'all') return true;
+        if (filter === 'hidden') return f.isVisible === false;
+        if (filter === 'noCover') return !f.faceImageUrl;
+        if (filter === 'noAngle') return !f.detailImageUrl;
+        return f.status === filter;
+    }
+    let registryCounts = $derived.by(() => {
+        const c: Record<string, number> = { all: figurines.length, hidden: 0, noCover: 0, noAngle: 0 };
+        for (const f of figurines) {
+            c[f.status] = (c[f.status] ?? 0) + 1;
+            if (f.isVisible === false) c.hidden++;
+            if (!f.faceImageUrl) c.noCover++;
+            if (!f.detailImageUrl) c.noAngle++;
+        }
+        return c;
+    });
+
+    let filteredFigurines = $derived.by(() => {
+        const q = searchQuery.trim().toLowerCase();
+        const list = figurines.filter(
+            (f) => registryMatches(f, registryFilter) && (!q || f.name.toLowerCase().includes(q))
+        );
+        // `figurines` already arrives in site order (sortOrder, newest first).
+        if (registrySort === 'newest') {
+            return list.slice().sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+        }
+        if (registrySort === 'name') return list.slice().sort((a, b) => a.name.localeCompare(b.name));
+        return list;
+    });
+
+    function thumbSrc(path: string | null | undefined): string {
+        if (!path) return '';
+        if (path.startsWith('http')) return path;
+        try {
+            const serverUrl = localStorage.getItem('gotiga_server_url') ?? '';
+            return serverUrl && path.startsWith('/') ? `${serverUrl}${path}` : path;
+        } catch {
+            return path;
+        }
+    }
 
     let materialSuggestions = $derived(
         [...new Set(figurines.map(f => f.material).filter((v): v is string => !!v))].sort()
@@ -287,19 +358,96 @@
         }
     }
 
-    async function moveFigurine(id: string, direction: 1 | -1) {
-        const full = await api.getFigurine(id);
-        if (!full) return;
-        full.sortOrder = (full.sortOrder ?? 0) + direction;
+    // ── Registry order ────────────────────────────────────────────────────
+    // The order is one list: dragging a work, ▲▼ and "renumber" all end in `applyOrder`,
+    // which writes 1, 2, 3, … for the whole list. Nudging one work's number by ±1 (the old
+    // ▲▼) left ties, and a tie is settled by creation date — so a work could stay put.
+    async function applyOrder(ids: string[]) {
+        const byId = new Map(figurines.map((f) => [f.id, f]));
+        const before = figurines;
+        figurines = ids.map((id, i) => ({ ...byId.get(id)!, sortOrder: i + 1 }));
         try {
-            await api.saveFigurine(full);
-            await loadFigurines();
-            if (selectedFigurine?.id === id) {
-                selectedFigurine = { ...full };
-                savedSnapshot = JSON.stringify(selectedFigurine);
-            }
-        } catch { /* silent */ }
+            await api.reorderFigurines(ids);
+            syncOpenWorkOrder(ids);
+            showMessage($t('adminRegistryReordered'), 'success');
+        } catch (e) {
+            figurines = before;
+            showMessage($t('adminRegistryReorderFailed') + e, 'error');
+        }
     }
+
+    /** The open form holds its own copy of sortOrder; saving it later must not undo the move. */
+    function syncOpenWorkOrder(ids: string[]) {
+        if (!selectedFigurine) return;
+        const idx = ids.indexOf(selectedFigurine.id);
+        if (idx < 0) return;
+        selectedFigurine.sortOrder = idx + 1;
+        if (savedSnapshot) {
+            try {
+                const snap = JSON.parse(savedSnapshot);
+                snap.sortOrder = idx + 1;
+                savedSnapshot = JSON.stringify(snap);
+            } catch { /* leave the snapshot */ }
+        }
+    }
+
+    /** Put `id` just before/after `targetId` in the whole registry order and save it. */
+    async function moveTo(id: string, targetId: string, where: 'before' | 'after') {
+        if (id === targetId) return;
+        const ids = figurines.map((f) => f.id).filter((x) => x !== id);
+        const at = ids.indexOf(targetId);
+        if (at < 0) return;
+        ids.splice(where === 'before' ? at : at + 1, 0, id);
+        if (ids.every((x, i) => x === figurines[i].id)) return;
+        await applyOrder(ids);
+    }
+
+    /** ▲▼: swap with the neighbour as the list currently shows it. */
+    async function moveFigurine(id: string, direction: 1 | -1) {
+        const shown = registrySort === 'site' ? filteredFigurines : figurines;
+        const idx = shown.findIndex((f) => f.id === id);
+        const neighbour = shown[idx + direction];
+        if (idx < 0 || !neighbour) return;
+        await moveTo(id, neighbour.id, direction === -1 ? 'before' : 'after');
+    }
+
+    function renumberRegistry() {
+        const msg = $t('adminRegistryRenumberConfirm').replace('{n}', String(figurines.length));
+        if (!confirm(msg)) return;
+        void applyOrder(figurines.map((f) => f.id));
+    }
+
+    // Drag and drop. Only meaningful when the list shows the whole registry in site order:
+    // dropping inside a filtered or re-sorted view would have no single place to land.
+    let canDrag = $derived(registrySort === 'site' && registryFilter === 'all' && !searchQuery.trim());
+    let dragId = $state<string | null>(null);
+    let dropMark = $state<{ id: string; where: 'before' | 'after' } | null>(null);
+
+    function dragOver(e: DragEvent, id: string) {
+        if (!dragId || dragId === id) return;
+        e.preventDefault();
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const where = registryView === 'grid'
+            ? (e.clientX < r.left + r.width / 2 ? 'before' : 'after')
+            : (e.clientY < r.top + r.height / 2 ? 'before' : 'after');
+        if (dropMark?.id !== id || dropMark.where !== where) dropMark = { id, where };
+    }
+    function dragEnd() {
+        dragId = null;
+        dropMark = null;
+    }
+    async function drop(e: DragEvent) {
+        e.preventDefault();
+        const from = dragId;
+        const mark = dropMark;
+        dragEnd();
+        if (from && mark) await moveTo(from, mark.id, mark.where);
+    }
+
+    // Ties (or a start other than 1) are what "renumber" repairs.
+    let registryHasTies = $derived(
+        new Set(figurines.map((f) => f.sortOrder ?? 0)).size !== figurines.length
+    );
 
     // True while a photo/video/audio/folder upload for the CURRENTLY selected figurine
     // is in flight. Switching selectedFigurine mid-upload used to be how a photo could
@@ -316,7 +464,7 @@
     async function editFigurine(id: string) {
         if (uploadBusy()) { showMessage($t('adminMsgUploadInProgress'), 'error'); return; }
         if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
-        const full = await api.getFigurine(id);
+        const full = await api.getFigurineFresh(id);
         if (full) {
             selectedFigurine = { ...full };
             savedSnapshot = JSON.stringify(selectedFigurine);
@@ -333,7 +481,7 @@
     function duplicateFigurine(fig: FigurineListItem) {
         if (uploadBusy()) { showMessage($t('adminMsgUploadInProgress'), 'error'); return; }
         if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
-        api.getFigurine(fig.id).then(full => {
+        api.getFigurineFresh(fig.id).then(full => {
             if (!full) return;
             selectedFigurine = {
                 ...full,
@@ -370,7 +518,7 @@
     async function refreshAfterBulkOp() {
         await loadFigurines();
         if (selectedFigurine) {
-            const fresh = await api.getFigurine(selectedFigurine.id);
+            const fresh = await api.getFigurineFresh(selectedFigurine.id);
             if (fresh) {
                 selectedFigurine = { ...fresh };
                 savedSnapshot = JSON.stringify(selectedFigurine);
@@ -480,6 +628,7 @@
         const hasKey = localStorage.getItem('gotiga_api_key') || sessionStorage.getItem('gotiga_api_key');
         if ((session === '1' || persisted === '1') && hasKey) {
             isAuthenticated = true;
+            setOwnerBrowser(true);
             loadFigurines();
             loadShowingRooms();
             // Значок студии спрашивается сразу: остальные вкладки сообщают своё
@@ -491,6 +640,12 @@
         }
         // Restore sidebar collapsed state
         sidebarCollapsed = localStorage.getItem('gotiga_admin_sidebar_collapsed') === '1';
+        try {
+            const v = localStorage.getItem('gotiga_admin_registry_view');
+            if (v === 'list' || v === 'grid') registryView = v;
+            const so = localStorage.getItem('gotiga_admin_registry_sort');
+            if (so === 'site' || so === 'newest' || so === 'name') registrySort = so;
+        } catch { /* private window */ }
         // Hash-based tab routing (e.g. Telegram notification links)
         const hash = window.location.hash.replace('#', '');
         if (TAB_IDS.includes(hash)) {
@@ -702,55 +857,135 @@
                     {/if}
                 </div>
 
-                <div class="flex-1 overflow-y-auto space-y-0.5 pr-1">
+                <!-- Filters: status and "what is missing" -->
+                <div class="shrink-0 flex flex-wrap gap-1">
+                    {#each [{ key: 'all', label: $t('adminRegistryFilterAll') }, ...REGISTRY_STATUSES.map((s) => ({ key: s.key, label: $t(s.label) })), { key: 'hidden', label: $t('adminRegistryHidden') }, { key: 'noCover', label: $t('adminRegistryNoCover') }, { key: 'noAngle', label: $t('adminRegistryNoAngle') }] as chip (chip.key)}
+                        {@const n = registryCounts[chip.key] ?? 0}
+                        {#if chip.key === 'all' || n > 0 || registryFilter === chip.key}
+                            <button
+                                onclick={() => registryFilter = chip.key as RegistryFilter}
+                                class="text-[9px] uppercase tracking-wide px-1.5 py-1 border transition-colors
+                                    {registryFilter === chip.key
+                                        ? 'bg-[#34251c] border-[#34251c] text-[#f8f1e7]'
+                                        : 'border-[#34251c]/15 text-[#5f4636] hover:border-[#34251c]/40'}">
+                                {chip.label} <span class="opacity-60 tabular-nums">{n}</span>
+                            </button>
+                        {/if}
+                    {/each}
+                </div>
+
+                <!-- View + sort -->
+                <div class="shrink-0 flex items-center justify-between gap-2">
+                    <select
+                        value={registrySort}
+                        onchange={(e) => setRegistrySort(e.currentTarget.value as RegistrySort)}
+                        class="min-w-0 bg-[#f8f1e7] border border-[#34251c]/15 px-1.5 py-1 text-[10px] uppercase tracking-wide text-[#5f4636] outline-none focus:border-[#34251c]/40">
+                        <option value="site">{$t('adminRegistrySortSite')}</option>
+                        <option value="newest">{$t('adminRegistrySortNewest')}</option>
+                        <option value="name">{$t('adminRegistrySortName')}</option>
+                    </select>
+                    {#if registryHasTies}
+                        <button onclick={renumberRegistry}
+                            title={$t('adminRegistryRenumberHint')}
+                            class="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-1 border border-amber-700/40 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-colors">
+                            {$t('adminRegistryRenumber')}
+                        </button>
+                    {/if}
+                    <div class="flex border border-[#34251c]/15 shrink-0" role="group">
+                        {#each [{ v: 'list', label: $t('adminRegistryViewList'), icon: '☰' }, { v: 'grid', label: $t('adminRegistryViewGrid'), icon: '▦' }] as m (m.v)}
+                            <button
+                                onclick={() => setRegistryView(m.v as RegistryView)}
+                                title={m.label}
+                                aria-label={m.label}
+                                aria-pressed={registryView === m.v}
+                                class="px-2 py-1 text-xs leading-none transition-colors
+                                    {registryView === m.v ? 'bg-[#34251c]/10 text-[#34251c]' : 'text-[#5f4636] hover:text-[#34251c]'}">{m.icon}</button>
+                        {/each}
+                    </div>
+                </div>
+
+                {#if !canDrag}
+                    <div class="shrink-0 -mt-1 text-[9px] leading-snug text-[#5f4636]/60">{$t('adminRegistryDragOff')}</div>
+                {/if}
+
+                <div class="flex-1 overflow-y-auto pr-1 {registryView === 'grid' ? 'grid grid-cols-2 gap-2 content-start' : 'space-y-1'}">
                     {#each filteredFigurines as fig (fig.id)}
-                        <div class="flex items-stretch gap-0.5 group/row">
-                            <!-- Main row button -->
+                        {@const selected = selectedFigurine?.id === fig.id}
+                        {@const mark = dropMark?.id === fig.id ? dropMark.where : null}
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div class="relative group/row {registryView === 'grid' ? '' : 'flex'}
+                                {dragId === fig.id ? 'opacity-40' : ''}
+                                {mark && registryView === 'grid' ? (mark === 'before' ? 'shadow-[-3px_0_0_0_#c65f3c]' : 'shadow-[3px_0_0_0_#c65f3c]') : ''}
+                                {mark && registryView !== 'grid' ? (mark === 'before' ? 'shadow-[0_-3px_0_0_#c65f3c]' : 'shadow-[0_3px_0_0_#c65f3c]') : ''}"
+                            draggable={canDrag}
+                            title={canDrag ? $t('adminRegistryDragHint') : undefined}
+                            ondragstart={(e) => { dragId = fig.id; e.dataTransfer?.setData('text/plain', fig.id); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
+                            ondragover={(e) => dragOver(e, fig.id)}
+                            ondrop={drop}
+                            ondragend={dragEnd}>
                             <button
                                 onclick={() => editFigurine(fig.id)}
-                                class="flex-1 text-left px-3 py-2.5 border transition-colors min-w-0
-                                    {selectedFigurine?.id === fig.id
-                                        ? 'bg-[#34251c]/5 border-[#34251c]/30'
-                                        : 'border-[#34251c]/8 hover:border-[#34251c]/30 border-transparent'}"
+                                class="text-left border transition-colors min-w-0
+                                    {registryView === 'grid' ? 'w-full flex flex-col' : 'flex-1 flex items-center gap-3 p-1.5'}
+                                    {selected ? 'bg-[#34251c]/5 border-[#34251c]/40' : 'border-transparent hover:border-[#34251c]/25 hover:bg-[#34251c]/[0.03]'}"
                             >
-                                <div class="text-xs font-bold truncate group-hover/row:text-[#6f3b24] transition-colors">
-                                    {fig.name}
-                                    {#if hasUnsaved && selectedFigurine?.id === fig.id}
-                                        <span class="text-amber-700 ml-1">*</span>
+                                <!-- Thumbnail -->
+                                <span class="relative shrink-0 overflow-hidden bg-[#f1e3d1] border border-[#34251c]/10
+                                    {registryView === 'grid' ? 'w-full aspect-[4/5]' : 'w-14 h-[4.5rem]'}
+                                    {fig.status === 'sold' ? 'saturate-[0.55]' : ''} {fig.isVisible === false ? 'opacity-50' : ''}">
+                                    {#if fig.faceImageUrl}
+                                        <img src={thumbSrc(fig.faceImageUrl)} alt="" loading="lazy" decoding="async"
+                                            class="w-full h-full object-cover" />
+                                    {:else}
+                                        <span class="absolute inset-0 flex items-center justify-center text-[#34251c]/25 text-lg">◌</span>
                                     {/if}
-                                </div>
-                                <div class="text-[9px] uppercase opacity-60 flex gap-2">
-                                    <span>{fig.status}</span>
-                                </div>
+                                    <span class="absolute top-1 left-1 w-2 h-2 rounded-full ring-1 ring-[#f8f1e7] {STATUS_DOT[fig.status]}"
+                                        title={fig.status}></span>
+                                </span>
+
+                                <!-- Text -->
+                                <span class="min-w-0 flex-1 {registryView === 'grid' ? 'px-1.5 py-1.5' : ''}">
+                                    <span class="block text-xs font-bold leading-snug text-[#34251c] group-hover/row:text-[#6f3b24] transition-colors line-clamp-2">
+                                        {fig.name}
+                                        {#if hasUnsaved && selected}<span class="text-amber-700 ml-1">*</span>{/if}
+                                    </span>
+                                    <span class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] uppercase tracking-wide text-[#5f4636]/80">
+                                        <span>{fig.status === 'available' ? $t('adminFieldStatusAvail') : fig.status === 'reserved' ? $t('adminFieldStatusRes') : fig.status === 'sold' ? $t('adminFieldStatusSold') : $t('adminFieldStatusWip')}</span>
+                                        <span class="tabular-nums opacity-70" title={$t('adminRegistryOrderNo')}>№{fig.sortOrder ?? 0}</span>
+                                        {#if fig.isVisible === false}<span class="px-1 border border-[#34251c]/30 text-[#34251c]/80">{$t('adminRegistryHidden')}</span>{/if}
+                                        {#if !fig.faceImageUrl}<span class="text-amber-800">{$t('adminRegistryNoCover')}</span>{/if}
+                                        {#if fig.faceImageUrl && !fig.detailImageUrl}<span class="text-[#c65f3c]/80">{$t('adminRegistryNoAngle')}</span>{/if}
+                                    </span>
+                                </span>
                             </button>
 
-                            <!-- Action column (visible on hover) -->
-                            <div class="flex flex-col opacity-0 group-hover/row:opacity-100 transition-opacity shrink-0">
+                            <!-- Actions (on hover / keyboard focus) -->
+                            <div class="absolute right-1 flex bg-[#f8f1e7]/95 {registryView === 'grid' ? 'top-1' : 'bottom-1'} border border-[#34251c]/15 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity">
                                 <button onclick={() => moveFigurine(fig.id, -1)}
-                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-[#34251c] text-[9px] flex items-center justify-center"
+                                    class="w-6 h-6 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-[#34251c] text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryTooltipUp')}>▲</button>
                                 <button onclick={() => moveFigurine(fig.id, 1)}
-                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-[#34251c] text-[9px] flex items-center justify-center"
+                                    class="w-6 h-6 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-[#34251c] text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryTooltipDown')}>▼</button>
                                 <button onclick={() => duplicateFigurine(fig)}
-                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-amber-700 text-[9px] flex items-center justify-center"
+                                    class="w-6 h-6 hover:bg-[#34251c]/10 text-[#5f4636] hover:text-amber-700 text-[10px] flex items-center justify-center"
                                     title={$t('adminRegistryDuplicate')}>⎘</button>
                                 <button onclick={() => deleteFigurine(fig)} disabled={isDeleting}
-                                    class="flex-1 w-5 border border-[#34251c]/8 hover:bg-red-50 text-[#5f4636] hover:text-red-700 text-[9px] flex items-center justify-center"
+                                    class="w-6 h-6 hover:bg-red-50 text-[#5f4636] hover:text-red-700 text-[9px] flex items-center justify-center"
                                     title={$t('adminRegistryDelete')}>✕</button>
                             </div>
                         </div>
                     {/each}
 
                     {#if filteredFigurines.length === 0}
-                        <div class="text-center text-[#5f4636] text-xs py-6 opacity-70">
-                            {searchQuery ? $t('adminRegistryNotFound') : $t('adminRegistryEmpty')}
+                        <div class="col-span-full text-center text-[#5f4636] text-xs py-6 opacity-70">
+                            {searchQuery || registryFilter !== 'all' ? $t('adminRegistryNotFound') : $t('adminRegistryEmpty')}
                         </div>
                     {/if}
                 </div>
 
                 <div class="pt-3 border-t border-[#34251c]/10 shrink-0 text-[10px] text-[#5f4636] text-center opacity-75">
-                    {figurines.length} {$t('adminRegistryCount')}
+                    {#if filteredFigurines.length !== figurines.length}{filteredFigurines.length} / {/if}{figurines.length} {$t('adminRegistryCount')}
                 </div>
             </aside>
 

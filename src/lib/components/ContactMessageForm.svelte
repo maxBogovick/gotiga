@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trackForm } from '$lib/analytics';
   /**
    * The reusable core of "write to the author": email + message, nothing
    * else. Anonymous, not tied to a figurine (unlike OrderModal) — used both
@@ -62,7 +63,7 @@
   }
 </script>
 
-<form class="cmf" class:cmf-compact={compact} onsubmit={handleSubmit}>
+<form class="cmf" class:cmf-compact={compact} use:trackForm={'contact'} onsubmit={handleSubmit}>
   {#if !sealed}
     <label class="cmf-field">
       <span class="cmf-label">{$t('contactFormEmailLabel')}</span>

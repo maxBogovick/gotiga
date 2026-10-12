@@ -4,7 +4,13 @@ use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
+mod insights;
 mod prepared;
+
+pub use insights::{
+    BattleFunnelRow, DataTrust, DeadLinkSource, EngagementShape, ErrorRow, ExitRow,
+    InteractionRow, SectionRow, TaleReadRow, VitalsRow,
+};
 pub use prepared::{clear_stale_prepared_statements, note_stale_cached_plan};
 
 /// Parse an optional `YYYY-MM-DD` deadline. Empty/absent → None; a present but
@@ -133,8 +139,10 @@ impl Repository {
                 occurred_at, event_date, event_type, figurine_id, visitor_hash,
                 page_view_id, path, source, referrer_host, utm_source, utm_medium,
                 utm_campaign, device_class, browser_family, country_code,
-                duration_ms, scroll_depth, works_seen, cta_type, user_id, lang, internal_source
-            ) ",
+                duration_ms, scroll_depth, works_seen, cta_type, user_id, lang, internal_source,
+                variant, name, detail, value, is_returning, exit_to, last_section,
+                vital_lcp, vital_inp, vital_cls, vital_ttfb, conn, viewport_w
+            ) "
         );
         builder.push_values(events, |mut b, event| {
             b.push_bind(event.occurred_at)
@@ -158,8 +166,42 @@ impl Repository {
                 .push_bind(&event.cta_type)
                 .push_bind(event.user_id)
                 .push_bind(&event.lang)
-                .push_bind(&event.internal_source);
+                .push_bind(&event.internal_source)
+                .push_bind(&event.variant)
+                .push_bind(&event.signals.name)
+                .push_bind(&event.signals.detail)
+                .push_bind(event.signals.value)
+                .push_bind(event.signals.is_returning)
+                .push_bind(&event.signals.exit_to)
+                .push_bind(&event.signals.last_section)
+                .push_bind(event.signals.vital_lcp)
+                .push_bind(event.signals.vital_inp)
+                .push_bind(event.signals.vital_cls)
+                .push_bind(event.signals.vital_ttfb)
+                .push_bind(&event.signals.conn)
+                .push_bind(event.signals.viewport_w);
         });
+
+        // A visit's time, scroll and speed are re-sent while it goes on
+        // (`uq_fae_one_per_visit`): the row keeps the larger numbers and the
+        // latest word on where the visitor went. Rows of other types cannot
+        // conflict with this index and are inserted as before.
+        builder.push(
+            " ON CONFLICT (page_view_id, event_type)
+              WHERE page_view_id IS NOT NULL
+                AND event_type IN ('page_engaged', 'figurine_engaged', 'web_vitals')
+              DO UPDATE SET
+                duration_ms  = GREATEST(figurine_analytics_events.duration_ms, EXCLUDED.duration_ms),
+                scroll_depth = GREATEST(figurine_analytics_events.scroll_depth, EXCLUDED.scroll_depth),
+                works_seen   = GREATEST(figurine_analytics_events.works_seen, EXCLUDED.works_seen),
+                exit_to      = COALESCE(EXCLUDED.exit_to, figurine_analytics_events.exit_to),
+                last_section = COALESCE(EXCLUDED.last_section, figurine_analytics_events.last_section),
+                is_returning = COALESCE(figurine_analytics_events.is_returning, EXCLUDED.is_returning),
+                vital_lcp    = GREATEST(figurine_analytics_events.vital_lcp, EXCLUDED.vital_lcp),
+                vital_inp    = GREATEST(figurine_analytics_events.vital_inp, EXCLUDED.vital_inp),
+                vital_cls    = GREATEST(figurine_analytics_events.vital_cls, EXCLUDED.vital_cls),
+                vital_ttfb   = COALESCE(figurine_analytics_events.vital_ttfb, EXCLUDED.vital_ttfb)",
+        );
 
         let result = builder.build().execute(&self.pg_pool).await?;
         Ok(result.rows_affected())
@@ -434,6 +476,11 @@ impl Repository {
         .bind(to)
         .execute(&mut *tx)
         .await?;
+
+        // Time and scroll distribution, exits, acts, breakage and speed: the
+        // permanent counterpart of what the raw events can only answer for
+        // the retention window.
+        insights::refresh_signal_rollups(&mut tx, from, to).await?;
 
         tx.commit().await?;
         Ok(())
@@ -1059,6 +1106,68 @@ impl Repository {
         )
     }
 
+    /// The tale-scene experiment, one row per tale and arm. Views come from
+    /// `page_view` and everything else from `page_engaged`, both carrying the
+    /// variant the visitor was shown. Grouped by path without its query: a
+    /// `?src=telegram` link and a bare one are the same tale.
+    pub async fn get_admin_scene_experiment(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<Vec<SceneExperimentArm>> {
+        Ok(sqlx::query_as::<
+            _,
+            (String, String, i64, i64, i64, i64, Option<f64>, Option<f64>),
+        >(
+            r#"
+            SELECT
+                split_part(path, '?', 1) AS tale_path,
+                variant,
+                COUNT(*) FILTER (WHERE event_type = 'page_view')::bigint AS views,
+                COUNT(*) FILTER (WHERE event_type = 'page_engaged')::bigint AS engaged,
+                COUNT(*) FILTER (WHERE event_type = 'page_engaged'
+                                   AND scroll_depth >= 50)::bigint AS deep,
+                COUNT(*) FILTER (WHERE event_type = 'page_engaged'
+                                   AND duration_ms IS NOT NULL
+                                   AND duration_ms < $3)::bigint AS quick_exit,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms)
+                    FILTER (WHERE event_type = 'page_engaged'
+                              AND duration_ms IS NOT NULL) AS median_duration_ms,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY scroll_depth)
+                    FILTER (WHERE event_type = 'page_engaged'
+                              AND scroll_depth IS NOT NULL) AS median_scroll_depth
+            FROM figurine_analytics_events
+            WHERE event_date BETWEEN $1 AND $2
+              AND variant LIKE 'scene:%'
+              AND event_type IN ('page_view', 'page_engaged')
+              AND figurine_id IS NULL
+            GROUP BY tale_path, variant
+            ORDER BY tale_path, variant
+            "#,
+        )
+        .bind(from)
+        .bind(to)
+        .bind(crate::analytics::QUICK_EXIT_MS)
+        .fetch_all(&self.pg_pool)
+        .await?
+        .into_iter()
+        .map(
+            |(path, variant, views, engaged, deep, quick_exit, median_duration_ms, median_scroll_depth)| {
+                SceneExperimentArm {
+                    path,
+                    variant,
+                    views,
+                    engaged,
+                    deep,
+                    quick_exit,
+                    median_duration_ms,
+                    median_scroll_depth,
+                }
+            },
+        )
+        .collect())
+    }
+
     /// Per-`path_group` views/unique-visitors from the permanent
     /// `site_page_views_daily` rollup (not retention-bound) — the denominator
     /// that gives the engagement rates and "works seen" their meaning. Sibling
@@ -1183,7 +1292,13 @@ impl Repository {
                 e.duration_ms,
                 e.scroll_depth,
                 e.works_seen,
-                e.cta_type,
+                -- Newer events have no CTA; the timeline shows what they were
+                -- (`search · lantern`, `js · TypeError…`) in the same column.
+                COALESCE(
+                    e.cta_type,
+                    CASE WHEN e.name IS NOT NULL
+                         THEN e.name || COALESCE(' · ' || e.detail, '') END
+                ) AS cta_type,
                 e.source,
                 e.internal_source
             FROM figurine_analytics_events e
@@ -2366,6 +2481,21 @@ impl Repository {
 
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Write the registry's order: the work at position `n` (1-based) gets
+    /// `sort_order = n`, in one statement. `updated_at` is left alone on purpose — it
+    /// feeds the home "since your visit" ledger, and moving a work is not editing it.
+    pub async fn reorder_figurines(&self, ids: &[Uuid]) -> Result<u64> {
+        let res = sqlx::query(
+            "UPDATE figurines f SET sort_order = v.ord::int
+             FROM unnest($1::uuid[]) WITH ORDINALITY AS v(id, ord)
+             WHERE f.id = v.id",
+        )
+        .bind(ids)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub async fn delete_figurine(&self, id: Uuid) -> Result<()> {
@@ -7280,6 +7410,41 @@ impl Repository {
         .execute(&self.pg_pool)
         .await?;
         Ok(res.rows_affected() > 0)
+    }
+
+    // --- Сцена байки ---
+
+    /// Сцена байки и день, когда она появилась. `None` — сцены нет.
+    pub async fn get_tale_scene(&self, tale_id: Uuid) -> Result<Option<TaleScene>> {
+        let row: Option<(sqlx::types::Json<TaleScene>,)> =
+            sqlx::query_as("SELECT data FROM tale_scenes WHERE tale_id = $1")
+                .bind(tale_id)
+                .fetch_optional(&self.pg_pool)
+                .await?;
+        Ok(row.map(|(d,)| d.0))
+    }
+
+    /// Записать сцену. Байка обязана существовать и быть байкой: сцена листа
+    /// другого рода ничего не показала бы, потому что страницы у него нет.
+    pub async fn put_tale_scene(&self, tale_id: Uuid, scene: &TaleScene) -> Result<bool> {
+        let res = sqlx::query(
+            "INSERT INTO tale_scenes (tale_id, data)
+             SELECT id, $2 FROM gazette_leaves WHERE id = $1 AND kind = 'tale'
+             ON CONFLICT (tale_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+        )
+        .bind(tale_id)
+        .bind(sqlx::types::Json(scene))
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn delete_tale_scene(&self, tale_id: Uuid) -> Result<()> {
+        sqlx::query("DELETE FROM tale_scenes WHERE tale_id = $1")
+            .bind(tale_id)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
     }
 
     // --- Голосование «о ком записать следующую» ---

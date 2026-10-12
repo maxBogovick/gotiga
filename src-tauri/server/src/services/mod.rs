@@ -16,6 +16,9 @@ use tokio::sync::Mutex;
 use base64::Engine as _;
 use uuid::Uuid;
 
+mod insights;
+pub use insights::{BattleReport, BehaviourReport, HealthReport, PipelineHealth};
+
 type RateLimiter = Arc<Mutex<HashMap<String, Vec<Instant>>>>;
 
 #[derive(Clone)]
@@ -619,6 +622,27 @@ impl AppService {
         })
     }
 
+    /// Tale pages with and without their scene: counts per tale and arm.
+    /// Clamped to the raw-event floor like the commission funnel, and for the
+    /// same reason — the variant lives only on raw events.
+    pub async fn admin_get_scene_experiment(
+        &self,
+        query: AdminAnalyticsQuery,
+    ) -> Result<SceneExperimentResponse> {
+        let (from, to) = Self::analytics_range(query.from, query.to)?;
+        let raw_data_from = Self::raw_data_floor().max(from);
+        let arms = self
+            .repo
+            .get_admin_scene_experiment(raw_data_from, to)
+            .await?;
+        Ok(SceneExperimentResponse {
+            from,
+            to,
+            raw_data_from,
+            arms,
+        })
+    }
+
     /// Per-page engagement for the generic pages: visits, quick-exit and
     /// reached-works rates, and time/scroll/works medians — plus the same for
     /// the previous period so the panel can show deltas. Visits come from the
@@ -1030,6 +1054,7 @@ impl AppService {
             material: f.material,
             dimensions: f.dimensions,
             is_featured: f.is_featured,
+            is_visible: f.is_visible,
             created_at: f.created_at,
             updated_at: f.updated_at,
             focal_x: face.and_then(|i| i.focal_x),
@@ -1724,6 +1749,27 @@ impl AppService {
             .await?
             .rows_affected();
         Self::log_domain_event("bulk_parallax_set", "image", affected, "ok");
+        Ok(crate::models::BulkOpSummary { affected })
+    }
+
+    /// Set the registry order from a full list of ids: 1, 2, 3, … in the order given.
+    /// Renumbering the whole list (rather than nudging one value by ±1) is what makes the
+    /// order total — the old scheme left ties, and a tie is resolved by creation date.
+    pub async fn reorder_figurines(&self, ids: Vec<String>) -> Result<crate::models::BulkOpSummary> {
+        if ids.is_empty() || ids.len() > 5000 {
+            return Err(AppError::BadRequest("Order must list 1..5000 works".into()));
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut parsed = Vec::with_capacity(ids.len());
+        for raw in &ids {
+            let id = Self::parse_uuid(raw)?;
+            if !seen.insert(id) {
+                return Err(AppError::BadRequest("Duplicate work in order".into()));
+            }
+            parsed.push(id);
+        }
+        let affected = self.repo.reorder_figurines(&parsed).await?;
+        Self::log_domain_event("figurines_reordered", "figurine", affected, "ok");
         Ok(crate::models::BulkOpSummary { affected })
     }
 
@@ -5121,6 +5167,7 @@ impl AppService {
             match result {
                 Ok(message_id) => {
                     self.repo.channel_mark_posted(&kind, id, Some(message_id)).await?;
+                    self.note_on_chart(&format!("Channel post: {}", post.title)).await;
                     sent += 1;
                 }
                 Err(why) => {
@@ -8184,6 +8231,29 @@ impl AppService {
         Ok(())
     }
 
+    /// Сцена байки для читателя: выключенная не отдаётся вовсе, как будто её
+    /// нет, — хозяин снял её, чтобы не показывать, а не чтобы страница знала.
+    pub async fn get_tale_scene(&self, tale_id: Uuid) -> Result<Option<TaleScene>> {
+        Ok(self.repo.get_tale_scene(tale_id).await?.filter(|s| s.enabled))
+    }
+
+    /// Сцена байки для стола: и выключенная тоже.
+    pub async fn admin_get_tale_scene(&self, tale_id: Uuid) -> Result<Option<TaleScene>> {
+        self.repo.get_tale_scene(tale_id).await
+    }
+
+    pub async fn admin_put_tale_scene(&self, tale_id: Uuid, scene: TaleScene) -> Result<TaleScene> {
+        let scene = normalize_tale_scene(scene)?;
+        if !self.repo.put_tale_scene(tale_id, &scene).await? {
+            return Err(AppError::BadRequest("Only a tale can carry a scene".into()));
+        }
+        Ok(scene)
+    }
+
+    pub async fn admin_delete_tale_scene(&self, tale_id: Uuid) -> Result<()> {
+        self.repo.delete_tale_scene(tale_id).await
+    }
+
     /// Назначить, какую байку продолжает эта. Если продолжение уже вышло и
     /// письма по нему разложены, просившие получают своё сейчас: порядок, в
     /// котором хозяин выложил байку и назвал её продолжением, не должен
@@ -8216,6 +8286,14 @@ impl AppService {
             let laid = self.repo.lay_out_tale_letters(tale).await?;
             if laid > 0 {
                 tracing::info!("Tale {tale}: {laid} letters laid out");
+                let title = self
+                    .repo
+                    .leaf_title(tale)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "a new tale".into());
+                self.note_on_chart(&format!("Tale letters: {title}")).await;
             }
         }
 
@@ -15637,3 +15715,140 @@ struct PreparedGazetteLeaf {
 
 #[cfg(test)]
 mod tests;
+
+
+/// Типы переходов, которые знает отрисовщик плиты (`TaleScenePlate.svelte`).
+/// Список закрыт по той же причине, по которой закрыт `ABILITY_VERBS`: новый
+/// переход — это новый кусок CSS, а не строка из браузера.
+const SCENE_TRANSITIONS: &[&str] = &["fade", "push", "bloom", "wipe", "rise", "flush", "surge"];
+const SCENE_RATIOS: &[&str] = &["3 / 4", "4 / 5", "1 / 1", "1 / 2"];
+const SCENE_FRAMES_MAX: usize = 8;
+
+/// `object-position` из двух процентов: `22% 50%`. Страница ставит эту строку
+/// в стиль как есть, поэтому ничего, кроме двух чисел со знаком процента.
+fn scene_position_ok(p: &str) -> bool {
+    let mut it = p.split(' ');
+    let part = |p: Option<&str>| {
+        p.and_then(|p| p.strip_suffix('%'))
+            .and_then(|n| n.parse::<u8>().ok())
+            .is_some_and(|n| n <= 100)
+    };
+    part(it.next()) && part(it.next()) && it.next().is_none()
+}
+
+/// Привести сцену в порядок. Браузер пишет что угодно, а страница читателя
+/// потом ставит адреса в `src` и числа в стиль, поэтому здесь каждое поле
+/// доводится до допустимого, а недопустимое заменяется значением по умолчанию:
+/// сцена, которую можно сохранить только безупречной, терялась бы вместе с
+/// вечером работы.
+fn normalize_tale_scene(mut scene: TaleScene) -> Result<TaleScene> {
+    scene.frames.retain(|f| {
+        let u = f.url.trim();
+        !u.is_empty()
+            && u.len() <= 512
+            && (u.starts_with('/') || u.starts_with("https://") || u.starts_with("http://localhost"))
+            && !u.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'' || c == '<' || c == '>')
+    });
+    scene.frames.truncate(SCENE_FRAMES_MAX);
+    for f in &mut scene.frames {
+        f.url = f.url.trim().to_string();
+        f.caption = f.caption.trim().chars().take(200).collect();
+    }
+    if scene.frames.len() < 2 {
+        return Err(AppError::BadRequest("A scene needs at least two frames".into()));
+    }
+
+    if !SCENE_RATIOS.contains(&scene.ratio.as_str()) {
+        scene.ratio = "3 / 4".into();
+    }
+    if !scene_position_ok(&scene.position) {
+        scene.position = "50% 50%".into();
+    }
+    // Своё положение кадра — либо верное, либо пустое («как у сцены»).
+    for f in &mut scene.frames {
+        if !scene_position_ok(&f.position) {
+            f.position.clear();
+        }
+    }
+
+    // Переходов на один меньше, чем кадров: лишние отбрасываются, недостающие
+    // дописываются спокойным наплывом, а моменты идут по возрастанию — переход
+    // не может случиться раньше предыдущего.
+    let n = scene.frames.len() - 1;
+    scene.transitions.truncate(n);
+    while scene.transitions.len() < n {
+        scene.transitions.push(TaleSceneTransition {
+            kind: "fade".into(),
+            at: 0.0,
+            span: 0.0,
+            manual: false,
+        });
+    }
+    let mut floor = 0.0_f64;
+    for (i, t) in scene.transitions.iter_mut().enumerate() {
+        if !SCENE_TRANSITIONS.contains(&t.kind.as_str()) {
+            t.kind = "fade".into();
+        }
+        let even = (i as f64 + 1.0) / (n as f64 + 1.0);
+        let at = if t.at.is_finite() && t.at > 0.0 { t.at } else { even };
+        t.at = at.clamp(floor, 1.0);
+        floor = t.at;
+        t.span = if t.span.is_finite() && t.span > 0.0 { t.span.clamp(0.04, 0.6) } else { 0.14 };
+    }
+    Ok(scene)
+}
+
+#[cfg(test)]
+mod tale_scene_tests {
+    use super::*;
+
+    fn frame(url: &str) -> TaleSceneFrame {
+        TaleSceneFrame { url: url.into(), caption: String::new(), position: String::new() }
+    }
+
+    fn scene(frames: Vec<TaleSceneFrame>, transitions: Vec<TaleSceneTransition>) -> TaleScene {
+        TaleScene {
+            enabled: true,
+            ratio: "weird".into(),
+            position: "50% 50%".into(),
+            frames,
+            transitions,
+        }
+    }
+
+    #[test]
+    fn needs_two_frames_and_drops_bad_urls() {
+        assert!(normalize_tale_scene(scene(vec![frame("/static/a.jpg")], vec![])).is_err());
+        let s = normalize_tale_scene(scene(
+            vec![frame("/static/a.jpg"), frame("javascript:alert(1)"), frame("/static/b.jpg"), frame("/x y.jpg")],
+            vec![],
+        ))
+        .unwrap();
+        assert_eq!(s.frames.len(), 2);
+        assert_eq!(s.ratio, "3 / 4");
+    }
+
+    #[test]
+    fn transitions_match_frames_are_sorted_and_whitelisted() {
+        let t = |kind: &str, at: f64| TaleSceneTransition { kind: kind.into(), at, span: 0.0, manual: false };
+        let s = normalize_tale_scene(scene(
+            vec![frame("/a"), frame("/b"), frame("/c"), frame("/d")],
+            vec![t("bloom", 0.7), t("<script>", 0.2), t("push", 0.9), t("fade", 0.1)],
+        ))
+        .unwrap();
+        assert_eq!(s.transitions.len(), 3);
+        assert_eq!(s.transitions[1].kind, "fade");
+        assert!(s.transitions.windows(2).all(|w| w[0].at <= w[1].at));
+        assert!(s.transitions.iter().all(|t| t.span > 0.0));
+    }
+
+    #[test]
+    fn position_must_be_two_percentages() {
+        let mut sc = scene(vec![frame("/a"), frame("/b")], vec![]);
+        sc.position = "left top".into();
+        assert_eq!(normalize_tale_scene(sc).unwrap().position, "50% 50%");
+        let mut sc = scene(vec![frame("/a"), frame("/b")], vec![]);
+        sc.position = "22% 40%".into();
+        assert_eq!(normalize_tale_scene(sc).unwrap().position, "22% 40%");
+    }
+}

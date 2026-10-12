@@ -991,6 +991,9 @@
   .catalog-prose { order: 4; }
   .catalog-history,
   .catalog-history.dc-block--description { order: 5; }
+  /* Колонка на телефоне — display: contents, и без места блок встал бы первым.
+     Тот же order, что у истории: при равенстве порядок разметки ставит байку следом. */
+  .catalog-tale { order: 5; }
   .catalog-features { order: 6; }
   .catalog-request { order: 7; }
   .catalog-perfect { order: 8; }

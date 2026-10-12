@@ -19,6 +19,9 @@ import type { FigurineListItem, HomeContent } from '$lib/types/api';
  * returns only the reel — not a cap that makes the page quietly wrong.
  */
 
+/** How many works the home reel shows before the archive takes over. */
+export const GALLERY_LIMIT = 16;
+
 /** Works the home page shows at all: the in-progress ones live on /upcoming. */
 export function visibleWorks(items: FigurineListItem[]): FigurineListItem[] {
     return items.filter((f) => f.status !== 'in_progress');
@@ -95,4 +98,64 @@ export function heroImageUrl(
 ): string {
     if (background) return background;
     return hero?.faceImageLargeUrl?.trim() || hero?.faceImageUrl?.trim() || fallback;
+}
+
+export type HomePlacementState = 'shown' | 'beyond' | 'hidden' | 'inProgress' | 'firstLook';
+
+export interface HomePlacement {
+    state: HomePlacementState;
+    /** 1-based place among the works the home page lists; null when it is not listed. */
+    position: number | null;
+    /** How many works the home page lists (with this one, when it is listed). */
+    total: number;
+    /** `firstLookUntil` of the work, for the "opens on …" line. */
+    until: string | null;
+}
+
+/** What the admin form edits — the fields that decide whether and where the home lists a work. */
+export type PlacementDraft = Pick<FigurineListItem, 'id' | 'name' | 'status' | 'sortOrder'> & {
+    isVisible?: boolean;
+    firstLookUntil?: string | null;
+    createdAt?: string | null;
+};
+
+/**
+ * Where the home page would put a work, using the same rules as the page itself:
+ * the server hides unseen works (hidden, or still inside their first-look window),
+ * `visibleWorks` drops in-progress ones, `sortWorks` orders the rest, and the reel
+ * shows the first GALLERY_LIMIT. `draft` replaces the saved copy of itself in
+ * `items`, so the answer follows the form while it is being edited.
+ */
+export function homePlacement(
+    items: FigurineListItem[],
+    draft: PlacementDraft,
+    now: number = Date.now(),
+): HomePlacement {
+    const unseenUntil = (f: { firstLookUntil?: string | null }) => {
+        const ms = f.firstLookUntil ? new Date(f.firstLookUntil).getTime() : NaN;
+        return Number.isFinite(ms) && ms > now ? ms : null;
+    };
+    const isPublic = (f: { isVisible?: boolean; firstLookUntil?: string | null }) =>
+        f.isVisible !== false && unseenUntil(f) === null;
+
+    const until = draft.firstLookUntil ?? null;
+    if (draft.isVisible === false) return { state: 'hidden', position: null, total: 0, until };
+    if (unseenUntil(draft) !== null) return { state: 'firstLook', position: null, total: 0, until };
+
+    const others = visibleWorks(items.filter((f) => f.id !== draft.id && isPublic(f)));
+    if (draft.status === 'in_progress') {
+        return { state: 'inProgress', position: null, total: others.length, until };
+    }
+    const me = {
+        ...draft,
+        createdAt: draft.createdAt ?? new Date(now).toISOString(),
+    } as FigurineListItem;
+    const ordered = sortWorks([...others, me]);
+    const position = ordered.findIndex((f) => f.id === draft.id) + 1;
+    return {
+        state: position <= GALLERY_LIMIT ? 'shown' : 'beyond',
+        position,
+        total: ordered.length,
+        until,
+    };
 }

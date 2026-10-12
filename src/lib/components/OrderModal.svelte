@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trackForm } from '$lib/analytics';
   import { fade, scale, fly } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { api, resolveMediaUrl } from '$lib/api';
@@ -179,7 +180,7 @@
                     </div>
                   </div>
 
-                  <form class="space-y-8" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+                  <form class="space-y-8" use:trackForm={'order'} onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
 
                     {#if upcomingShowings.length > 0}
                       <div class="showing-notice">

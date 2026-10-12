@@ -1,10 +1,11 @@
-import { building } from '$app/environment';
+import { browser, building } from '$app/environment';
 import { redirect } from '@sveltejs/kit';
 import { api } from '$lib/api';
 import { isGazetteReservedSlug } from '$lib/gazette';
 import { isTale } from '$lib/tales';
 import { resolveSiteRefs, siteRefsIn, type SiteRefInfo } from '$lib/siteLinks';
-import type { GazetteLeaf } from '$lib/types/api';
+import { registerRemoteScene } from '$lib/sceneAb';
+import type { GazetteLeaf, TaleSceneData } from '$lib/types/api';
 
 export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 
@@ -25,7 +26,7 @@ export const load = async ({
   fetch: typeof globalThis.fetch;
 }) => {
   if (isGazetteReservedSlug(params.slug)) {
-    return { leaf: null, loadError: false, links: {} };
+    return { leaf: null, loadError: false, links: {}, scene: null as TaleSceneData | null };
   }
 
   let leaf: GazetteLeaf | null = null;
@@ -60,5 +61,20 @@ export const load = async ({
     }
   }
 
-  return { leaf, loadError, links };
+  // Сцена на полях. Её правят на столе рассказов, поэтому в пререндер она не
+  // запекается: страница собрана неделю назад, а сцену хозяин правил вчера.
+  // Спрашивается живой, и только в браузере. Тут же о ней узнаёт замер опыта
+  // «со сценой / без» — раньше, чем эффект раскладки откроет комнату, иначе
+  // первое посещение записалось бы без варианта.
+  let scene: TaleSceneData | null = null;
+  if (leaf && browser) {
+    try {
+      scene = await api.getTaleScene(leaf.id);
+    } catch {
+      scene = null;
+    }
+    registerRemoteScene(leaf.slug, scene !== null);
+  }
+
+  return { leaf, loadError, links, scene };
 };

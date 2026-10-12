@@ -735,11 +735,41 @@ pub async fn admin_get_commission_funnel(
     Ok(Json(service.admin_get_commission_funnel(query).await?))
 }
 
+pub async fn admin_get_behaviour(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<crate::services::BehaviourReport>> {
+    service.refresh_analytics_hot_window_if_due().await?;
+    Ok(Json(service.admin_behaviour(query).await?))
+}
+
+pub async fn admin_get_health(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<crate::services::HealthReport>> {
+    service.refresh_analytics_hot_window_if_due().await?;
+    Ok(Json(service.admin_health(query).await?))
+}
+
+pub async fn admin_get_battle_report(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<crate::services::BattleReport>> {
+    Ok(Json(service.admin_battle_report(query).await?))
+}
+
 pub async fn admin_get_site_page_engagement(
     State(service): State<AppService>,
     Query(query): Query<AdminAnalyticsQuery>,
 ) -> Result<Json<SitePageEngagementResponse>> {
     Ok(Json(service.admin_get_site_page_engagement(query).await?))
+}
+
+pub async fn admin_get_scene_experiment(
+    State(service): State<AppService>,
+    Query(query): Query<AdminAnalyticsQuery>,
+) -> Result<Json<SceneExperimentResponse>> {
+    Ok(Json(service.admin_get_scene_experiment(query).await?))
 }
 
 pub async fn admin_get_visitor_sessions(
@@ -2803,6 +2833,13 @@ pub async fn bulk_set_second_angle(State(service): State<AppService>) -> Result<
     Ok(Json(service.bulk_set_second_angle().await?))
 }
 
+pub async fn reorder_figurines(
+    State(service): State<AppService>,
+    Json(req): Json<ReorderFigurinesRequest>,
+) -> Result<impl IntoResponse> {
+    Ok(Json(service.reorder_figurines(req.ids).await?))
+}
+
 // === SLUGS (ADMIN) ===
 
 /// Backfill: generate a transliterated URL slug for every work still missing one.
@@ -3683,6 +3720,36 @@ pub async fn admin_tale_letters_forecast(
     Path(id): Path<Uuid>,
 ) -> Result<Json<crate::models::TaleLettersForecast>> {
     Ok(Json(service.admin_tale_letters_forecast(id).await?))
+}
+
+pub async fn get_tale_scene(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Option<crate::models::TaleScene>>> {
+    Ok(Json(service.get_tale_scene(id).await?))
+}
+
+pub async fn admin_get_tale_scene(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Option<crate::models::TaleScene>>> {
+    Ok(Json(service.admin_get_tale_scene(id).await?))
+}
+
+pub async fn admin_put_tale_scene(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(scene): Json<crate::models::TaleScene>,
+) -> Result<Json<crate::models::TaleScene>> {
+    Ok(Json(service.admin_put_tale_scene(id, scene).await?))
+}
+
+pub async fn admin_delete_tale_scene(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_tale_scene(id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn admin_set_tale_sequel(

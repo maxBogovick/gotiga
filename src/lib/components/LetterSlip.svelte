@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trackForm } from '$lib/analytics';
   import { t } from '$lib/i18n';
 
   /**
@@ -29,6 +30,7 @@
 
 <form
   class="slip"
+  use:trackForm={{ name: 'letter_slip', accepts: ['subscribe', 'tale_wish', 'tale_poll'] }}
   onsubmit={(e) => {
     e.preventDefault();
     onsubmit(email.trim(), age);

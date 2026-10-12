@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { resolveWebpUrl, resolveSrcset } from '$lib/api';
+  import { repairPicture, repairSrc } from '$lib/hydrate-image';
 
   let {
     src,
@@ -178,6 +179,7 @@
       src={thumbSrc}
       alt=""
       aria-hidden="true"
+      use:repairSrc={thumbSrc}
       class="absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
       style="
         object-position: {objectPosition};
@@ -196,7 +198,14 @@
        Falls back to the plain `src` for non-figurine images that have no siblings. -->
   {#if src && !imageFailed}
     {@const responsive = resolveSrcset(src)}
-    <picture style="display: contents;">
+    <picture
+      style="display: contents;"
+      use:repairPicture={{
+        webp: responsive?.webp || resolveWebpUrl(src),
+        srcset: responsive?.jpeg ?? null,
+        src,
+      }}
+    >
       {#if responsive?.webp}
         <source type="image/webp" srcset={responsive.webp} {sizes} />
       {:else if resolveWebpUrl(src)}

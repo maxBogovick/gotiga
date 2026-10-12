@@ -50,7 +50,10 @@
 
   // Tales are pulled out of the leaf list: they open the shelf, everything
   // else opens the gazette, and the two deserve different names on the page.
-  let workTales = $derived(gazetteLeaves.filter(isTale));
+  // Порядок полки, как у читателя на /tales: первая и раскрывается отрывком.
+  let workTales = $derived(
+    gazetteLeaves.filter(isTale).sort((a, b) => (a.shelfOrder ?? 1e9) - (b.shelfOrder ?? 1e9)),
+  );
   let workLeaves = $derived(gazetteLeaves.filter((leaf) => !isTale(leaf)));
 
   let win = $derived(resolveWindow(figurine, showingRooms.list));
@@ -118,9 +121,6 @@
   let lightboxStartIndex = $state(0);
   let audioRef = $state<HTMLAudioElement | null>(null);
   let analyticsClient: ReturnType<typeof createFigurineAnalytics> | null = null;
-  let analyticsMountedAt = 0;
-  let analyticsEngagedTimer: ReturnType<typeof setTimeout> | null = null;
-  let analyticsScrollSent = false;
 
   let queueJoin = $state<{ token: string; position: number } | null>(null);
   let notifyJoin = $state<string | null>(null);
@@ -462,6 +462,7 @@
 
   async function openStoryModal() {
     if (storySaving) return;
+    analyticsClient?.interact('story_open');
     storySaving = true;
     storyError = '';
     storyPanX = 0;
@@ -921,6 +922,8 @@
     }
     const nextIndex = clampImageIndex(index, sortedImages.length);
     if (nextIndex !== selectedImageIndex) {
+      // Which frames people actually look at: one row per frame number, once.
+      analyticsClient?.interact('gallery_frame', String(nextIndex + 1), nextIndex + 1);
       selectedImageIndex = nextIndex;
       imageViewMode = 'fit';
       isLensEnabled = false;
@@ -930,6 +933,7 @@
   }
   function openLightbox(index: number) {
     if (!canOpenLightbox) return;
+    analyticsClient?.interact('gallery_open', String(index + 1));
     lightboxStartIndex = Math.max(0, Math.min(lightboxImages.length - 1, index));
     showLightbox = true;
   }
@@ -939,11 +943,13 @@
   }
   function toggleLens() {
     isLensEnabled = !isLensEnabled;
+    if (isLensEnabled) analyticsClient?.interact('lens');
     if (isLensEnabled) isRakingEnabled = false; // one examination tool at a time
   }
   function toggleRaking() {
     isRakingEnabled = !isRakingEnabled;
     if (isRakingEnabled) {
+      analyticsClient?.interact('raking_light');
       isLensEnabled = false;     // mutually exclusive with the magnifier
       imageViewMode = 'fit';     // raking light reads the whole plate, not a crop
     }
@@ -1109,6 +1115,7 @@
   }
 
   async function share() {
+    analyticsClient?.interact('share', typeof navigator.share === 'function' ? 'native' : 'copy');
     const url = window.location.href;
     if (navigator.share) {
       try {
@@ -1269,22 +1276,10 @@
     }
   }
 
-  // Scroll path stays cheap: only read window.scrollY (drives the
-  // mobile CTA reveal and the engaged-depth analytics ping).
+  // Scroll path stays cheap: only read window.scrollY (drives the mobile CTA
+  // reveal). Time and depth for analytics are measured by the tracker itself.
   function onScroll() {
     scrollY = window.scrollY;
-    if (!analyticsClient || analyticsScrollSent) return;
-    const doc = document.documentElement;
-    const maxScroll = Math.max(1, doc.scrollHeight - window.innerHeight);
-    const depth = Math.round((window.scrollY / maxScroll) * 100);
-    if (depth >= 50) {
-      analyticsScrollSent = true;
-      if (analyticsEngagedTimer) { clearTimeout(analyticsEngagedTimer); analyticsEngagedTimer = null; }
-      analyticsClient.engaged({
-        durationMs: Math.max(0, Date.now() - analyticsMountedAt),
-        scrollDepth: Math.min(100, depth),
-      });
-    }
   }
 
   function handleVisibility() {
@@ -1307,20 +1302,10 @@
   onMount(() => {
     houseClock.start();
     showingRooms.load();
+    // The tracker owns the clock: foreground time, deepest scroll, the row that
+    // keeps growing while the visit does, and where the visitor goes next.
     analyticsClient = createFigurineAnalytics(id);
-    analyticsMountedAt = Date.now();
     analyticsClient.view();
-    analyticsEngagedTimer = setTimeout(() => {
-      if (analyticsScrollSent) return;
-      analyticsScrollSent = true;
-      analyticsClient?.engaged({
-        durationMs: Math.max(0, Date.now() - analyticsMountedAt),
-        scrollDepth: Math.min(
-          100,
-          Math.round((window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight)) * 100)
-        ),
-      });
-    }, 8000);
     const pointerMq = window.matchMedia('(pointer: fine)');
     const hoverMq = window.matchMedia('(hover: hover)');
     const wideMq = window.matchMedia('(min-width: 860px)');
@@ -1372,7 +1357,7 @@
       document.removeEventListener('visibilitychange', handleVisibility);
     }
     if (copiedTimer) clearTimeout(copiedTimer);
-    if (analyticsEngagedTimer) clearTimeout(analyticsEngagedTimer);
+    analyticsClient?.end();
     if (markPressTimer) clearTimeout(markPressTimer);
     if (markThanksTimer) clearTimeout(markThanksTimer);
     detailHeader.clear();
@@ -1420,6 +1405,7 @@
     get isPageTurning() { return Boolean(pageTurn.direction); },
     get isCandleLit() { return isCandleLit; },
     get hasHistorySection() { return hasHistorySection; },
+    get workTales() { return workTales; },
     get hasMakingSection() { return hasMakingSection; },
     get hasVideoSection() { return hasVideoSection; },
     get hasWorkStorySection() { return hasWorkStorySection; },
@@ -1636,30 +1622,16 @@
       {/await}
     {/if}
 
-    {#if workTales.length > 0 || workLeaves.length > 0}
+    {#if workLeaves.length > 0}
       <aside class="work-gazette">
-        <!-- A tale about this thing is the strongest door into the shelf, so it
-             is named for what it is and stands above the gazette's notices. -->
-        {#if workTales.length > 0}
-          <p class="work-gazette-label">{$t('talesAboutThisThing')}</p>
-          <ul class="work-gazette-list work-tales">
-            {#each workTales as tale (tale.id)}
-              <li>
-                <a href={leafHref(tale, 'work')}>{leafCopy(tale, $lang).title}</a>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-        {#if workLeaves.length > 0}
-          <p class="work-gazette-label" class:second={workTales.length > 0}>{$t('gazetteHouseWrote')}</p>
-          <ul class="work-gazette-list">
-            {#each workLeaves as leaf (leaf.id)}
-              <li>
-                <a href={leafHref(leaf, 'work')}>{leafCopy(leaf, $lang).title}</a>
-              </li>
-            {/each}
-          </ul>
-        {/if}
+        <p class="work-gazette-label">{$t('gazetteHouseWrote')}</p>
+        <ul class="work-gazette-list">
+          {#each workLeaves as leaf (leaf.id)}
+            <li>
+              <a href={leafHref(leaf, 'work')}>{leafCopy(leaf, $lang).title}</a>
+            </li>
+          {/each}
+        </ul>
       </aside>
     {/if}
 
@@ -1737,10 +1709,6 @@
     border-top: 1px solid rgba(216, 198, 177, 0.7);
     max-width: 36em;
   }
-  .work-gazette-label.second {
-    margin-top: 18px;
-  }
-
   .work-gazette-label {
     font-size: 9px;
     font-weight: 600;

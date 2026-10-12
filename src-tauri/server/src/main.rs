@@ -177,6 +177,16 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // A new binary is a release: say so on the analytics trend. Fire and
+    // forget, a little after startup, so it never delays opening the site.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            svc.note_release_if_new().await;
+        });
+    }
+
     // Background: объявления в Telegram-канале. Тик — пять минут: вместе с
     // выдержкой в десять минут работа выходит в канал через десять–пятнадцать
     // минут после того, как появилась на сайте. Первый тик — через минуту

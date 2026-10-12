@@ -5,6 +5,8 @@
   import { api } from '$lib/api';
   import iso from 'iso-3166-1';
   import WorldMap from '$lib/components/admin/WorldMap.svelte';
+  import SceneExperimentBlock from '$lib/components/admin/SceneExperimentBlock.svelte';
+  import AnalyticsInsights from '$lib/components/admin/AnalyticsInsights.svelte';
   import { focusTrap } from '$lib/actions/focusTrap';
   import type {
     AdminAnalyticsOverview,
@@ -72,7 +74,7 @@
 
   type SortKey = 'name' | 'status' | 'views' | 'uniqueVisitors' | 'engagedViews' | 'submissions' | 'conversionRate';
   type PerformanceFilter = 'all' | 'has_views' | 'has_submissions';
-  type Tab = 'pulse' | 'traffic' | 'works' | 'visitors' | 'community';
+  type Tab = 'pulse' | 'traffic' | 'works' | 'behaviour' | 'visitors' | 'community';
 
   const CTA_LABELS: Record<string, string> = {
     request: 'Order request',
@@ -86,6 +88,7 @@
     pulse: 'Pulse',
     traffic: 'Traffic',
     works: 'Works',
+    behaviour: 'Behaviour',
     visitors: 'Visitors',
     community: 'Community',
   };
@@ -1037,7 +1040,7 @@
     <div class="state state--error">{error}</div>
   {:else if overview && page}
     <nav class="tab-bar">
-      {#each (['pulse', 'traffic', 'works', 'visitors', 'community'] as Tab[]) as t}
+      {#each (['pulse', 'traffic', 'works', 'behaviour', 'visitors', 'community'] as Tab[]) as t}
         <button type="button" class:active={activeTab === t} onclick={() => { activeTab = t; }}>
           {TAB_LABELS[t]}
           {#if t === 'works' && signalCounts.attention > 0}<span class="tab-badge">{signalCounts.attention}</span>{/if}
@@ -1229,7 +1232,7 @@
                 <th class="right" title="Visits to this page in range, from the permanent page-view rollup.">Visits</th>
                 <th class="right" title="Share of engaged visits that left in under {QUICK_EXIT_SECONDS}s — a near-instant bounce. Lower is better.">Quick exit</th>
                 <th class="right" title="Share of engaged visits that saw at least one work — did they reach the collection at all? Home & archive only. Higher is better.">Reached works</th>
-                <th class="right" title="Median time on the page before leaving or switching away.">Median time</th>
+                <th class="right" title="Median foreground time: the tab visible and the visitor not idle for two minutes. Counted since the tracker was corrected; older days used wall-clock time.">Median time</th>
                 <th class="right" title="Median deepest scroll position, as a share of page height.">Median scroll</th>
                 <th class="right" title="Median number of distinct works seen before leaving. Home & archive only.">Works seen</th>
               </tr>
@@ -1278,6 +1281,8 @@
         <p class="muted">Loading…</p>
       {/if}
     </section>
+
+    <SceneExperimentBlock from={range.from} to={range.to} />
     {/if}
 
     {#if activeTab === 'traffic'}
@@ -1636,6 +1641,10 @@
         </table>
       </div>
     </section>
+    {/if}
+
+    {#if activeTab === 'behaviour'}
+      <AnalyticsInsights {range} />
     {/if}
 
     {#if activeTab === 'visitors'}

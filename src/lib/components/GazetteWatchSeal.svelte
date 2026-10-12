@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trackForm } from '$lib/analytics';
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { t, lang } from '$lib/i18n';
@@ -173,6 +174,7 @@
     {#if open && !watching}
       <form
         class="slip"
+        use:trackForm={'gazette_watch'}
         onsubmit={(e) => {
           e.preventDefault();
           void leaveName();

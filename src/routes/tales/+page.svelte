@@ -9,6 +9,7 @@
   import { leafCopy, leafCoverUrl, leafHref } from '$lib/gazette';
   import { leadTale, minutesKey, readingMinutes, taleMorphNames } from '$lib/tales';
   import { readTales } from '$lib/talesRead';
+  import { interact } from '$lib/analytics';
   import { api } from '$lib/api';
   import AppImage from '$lib/components/AppImage.svelte';
   import ArchClip from '$lib/components/ArchClip.svelte';
@@ -184,13 +185,13 @@
            morph is moving. -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <ul class="arcade" onkeydown={walkArcade}>
-        {#each arcade as tale (tale.id)}
+        {#each arcade as tale, i (tale.id)}
           {@const copy = leafCopy(tale, $lang)}
           {@const cover = leafCoverUrl(tale)}
           {@const mins = readingMinutes(copy.body)}
           {@const morph = morphs.get(tale.id)}
           <li>
-            <a class="arch" href={leafHref(tale, 'tales_arcade')}>
+            <a class="arch" href={leafHref(tale, 'tales_arcade')} onclick={() => interact('tale_click', `shelf:${i + 1}`, i + 1, false)}>
               <span
                 class="arch-frame"
                 style={morph ? `view-transition-name: ${morph}` : undefined}

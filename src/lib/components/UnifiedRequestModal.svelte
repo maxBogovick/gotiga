@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trackForm } from '$lib/analytics';
   import { onMount } from 'svelte';
   import { fade, fly, scale } from 'svelte/transition';
   import { cubicOut, elasticOut } from 'svelte/easing';
@@ -323,7 +324,7 @@
       </button>
 
       {#if !done}
-        <form class="unified-form" onsubmit={handleSubmit}>
+        <form class="unified-form" use:trackForm={{ name: 'request', accepts: ['order', 'booking', 'waitlist', 'commission'] }} onsubmit={handleSubmit}>
           <div class="unified-head">
             <span class="unified-kicker">{modalKicker}</span>
             <h3 id="unified-request-title">{modalTitle}</h3>

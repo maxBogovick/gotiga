@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { trackForm } from '$lib/analytics';
   /**
    * VisitorBook — the house guest book at the museum's exit.
    *
@@ -178,7 +179,7 @@
       </div>
 
       <div class="page page-sign">
-        <form class="sign-form" onsubmit={sign} novalidate>
+        <form class="sign-form" use:trackForm={'subscribe'} onsubmit={sign} novalidate>
           {#if sealing}
             <div class="seal-press" in:scale={{ start: 0.4, duration: 400 }} aria-hidden="true">
               <span class="wax wax-pressing"><span class="wax-mark">❧</span></span>

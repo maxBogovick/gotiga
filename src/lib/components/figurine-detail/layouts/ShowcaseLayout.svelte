@@ -13,6 +13,7 @@
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import CommentsThread from '$lib/components/CommentsThread.svelte';
   import '$lib/styles/figurine-detail/layout-showcase.css';
+  import WorkTaleExcerpt from '$lib/components/figurine-detail/WorkTaleExcerpt.svelte';
 
   import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
 
@@ -328,6 +329,9 @@
         </p>
       </section>
     {/if}
+    </div>
+    <div class="dc-block--tale">
+      <WorkTaleExcerpt tales={ctx.workTales} />
     </div>
     <div class="dc-block--making" class:dc-block--hidden={!isBlockVisible(ctx.displayConfig, 'making')} style={computeBlockStyle(ctx.displayConfig, 'making')}>
     <!-- Процесс -->

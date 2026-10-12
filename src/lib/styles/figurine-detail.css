@@ -57,6 +57,12 @@
   order: var(--order-description, 0);
 }
 
+.dc-sections .dc-block--tale {
+  /* Делит место с «Историей»; при равном `order` flex сохраняет порядок разметки,
+     значит байка всегда стоит сразу под ней, куда бы блок перенёс администратор. */
+  order: var(--order-description, 0);
+}
+
 .dc-sections .dc-block--making {
   order: var(--order-making, 1);
 }

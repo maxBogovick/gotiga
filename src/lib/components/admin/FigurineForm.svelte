@@ -26,6 +26,7 @@
   import FigurineShowingsEditor from '$lib/components/admin/FigurineShowingsEditor.svelte';
   import DisplayConfigEditor from '$lib/components/admin/DisplayConfigEditor.svelte';
   import CatalogListsEditor from '$lib/components/admin/CatalogListsEditor.svelte';
+  import HomePlacement from '$lib/components/admin/HomePlacement.svelte';
 
   let {
     figurine,
@@ -442,7 +443,7 @@
             const res = await api.generateFigurineDepth(figurine.id);
             // Pull fresh depthUrls (the API just wrote them) without clobbering
             // any in-form edits: merge by image id.
-            const fresh = await api.getFigurine(figurine.id);
+            const fresh = await api.getFigurineFresh(figurine.id);
             const byId = new Map((fresh?.images ?? []).map(i => [i.id, i.depthUrl ?? null]));
             figurine.images = figurine.images.map(img => ({
                 ...img,
@@ -697,6 +698,8 @@
         <input type="checkbox" bind:checked={figurine.isFeatured} class="accent-[#c65f3c] w-3.5 h-3.5" />
         <span class="text-[10px] uppercase tracking-wide text-[#5f4636]">{$t('adminFieldFeatured')}</span>
     </label>
+
+    <HomePlacement {figurine} {figurines} compact />
 
     <!-- Unsaved pulse dot -->
     {#if unsaved}
@@ -1125,6 +1128,8 @@
                 <input type="number" bind:value={figurine.sortOrder} class="input-gothic" />
             </label>
         </div>
+
+        <HomePlacement {figurine} {figurines} />
 
         <label class="block">
             <span class="label">{$t('adminFieldSlug')}</span>

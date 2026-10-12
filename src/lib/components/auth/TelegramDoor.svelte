@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { interact } from '$lib/analytics';
   import { onDestroy, onMount } from 'svelte';
   import { t } from '$lib/i18n';
   import { api } from '$lib/api';
@@ -35,6 +36,12 @@
   let stage = $state<'idle' | 'waiting' | 'asked' | 'done' | 'refused' | 'cold' | 'failed'>('idle');
   let word = $state('');
   let link = $state('');
+
+  // The ritual in numbers: how many get a word, open Telegram, answer, and how
+  // many let the word go cold. One row per stage reached.
+  $effect(() => {
+    if (enabled) interact('auth_tg', `${mode}:${stage}`);
+  });
   let busy = $state(false);
   let enteredAs = $state('');
   // Сколько слову осталось жить, в секундах. Считается из `expiresAt`, который

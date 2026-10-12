@@ -3,6 +3,7 @@
   import { figurineHref } from '$lib/figurineHref';
   import { t } from '$lib/i18n';
   import { resolveWebpUrl } from '$lib/api';
+  import { repairPicture } from '$lib/hydrate-image';
   import { authStore } from '$lib/stores/auth.svelte';
   import GalleryPlateActions from '$lib/components/figurine-detail/GalleryPlateActions.svelte';
   import PlateGestures from '$lib/components/figurine-detail/PlateGestures.svelte';
@@ -14,6 +15,7 @@
   import ShowingsTimeline from '$lib/components/ShowingsTimeline.svelte';
   import CommentsThread from '$lib/components/CommentsThread.svelte';
   import '$lib/styles/figurine-detail/layout-diptych.css';
+  import WorkTaleExcerpt from '$lib/components/figurine-detail/WorkTaleExcerpt.svelte';
 
   import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
 
@@ -181,7 +183,13 @@
             onclick={() => ctx.selectImage(i)}
             aria-label="{ctx.imageTypeLabel(img.imageType)}"
           >
-            <picture>
+            <picture
+              use:repairPicture={{
+                webp: resolveWebpUrl(img.thumbUrl ?? img.url),
+                srcset: null,
+                src: ctx.resolveUrl(img.thumbUrl ?? img.url),
+              }}
+            >
               <source type="image/webp" srcset={resolveWebpUrl(img.thumbUrl ?? img.url) ?? undefined} />
               <img
                 src={ctx.resolveUrl(img.thumbUrl ?? img.url)}
@@ -336,6 +344,9 @@
         </p>
       </div>
     {/if}
+    </div>
+    <div class="dc-block--tale">
+      <WorkTaleExcerpt tales={ctx.workTales} />
     </div>
     <div class="dc-block--making" class:dc-block--hidden={!isBlockVisible(ctx.displayConfig, 'making')} style={computeBlockStyle(ctx.displayConfig, 'making')}>
     {#if ctx.hasMakingSection}

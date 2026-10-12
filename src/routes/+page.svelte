@@ -4,7 +4,7 @@
     import { cubicOut } from 'svelte/easing';
     import { api, resolveSrcset, resolveBackgroundSrcset, resolveWebpUrl } from '$lib/api';
     import { figurineHref } from '$lib/figurineHref';
-    import { observeWork, roomCta } from '$lib/analytics';
+    import { observeWork, roomCta, trackWorkClicks } from '$lib/analytics';
     import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, GazetteHome, HomeContent } from '$lib/types/api';
     import { t, brandName } from '$lib/i18n';
@@ -16,7 +16,7 @@
     import CorrespondenceInvite from '$lib/components/CorrespondenceInvite.svelte';
     import HeroWorkshopTeaser from '$lib/components/HeroWorkshopTeaser.svelte';
     import { CHANNEL_URL } from '$lib/channel';
-    import { heroImageUrl, pickHeroFigurine, pickLatestAddedWork, sortWorks, visibleWorks } from '$lib/home-hero';
+    import { GALLERY_LIMIT, heroImageUrl, pickHeroFigurine, pickLatestAddedWork, sortWorks, visibleWorks } from '$lib/home-hero';
     import { syncAttr } from '$lib/hydrate-image';
     import { afterLoadIdle } from '$lib/after-load-idle';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
@@ -261,7 +261,6 @@
     // same wide cross-section (status reads as a quiet museum-label mark on
     // each card, not a filter axis). Order is the author's `sortOrder`, then
     // newest first — nothing else (no daily rotation, no vitrine carve-out).
-    const GALLERY_LIMIT = 16;
     let galleryFigurines = $derived(collectionFigurines);
     let visibleGalleryFigurines = $derived(galleryFigurines.slice(0, GALLERY_LIMIT));
     // Stable ids for the keeper — a `.map()` in the template would allocate a
@@ -843,7 +842,7 @@
                              never out to a detail page. -->
                         <WorkMarginIndex figurines={visibleGalleryFigurines} count={passedCount} />
 
-                        <div class="work-reel" bind:this={reelEl}>
+                        <div class="work-reel" bind:this={reelEl} use:trackWorkClicks={'home_reel'}>
                             {#each visibleGalleryFigurines as fig, i (fig.id)}
                                 <div class="reel-slot" id="work-{fig.id}" data-reel-slot={i} use:observeWork={fig.id}>
                                     <!-- The pane's paragraph is the work's own short text,

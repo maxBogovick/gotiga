@@ -300,6 +300,11 @@ pub struct FigurineListItemDto {
     #[serde(default)]
     pub dimensions: Option<String>,
     pub is_featured: bool,
+    /// False for a work hidden from the public archive. Public reads only ever carry
+    /// visible works (always true there); the admin registry needs it to tell a hidden
+    /// work from a shown one, and to work out where a work lands on the home page.
+    #[serde(default = "default_true")]
+    pub is_visible: bool,
     /// When the piece was catalogued — lets the showcase mark recently added works.
     pub created_at: DateTime<Utc>,
     /// When the piece was last edited — lets the home "since your visit" ledger
@@ -423,6 +428,13 @@ pub struct BulkOpSummary {
     pub affected: u64,
 }
 
+/// The registry's whole order, top to bottom: work ids in the order they should show.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderFigurinesRequest {
+    pub ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkSetParallaxRequest {
@@ -532,6 +544,19 @@ pub enum AnalyticsEventType {
     /// non-figurine sibling of `FigurineEngaged`. Also allowed a `None`
     /// figurine_id.
     PageEngaged,
+    /// A deliberate act that is not a call-to-action: a search, a filter, a
+    /// gallery frame, a form abandoned. Named by `name`, qualified by
+    /// `detail`, sized by `value`. Allowed a `None` figurine_id.
+    Interaction,
+    /// Something broke on the visitor's side (script error, failed image, a
+    /// 5xx from the API). `name` is the kind, `detail` the scrubbed message.
+    ClientError,
+    /// A page that does not exist was asked for. The row's referrer (or
+    /// `detail`, the previous room) says where the dead link was.
+    NotFound,
+    /// Speed as the visitor's device saw it: LCP / INP / CLS / TTFB, one row
+    /// per page load.
+    WebVitals,
 }
 
 impl AnalyticsEventType {
@@ -542,8 +567,60 @@ impl AnalyticsEventType {
             Self::FigurineCtaClick => "figurine_cta_click",
             Self::PageView => "page_view",
             Self::PageEngaged => "page_engaged",
+            Self::Interaction => "interaction",
+            Self::ClientError => "client_error",
+            Self::NotFound => "not_found",
+            Self::WebVitals => "web_vitals",
         }
     }
+
+    /// Events that are re-sent while a visit goes on and collapse into one row
+    /// per `page_view_id` (see `uq_fae_one_per_visit`): the larger duration,
+    /// scroll and counts win, the latest exit wins.
+    pub fn is_per_visit(self) -> bool {
+        matches!(
+            self,
+            Self::FigurineEngaged | Self::PageEngaged | Self::WebVitals
+        )
+    }
+
+    /// Events that carry a figurine by definition. Everything else is allowed
+    /// to have none (a search on the archive is not about one work).
+    pub fn needs_figurine(self) -> bool {
+        matches!(
+            self,
+            Self::FigurineView | Self::FigurineEngaged | Self::FigurineCtaClick
+        )
+    }
+}
+
+/// What the events added after `page_view` / `page_engaged` carry. One struct
+/// for the request (as the browser wrote it) and for the record (as it is
+/// stored, cleaned): the two differ only in what `clean_signals` did to them.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventSignals {
+    /// `interaction` / `client_error`: what happened (`search`, `js`, …).
+    pub name: Option<String>,
+    /// What it was about: the query, the filter, `form:field`, the scrubbed
+    /// error message. On `page_view` it is the room the visitor came from.
+    pub detail: Option<String>,
+    /// How much: results found, frames seen, seconds read.
+    pub value: Option<i32>,
+    /// Whether this browser had visited on an earlier day. A flag, never an id.
+    pub is_returning: Option<bool>,
+    /// `page_engaged`: where the visitor went next (`/path`, `ext:host`, `hide`).
+    pub exit_to: Option<String>,
+    /// `page_engaged`: the last heading reached.
+    pub last_section: Option<String>,
+    pub vital_lcp: Option<i32>,
+    pub vital_inp: Option<i32>,
+    /// Thousandths: 0.1 is sent as 100.
+    pub vital_cls: Option<i32>,
+    pub vital_ttfb: Option<i32>,
+    /// Connection class from the Network Information API (`4g`, `3g`, …).
+    pub conn: Option<String>,
+    pub viewport_w: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -573,6 +650,14 @@ pub struct AnalyticsEventRequest {
     /// "home_afisha"), read from a `?src=` link param — separate from
     /// utm_source, which is for external campaigns.
     pub internal_source: Option<String>,
+    /// Which arm of a running experiment the visitor saw (`scene:on`,
+    /// `scene:off`). Its own field: `internal_source` and `utm_*` say where the
+    /// visitor came from, and a variant written over them would erase that.
+    pub variant: Option<String>,
+    /// Everything the newer events carry (see `EventSignals`), flattened so
+    /// the wire format stays one flat object.
+    #[serde(flatten)]
+    pub signals: EventSignals,
 }
 
 #[derive(Debug, Clone)]
@@ -599,6 +684,8 @@ pub struct AnalyticsEventRecord {
     pub user_id: Option<Uuid>,
     pub lang: Option<String>,
     pub internal_source: Option<String>,
+    pub variant: Option<String>,
+    pub signals: EventSignals,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -6359,4 +6446,87 @@ pub struct ListBattleAssetsQuery {
     pub sheet_id: Option<String>,
     pub role: Option<String>,
     pub q: Option<String>,
+}
+
+
+/// One arm of the tale-scene experiment on one tale: how many opened the
+/// page, how many were measured leaving it, and how far they got. Rates are
+/// left to the client — the counts are what a verdict is built from.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneExperimentArm {
+    /// Tale path without a query (`/tales/ispolnyu-vse-zhelaniya`).
+    pub path: String,
+    /// `scene:on` | `scene:off`.
+    pub variant: String,
+    pub views: i64,
+    pub engaged: i64,
+    /// Engaged visits that scrolled at least half the page.
+    pub deep: i64,
+    /// Engaged visits that left before `QUICK_EXIT_MS`.
+    pub quick_exit: i64,
+    pub median_duration_ms: Option<f64>,
+    pub median_scroll_depth: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneExperimentResponse {
+    pub from: chrono::NaiveDate,
+    pub to: chrono::NaiveDate,
+    /// Raw events are kept for a limited time, so the part of the range older
+    /// than this has nothing behind it.
+    pub raw_data_from: chrono::NaiveDate,
+    pub arms: Vec<SceneExperimentArm>,
+}
+
+
+// === Сцена байки (стол рассказов) ===
+
+/// Один кадр сцены: картинка и подпись «что на ней», по которой алгоритм
+/// находит в тексте место, где этот кадр должен появиться.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleSceneFrame {
+    pub url: String,
+    #[serde(default)]
+    pub caption: String,
+    /// `object-position` кадра; пусто — как у сцены.
+    #[serde(default)]
+    pub position: String,
+}
+
+/// Переход между кадром `i` и кадром `i + 1`. `at` — где он идёт, долей
+/// чтения от 0 до 1; `span` — какую долю чтения он длится. `manual` значит, что
+/// момент назначил человек и пересчёт его не трогает.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleSceneTransition {
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub at: f64,
+    #[serde(default)]
+    pub span: f64,
+    #[serde(default)]
+    pub manual: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleScene {
+    #[serde(default = "tale_scene_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub ratio: String,
+    #[serde(default)]
+    pub position: String,
+    #[serde(default)]
+    pub frames: Vec<TaleSceneFrame>,
+    #[serde(default)]
+    pub transitions: Vec<TaleSceneTransition>,
+}
+
+fn tale_scene_enabled() -> bool {
+    true
 }

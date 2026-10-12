@@ -11,6 +11,7 @@
   import ReminderCard from '$lib/components/auth/ReminderCard.svelte';
   import TelegramDoor from '$lib/components/auth/TelegramDoor.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+  import { interact } from '$lib/analytics';
   import type { UserDto } from '$lib/types/api';
 
   // Steps: 1 = email+name · 2–5 = pick a sign per category · 6 = seal in memory · 7 = success
@@ -20,6 +21,16 @@
   let email = $state('');
   let displayName = $state('');
   let error = $state('');
+
+  // Where people stop on the way to a name: each step reached is one row (once
+  // per visit), each refusal is keyed by step. The sign-in ribbon has four
+  // screens that look alike, and "where do they drop off" is the question.
+  $effect(() => {
+    interact('auth_step', `register:${step}`);
+  });
+  $effect(() => {
+    if (error) interact('auth_error', `register:${step}:${error.slice(0, 30)}`);
+  });
   let loading = $state(false);
   let downloading = $state(false);
   let memorized = $state(false);
@@ -106,6 +117,7 @@
    */
   async function throughTelegram(sessionToken: string, user: UserDto | null) {
     authStore.setSession(sessionToken, user ?? (await api.userMe(sessionToken)));
+    interact('auth_done', 'register_telegram');
     await savedFigurines.syncWithServer({ importLocal: true }).catch(() => {});
     goto('/');
   }
@@ -144,6 +156,7 @@
       } else {
         sentTo = result.email;
       }
+      interact('auth_done', 'register');
       step = 7;
     } catch (e: unknown) {
       // В строгом порядке занятый адрес сюда не попадает: он отвечает тем же

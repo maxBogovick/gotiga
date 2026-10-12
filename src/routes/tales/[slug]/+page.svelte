@@ -11,6 +11,7 @@
   import { renderTale, taleMorph, taleMorphNames } from '$lib/tales';
   import { siteRefKey } from '$lib/siteLinks';
   import { visitorToken } from '$lib/visitorToken';
+  import { activeSeconds, interact } from '$lib/analytics';
   import { markTaleRead, readTales } from '$lib/talesRead';
   import type { GazetteLeaf, GazetteNeighbor, TaleVote } from '$lib/types/api';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -19,6 +20,12 @@
   import NotFound from '$lib/components/NotFound.svelte';
   import TaleAfterword from '$lib/components/TaleAfterword.svelte';
   import TaleProse from '$lib/components/TaleProse.svelte';
+  import TaleQuoteCard from '$lib/components/TaleQuoteCard.svelte';
+  import TaleStage from '$lib/components/TaleStage.svelte';
+  import TaleStageHeat from '$lib/components/TaleStageHeat.svelte';
+  import TaleScenePlate from '$lib/components/TaleScenePlate.svelte';
+  import { taleSceneFor, sceneFromData } from '$lib/taleScenes';
+  import { sceneAssignment } from '$lib/sceneAb';
 
   let { data } = $props();
 
@@ -27,6 +34,22 @@
   let byline = $derived(data.leaf?.author?.trim() ?? '');
   let plate = $derived(data.leaf ? leafCoverUrl(data.leaf) : '');
   let work = $derived(data.leaf ? workHref(data.leaf, 'tale') : null);
+  // Сцена из базы главнее сцены из кода: если хозяин собрал свою на столе
+  // рассказов, показывается она.
+  let scene = $derived(data.scene ? sceneFromData(data.scene) : taleSceneFor(data.leaf?.slug));
+  /**
+   * Показывать ли сцену этому читателю. Опыт «со сценой / без» (`sceneAb.ts`):
+   * решение клиентское и принимается после монтирования. Страница пререндерится
+   * без сцены для всех — сцена оказывается ниже того места, где читатель
+   * находится при загрузке, поэтому её появление ничего не сдвигает.
+   */
+  let sceneOn = $state(false);
+  /** Сцена стоит на полях вместо фото работы (а не между абзацами). */
+  let sceneInMargin = $derived(!!scene && sceneOn && scene.place === 'margin');
+  $effect(() => {
+    const slug = data.leaf?.slug;
+    sceneOn = !!slug && !!scene && sceneAssignment(slug).arm === 'on';
+  });
   /**
    * The shelf, fetched by the page itself.
    *
@@ -234,10 +257,15 @@
     if (data.leaf?.id !== id) return;
     fresh = markTaleRead(id);
     read = true;
+    // The last line reached the screen. Counted for everyone, signed in or not,
+    // with how long the reader had been there: the ratio of that to the length of
+    // the tale is the closest thing to a verdict on the text.
+    interact('tale_finished', null, activeSeconds());
     const token = authStore.token;
     if (token) void api.grantBattleAttention(token, 'read', id);
   }
 
+  let leafEl = $state<HTMLElement>();
   let taleUrl = $derived(data.leaf ? `${SITE_URL}/tales/${data.leaf.slug}` : SITE_URL);
   let pageTitle = $derived(`${copy?.title ?? $t('talesPageTitle')} — ${$brandName}`);
   let description = $derived(copy?.dek || $t('talesPageRule'));
@@ -360,7 +388,7 @@
   <div class="root">
     <div class="grain" aria-hidden="true"></div>
     <ArchClip />
-    <article class="page">
+    <article class="page" class:page--scene={sceneInMargin}>
       <nav class="back-nav" in:fade={{ duration: 600 }}>
         <a href="/tales" class="back-link">{$t('talesBackShelf')}</a>
       </nav>
@@ -391,7 +419,7 @@
         {/if}
       </header>
 
-      <div class="leaf" in:fade={{ duration: 700, delay: 160 }}>
+      <div class="leaf" class:leaf--scene={sceneInMargin} bind:this={leafEl} in:fade={{ duration: 700, delay: 160 }}>
         {#if plate}
           <!-- Полка, натянутая вдоль небылицы: наверху арка, из которой сюда
                приехали, внизу — следующая по полке. Обе без имени перехода:
@@ -412,22 +440,43 @@
         {/if}
         <TaleProse {blocks} links={data.links ?? {}} {cardMorphs}>
           {#snippet after(i)}
-          {#if i === 0 && plate}
+          {#if i === 0 && (plate || sceneInMargin)}
             <!-- Pinned in the margin on a wide screen, and dropped into the
                  prose right here once the margin is gone. -->
-            <aside class="margin" style="--span: {blocks.length}">
-              <svelte:element
-                this={work ? 'a' : 'div'}
-                class="margin-plate"
-                href={work || undefined}
-                style={morph ? `view-transition-name: ${morph}` : undefined}
-              >
-                <AppImage src={plate} alt={data.leaf?.figurineName ?? ''} class="margin-img" sizes="168px" />
-              </svelte:element>
+            <aside class="margin" class:margin--scene={sceneInMargin} style="--span: {blocks.length}">
+              {#if sceneInMargin && scene}
+                <!-- The scene stands where the photograph stood, and is still
+                     the way to the work. It carries no morph name: the photograph
+                     that travels to the work's page is not on this plate. -->
+                <svelte:element
+                  this={work ? 'a' : 'div'}
+                  class="margin-scene"
+                  href={work || undefined}
+                  aria-label={data.leaf?.figurineName ?? undefined}
+                >
+                  {#if scene.kind === 'plate' && scene.effect}
+                    <TaleScenePlate figure={scene.figure} effect={scene.effect} bleed={scene.bleed} frames={scene.frames} transitions={scene.transitions} ratio={scene.ratio} position={scene.position} />
+                  {:else if scene.glow}
+                    <TaleStageHeat figure={scene.figure} cracks={scene.glow} />
+                  {/if}
+                </svelte:element>
+              {:else}
+                <svelte:element
+                  this={work ? 'a' : 'div'}
+                  class="margin-plate"
+                  href={work || undefined}
+                  style={morph ? `view-transition-name: ${morph}` : undefined}
+                >
+                  <AppImage src={plate} alt={data.leaf?.figurineName ?? ''} class="margin-img" sizes="168px" />
+                </svelte:element>
+              {/if}
               {#if data.leaf?.figurineName}
                 <p class="margin-name">{data.leaf.figurineName}</p>
               {/if}
             </aside>
+          {/if}
+          {#if scene && sceneOn && scene.place === 'inline' && scene.after && scene.glow && i === scene.after[$lang === 'ru' ? 'ru' : 'en']}
+            <TaleStage figure={scene.figure} veins={scene.glow} />
           {/if}
           {/snippet}
         </TaleProse>
@@ -445,6 +494,15 @@
           </aside>
         {/if}
       </div>
+
+      <TaleQuoteCard
+        root={leafEl}
+        title={copy.title}
+        address={taleUrl.replace(/^https?:\/\//, '')}
+        link="{taleUrl}?src=tale_card"
+        slug={data.leaf.slug}
+        photos={[resolveLargestImageUrl(plate), plate].filter((u): u is string => !!u)}
+      />
 
       <!-- Дно текста. Ничего не показывает — только отмечает, что дочитано. -->
       <span class="bottom" use:lastLine={data.leaf.id} aria-hidden="true"></span>
@@ -514,6 +572,7 @@
         <a
           class="onward"
           href="/tales/{data.leaf.next.slug}"
+          onclick={() => interact('tale_next')}
           in:fade={{ duration: 500, delay: 240 }}
         >
           {#if nextCover}
@@ -694,8 +753,36 @@
   /* Набор прозы — в TaleProse; здесь только место в сетке. */
   .leaf :global(.para),
   .leaf :global(.subhead),
+  .leaf :global(.quote),
   .leaf :global(.ornament),
-  .leaf :global(.tipped) { grid-column: 2; }
+  .leaf :global(.tipped),
+  .leaf :global(.tale-stage) { grid-column: 2; }
+
+  /* Свеча над строкой. Абзац, стоящий посреди окна, светел; у краёв окна он
+     приглушён до 0.7 — это 5.3:1 чернилами на бумаге (при 0.62 было бы 4.2:1,
+     ниже порога): текст
+     читаем, а глаз знает, где строка. Движение — только шкала прокрутки,
+     без JS. Нет поддержки шкалы или включено уменьшение движения — абзацы
+     стоят как стояли. `both` обязателен: абзац, уже стоящий на экране при
+     загрузке, прошёл свой диапазон и обязан быть светлым без прокрутки.
+     Здесь, а не в TaleProse: предпросмотр стола — набор, а не прокрутка.
+     Цитата-вставка в свечу не входит: она уже выделена формой, а её цвет
+     в приглушении упал бы ниже порога для крупного текста. */
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .leaf :global(.para) {
+        animation: candle linear both;
+        animation-timeline: view();
+        animation-range: cover 0% cover 100%;
+      }
+    }
+  }
+  @keyframes candle {
+    0% { opacity: 0.7; }
+    28% { opacity: 1; }
+    72% { opacity: 1; }
+    100% { opacity: 0.7; }
+  }
 
   .margin {
     grid-column: 3;
@@ -726,6 +813,37 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+
+  /* Сцена на полях. Колонка шире плиты с фото (168 px): сцена портретная и
+     читается только при ширине около 250 px. Страница расширяется ровно на
+     эту прибавку, чтобы проза не сузилась. Ниже 1100 px колонки нет вовсе, и
+     сцена падает в текст, как падала плита. */
+  @media (min-width: 1100px) {
+    .page--scene { max-width: 1022px; }
+    .leaf--scene { grid-template-columns: var(--spine) minmax(0, 1fr) 248px; }
+    /* Жар растёт по ходу чтения всей байки, а не по тому, где сцена стоит на
+       экране: сама она на экране всё время (прилипла). */
+    .margin--scene {
+      --heat-timeline: --tale;
+      --heat-range: contain 6% contain 80%;
+      --heat-range-needle: contain 2% contain 82%;
+      --scene-timeline: --tale;
+      --scene-range: contain 4% contain 92%;
+      --scene-range-frames: contain 0% contain 100%;
+    }
+  }
+
+  .margin-scene {
+    display: block;
+    width: 100%;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  @media (max-width: 1099px) {
+    .margin-scene { max-width: 300px; margin: 0 auto; }
   }
 
   .margin-name {
@@ -1016,6 +1134,7 @@
     .leaf :global(.subhead),
     .leaf :global(.ornament),
     .leaf :global(.tipped),
+    .leaf :global(.tale-stage),
     .margin { grid-column: auto; }
     .margin {
       grid-row: auto;

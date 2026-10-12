@@ -45,6 +45,8 @@
     <div class="tipped">
       <TaleLink card ref={block.ref} info={links[siteRefKey(block.ref)]} morph={cardMorphs[i] || undefined} />
     </div>
+  {:else if block.kind === 'quote'}
+    <blockquote class="quote"><p>{@render prose(block.runs)}</p></blockquote>
   {:else if block.kind === 'heading'}
     <h2 class="subhead">{@render prose(block.runs)}</h2>
   {:else}
@@ -88,6 +90,26 @@
     padding: 0.06em 0.09em 0 0;
     color: var(--deep, #6f3b24);
   }
+
+  /* A line the author set apart. Larger and slanted, with a hairline on the
+     left: it is told from the paragraphs by shape alone, not by a colour the
+     page would have to keep legible on every paper. */
+  .quote {
+    max-width: 48ch;
+    margin: 1.5em 0 1.7em;
+    padding: 0.1em 0 0.1em 1.1em;
+    border-left: 1px solid var(--copper, #c65f3c);
+  }
+  .quote p {
+    margin: 0;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-style: italic;
+    font-size: clamp(23px, 2.5vw, 29px);
+    line-height: 1.35;
+    text-wrap: balance;
+    color: var(--deep, #6f3b24);
+  }
+  .quote :global(strong) { font-weight: 600; }
 
   .ornament {
     max-width: 62ch;
