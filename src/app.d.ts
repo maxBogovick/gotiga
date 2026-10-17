@@ -4,7 +4,13 @@ declare global {
 		// interface Error {}
 		// interface Locals {}
 		// interface PageData {}
-		// interface PageState {}
+		/** Состояние записи истории без перехода (`pushState`). */
+		interface PageState {
+			/** Открыта расстановка перед этой встречей (`/battles/etude`). */
+			arrange?: string;
+			/** Расстановка открыта из «ещё раз»: бой начнётся заново. */
+			arrangeFresh?: boolean;
+		}
 		// interface Platform {}
 
 		interface FigurineDetailContext {

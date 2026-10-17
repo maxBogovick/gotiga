@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META } from '$lib/i18n';
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
   import { interact, observeWork } from '$lib/analytics';
@@ -31,7 +31,7 @@
     const w = winOf(f);
     return isGated(w) && !isShowingOpen(w, houseClock.nowDate);
   }
-  let doorLocale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+  let doorLocale = $derived(LANG_META[$lang].locale);
   function doorHeadlineOf(f: FigurineListItem): string {
     return openingHeadline(winOf(f), $t, doorLocale, houseClock.nowDate);
   }

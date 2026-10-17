@@ -78,7 +78,9 @@
     tier: 1,
     titleEn: 'The Keeper of the Key',
     titleRu: 'Хранительница Ключа',
+    titleUk: 'Охоронниця Ключа',
     effectRu: 'Вихрь Души: каждое третье заклинание создаёт копию эффекта.',
+    effectUk: 'Вир Душі: кожне третє закляття створює копію ефекту.',
     cost: 5,
     power: 10,
   };
@@ -148,7 +150,7 @@
   /** Имя работы берётся ИЗ ТЕЛА: второго места, где написано одно имя, у
    *  карты нет. */
   const cardName = (work: StudioCardWaiting) =>
-    (work.body.titleRu || work.body.titleEn || '').trim();
+    (work.body.titleRu || work.body.titleEn || work.body.titleUk || '').trim();
 
   function denyCard(work: StudioCardWaiting) {
     const word = prompt($t('adminStudioDenyAsk').replace('{name}', cardName(work)));
@@ -501,10 +503,14 @@
               <div class="min-w-0 flex-1">
                 <p class="text-sm text-[#34251c]">
                   {work.nameRu} <span class="text-[#b0a08e]">· {work.nameEn}</span>
+                  {#if work.nameUk}<span class="text-[#b0a08e]">· {work.nameUk}</span>{/if}
                 </p>
                 <p class="text-[10px] text-[#8a6a55]">{work.author}</p>
                 {#if work.noteRu}
                   <p class="mt-1 text-[11px] italic text-[#6f3b24]">{work.noteRu}</p>
+                {/if}
+                {#if work.noteUk}
+                  <p class="mt-1 text-[11px] italic text-[#6f3b24]">{work.noteUk}</p>
                 {/if}
               </div>
               {#if racing === work.id}

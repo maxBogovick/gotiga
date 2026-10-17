@@ -955,6 +955,46 @@
   mix-blend-mode: normal;
 }
 
+/* ───────────────────────────────────────────────────────────────────────────
+   LANGUAGE CHANGE — a circle of the new language spreads from the seal
+   ───────────────────────────────────────────────────────────────────────────
+   LangSwitcher puts .gt-lang on <html> and writes the centre and the reach of
+   the circle (--gt-lang-x / -y / -r) before it starts the transition. The old
+   page stays put underneath; the new one is revealed by a growing clip. The
+   header is its own named group (it stays during a page turn), so it gets the
+   same clip — otherwise the cornice would change language a beat early. */
+html.gt-lang::view-transition-old(root),
+html.gt-lang::view-transition-new(root),
+html.gt-lang::view-transition-old(site-header),
+html.gt-lang::view-transition-new(site-header) {
+  animation: none;
+  mix-blend-mode: normal;
+  opacity: 1;
+}
+html.gt-lang::view-transition-old(root),
+html.gt-lang::view-transition-old(site-header) {
+  z-index: 1;
+}
+html.gt-lang::view-transition-new(root),
+html.gt-lang::view-transition-new(site-header) {
+  z-index: 2;
+  animation: gt-lang-reveal 880ms cubic-bezier(0.7, 0, 0.2, 1) both;
+}
+@keyframes gt-lang-reveal {
+  from {
+    clip-path: circle(0 at var(--gt-lang-x, 50%) var(--gt-lang-y, 0));
+  }
+  to {
+    clip-path: circle(var(--gt-lang-r, 150vmax) at var(--gt-lang-x, 50%) var(--gt-lang-y, 0));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.gt-lang::view-transition-new(root),
+  html.gt-lang::view-transition-new(site-header) {
+    animation: none;
+  }
+}
+
 /*
   Shared figurine image: view-transition-name is "figurine-{id}" (dynamic).
   CSS selectors can't wildcard ::view-transition-*() so timing for the image

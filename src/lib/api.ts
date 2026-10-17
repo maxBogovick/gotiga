@@ -95,6 +95,7 @@ import type {
     BattleMatches,
     MatchReplay,
     BattleDeck,
+    BattleLineup,
     GrantBattleCoinRequest,
     GrantBattleCoinResponse,
     GiveBattleCardsRequest,
@@ -182,6 +183,8 @@ import type {
     GazetteWatchCreatedResponse,
     GazetteWatchInfo,
     GazetteWatchDto,
+    BattleProbeState,
+    ChallengeSetup,
 } from './types/api';
 import { isGazetteReservedSlug } from './gazette';
 
@@ -1525,6 +1528,34 @@ export const api = {
         }
     },
 
+    /**
+     * Книга дома в Telegram — отдельный канал, а не способ подтвердить почту:
+     * вести приходят в бота. Вошедшему через Telegram подписка оформляется
+     * сразу (`link: null`), остальным дана ссылка нажать «Запустить».
+     */
+    async subscribeTelegram(
+        req: { lang: string; source: string; ageConfirmed: boolean },
+        sessionToken?: string | null,
+    ): Promise<import('./types/api').TelegramSubscribeResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`;
+        return webFetch('/subscribe/telegram', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(req),
+        });
+    },
+
+    /** Ссылка из письма «подтвердите адрес». 404 — ссылка неверна или остыла. */
+    async confirmSubscription(token: string): Promise<void> {
+        await webFetch(`/subscribe/confirm/${encodeURIComponent(token)}`, { method: 'POST' });
+    },
+
+    /** Ссылка из письма слежения за эскизом. 404 — неверна или остыла. */
+    async confirmGazetteWatch(token: string): Promise<void> {
+        await webFetch(`/gazette/watch/confirm/${encodeURIComponent(token)}`, { method: 'POST' });
+    },
+
     async unsubscribeByToken(token: string): Promise<void> {
         await webFetch(`/subscribe/leave/${token}`, { method: 'POST' });
     },
@@ -1710,10 +1741,18 @@ export const api = {
      * Начать вход. С `sessionToken` это привязка Telegram к уже вошедшему
      * аккаунту: ручка одна, потому что обряд один.
      */
-    async telegramLoginCode(sessionToken?: string | null): Promise<import('./types/api').TelegramCodeResponse> {
-        const headers: Record<string, string> = {};
+    async telegramLoginCode(
+        sessionToken?: string | null,
+        ageConfirmed = false
+    ): Promise<import('./types/api').TelegramCodeResponse> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
-        return webFetch('/auth/telegram/code', { method: 'POST', headers });
+        // `ageConfirmed` нужен серверу, только если заводится новое имя.
+        return webFetch('/auth/telegram/code', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ ageConfirmed }),
+        });
     },
 
     /**
@@ -1738,6 +1777,61 @@ export const api = {
 
     async telegramLoginStatus(code: string): Promise<import('./types/api').TelegramCodeStatus> {
         return webFetch(`/auth/telegram/code/${encodeURIComponent(code)}`);
+    },
+
+    // === ВХОД ЧЕРЕЗ GOOGLE И APPLE ===
+
+    async oauthConfig(): Promise<import('./types/api').OauthConfig> {
+        return webFetch('/auth/oauth/config');
+    },
+
+    /**
+     * Начать вход. С `sessionToken` это привязка провайдера к уже вошедшему
+     * имени: ручка одна, потому что обряд один. `returnOrigin` — сайт, на
+     * который вернётся браузер (на стенде фронт стоит не там, где API).
+     */
+    async oauthStart(
+        provider: import('./types/api').OauthProvider,
+        sessionToken?: string | null,
+        ageConfirmed = false
+    ): Promise<import('./types/api').OauthStart> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+        return webFetch(`/auth/oauth/${provider}/start`, {
+            method: 'POST',
+            headers,
+            // `ageConfirmed` нужен серверу, только если заводится новое имя:
+            // вернувшегося и привязку из профиля он не касается.
+            body: JSON.stringify({ returnOrigin: window.location.origin, ageConfirmed }),
+        });
+    },
+
+    /**
+     * Забрать результат: привязка и одноразовый код вместе, в теле, а не в
+     * адресе — им не место в истории. Код видит только браузер, вернувшийся от
+     * провайдера, привязку знает только вкладка, просившая вход; обмен кода
+     * сервер делает лишь когда пришли оба. `appleUser` — JSON с именем, который
+     * Apple присылает при первом согласии.
+     */
+    async oauthRedeem(
+        state: string,
+        binder: string,
+        code: string,
+        appleUser?: string | null
+    ): Promise<import('./types/api').OauthRedeem> {
+        return webFetch('/auth/oauth/redeem', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ state, binder, code, user: appleUser ?? null }),
+        });
+    },
+
+    /** Снять Google или Apple. Сервер откажет, если это последняя дверь. */
+    async oauthUnlink(provider: import('./types/api').OauthProvider, sessionToken: string): Promise<UserDto> {
+        return webFetch(`/auth/oauth/${provider}/link`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
     },
 
     async userLogout(sessionToken: string): Promise<void> {
@@ -2044,8 +2138,12 @@ export const api = {
         return webFetch(`/auth/reset-token/${token}`);
     },
 
-    async applyPasswordReset(token: string, selections: [string, string, string, string], pool: string[][]): Promise<void> {
-        await webFetch('/auth/reset-password', {
+    async applyPasswordReset(
+        token: string,
+        selections: [string, string, string, string],
+        pool: string[][]
+    ): Promise<import('./types/api').ApplyPasswordResetResponse> {
+        return webFetch('/auth/reset-password', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token, selections, pool }),
@@ -3466,6 +3564,16 @@ export const api = {
         }
     },
 
+    /** Снаряжение этюдов (стены, башни, таран): не на полке, но сцене этюда
+     *  нужны их картинки. */
+    async getBattleEtudeCards(loadFetch?: typeof fetch): Promise<BattleCard[]> {
+        try {
+            return await webFetch('/battles/etude-cards', undefined, loadFetch);
+        } catch {
+            return [];
+        }
+    },
+
     async getBattleFrames(loadFetch?: typeof fetch): Promise<BattleFrames> {
         try {
             return await webFetch('/battles/frames', undefined, loadFetch);
@@ -3704,6 +3812,13 @@ export const api = {
      * With a token the server also marks which studies this guest has already
      * been paid for — the reward belongs to the study, not to the victory.
      */
+    /** Гость боя: имя без почты и дверей, чтобы первый бой обучения шёл без
+     *  формы входа. Годится только ручкам партий. */
+    async startBattleGuest(): Promise<string> {
+        const res = await webFetch<{ sessionToken: string }>('/auth/guest', { method: 'POST' });
+        return res.sessionToken;
+    },
+
     async getBattleChallenges(
         sessionToken?: string | null,
         loadFetch?: typeof fetch,
@@ -3716,6 +3831,31 @@ export const api = {
         } catch {
             return [];
         }
+    },
+
+    /** Расстановка гостя на поле встречи, с досчитанным заёмом. */
+    async getBattleLineup(sessionToken: string, challengeId: string): Promise<BattleLineup> {
+        return webFetch(`/battles/challenges/${challengeId}/lineup`, {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Сохранить расстановку целиком. Отвечает той же расстановкой с
+     *  пересчитанным заёмом: какие временные карты и где встанут, решает
+     *  сервер. */
+    async saveBattleLineup(
+        sessionToken: string,
+        challengeId: string,
+        body: SaveBattleDeckRequest,
+    ): Promise<BattleLineup> {
+        return webFetch(`/battles/challenges/${challengeId}/lineup`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${sessionToken}`,
+            },
+            body: JSON.stringify(body),
+        });
     },
 
     /** Begins a match — or continues the one this guest left going. */
@@ -3954,6 +4094,24 @@ export const api = {
         await webFetch(`/admin/battles/races/${id}`, { method: 'DELETE', headers: authHeaders() });
     },
 
+    /** Ставит расу нескольким картам разом; `raceId: null` — снимает. */
+    async adminSetBattleCardsRace(cardIds: string[], raceId: string | null): Promise<{ changed: number }> {
+        return webFetch('/admin/battles/cards/race', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ cardIds, raceId }),
+        });
+    },
+
+    /** Порядок рас; место — индекс в `ids`. */
+    async adminReorderBattleRaces(ids: string[]): Promise<void> {
+        await webFetch('/admin/battles/races/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ ids }),
+        });
+    },
+
     async adminListBattleCards(): Promise<BattleCard[]> {
         return webFetch('/admin/battles/cards', { headers: authHeaders() });
     },
@@ -4168,9 +4326,22 @@ export const api = {
         });
     },
 
+    /** Проверить проходимость расстановки партиями ботов — в фоне. */
+    async adminStartBattleProbe(setup: ChallengeSetup, botDepth: number): Promise<{ id: string }> {
+        return webFetch('/admin/battles/probe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ setup, botDepth }),
+        });
+    },
+
+    async adminReadBattleProbe(id: string): Promise<BattleProbeState> {
+        return webFetch(`/admin/battles/probe/${id}`, { headers: authHeaders() });
+    },
+
     async adminUploadBattleFrameArt(
         file: File,
-    ): Promise<{ url: string; width: number; height: number; hasAlpha: boolean }> {
+    ): Promise<{ url: string; path: string; width: number; height: number; hasAlpha: boolean }> {
         const form = new FormData();
         form.append('file', file);
         const res = await fetch(`${webApiBase()}/admin/battles/frames/art`, {
@@ -4182,6 +4353,8 @@ export const api = {
         const data = await res.json();
         return {
             url: webPublicUrl(data.url) ?? '',
+            /** Путь на складе, как его ждёт сервер (`/static/…`). */
+            path: String(data.url ?? ''),
             width: Number(data.width) || 0,
             height: Number(data.height) || 0,
             hasAlpha: !!data.hasAlpha,

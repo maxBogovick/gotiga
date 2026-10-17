@@ -10,7 +10,7 @@
   import { cubicOut } from 'svelte/easing';
   import { replaceState } from '$app/navigation';
   import { page } from '$app/state';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
   import { api } from '$lib/api';
@@ -411,14 +411,14 @@
     };
   }
 
-  let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+  let ogLocale = $derived(LANG_META[$lang].og);
   let jsonLd = $derived(jsonLdSafe({
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
     name: $t('battlesPageTitle'),
     description: $t('battlesPageRule'),
     url: `${SITE_URL}/battles`,
-    inLanguage: $lang === 'ru' ? 'ru' : 'en',
+    inLanguage: $lang,
     isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
   }));
 </script>

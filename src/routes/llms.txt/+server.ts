@@ -4,6 +4,7 @@ import {
     ACQUIRE_PATH,
     IMPRESSIONS_PATH,
     PRIVACY_PATH,
+    TERMS_PATH,
     IMAGE_RIGHTS_PATH,
 } from '$lib/site';
 import { leafCopy } from '$lib/gazette';
@@ -89,7 +90,8 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         `- [The cellar](${SITE_URL}/cellar): how this site itself is built — the five effects, the palette, the rules.\n` +
         `- [How to acquire a work](${SITE_URL}${ACQUIRE_PATH}): house rules for commissioning or reserving a piece. The petition form is a later step, not a public listing.\n` +
         `- [The photographs](${SITE_URL}${IMAGE_RIGHTS_PATH}): images are copyrighted; reuse needs written permission.\n` +
-        `- [Privacy](${SITE_URL}${PRIVACY_PATH}): what personal data the site collects and why.\n\n` +
+        `- [Privacy](${SITE_URL}${PRIVACY_PATH}): what personal data the site collects and why.\n` +
+        `- [Terms of use](${SITE_URL}${TERMS_PATH}): the rules for using the site, accounts, requests and the studio.\n\n` +
         `## Works\n\n` +
         (works || '- (the archive is currently quiet)') +
         `\n\n## Tall tales\n\n` +

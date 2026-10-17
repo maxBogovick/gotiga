@@ -9,7 +9,7 @@
   // какая у читателя ширина окна, тема и сколько абзацев сейчас приглушено
   // свечой. Шрифт тот же, что у прозы, и ждём мы его явно — canvas, в отличие
   // от разметки, не перерисуется, когда шрифт доедет.
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, LANG_META } from '$lib/i18n';
   import { portal } from '$lib/actions/portal';
   import { interact } from '$lib/analytics';
 
@@ -285,7 +285,7 @@
   }
 
   function say(quote: string): string {
-    const [open, close] = $lang === 'ru' ? ['«', '»'] : ['“', '”'];
+    const [open, close] = LANG_META[$lang].quotes;
     return `${open}${quote}${close}`;
   }
 

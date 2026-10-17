@@ -132,7 +132,10 @@ class AuthStore {
     const u = this.user;
     if (!u) return '';
     if (u.email) return u.email;
-    return u.telegramUsername ? `@${u.telegramUsername}` : '';
+    if (u.telegramUsername) return `@${u.telegramUsername}`;
+    // Вошёл через Apple со скрытой почтой или через Google без подтверждённой:
+    // своей почты у имени нет, но провайдер назвал адрес — он и подпись.
+    return u.googleEmail ?? u.appleEmail ?? '';
   }
 }
 

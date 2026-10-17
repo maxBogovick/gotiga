@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -49,7 +49,7 @@
   let pageTitle = $derived(
     isLatest ? $t('gazettePageTitle') : `${$t('gazettePageTitle')}, ${year}`,
   );
-  let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+  let ogLocale = $derived(LANG_META[$lang].og);
 
   function expectedLabel(leaf: GazetteLeaf): string {
     return expectedWhisper(
@@ -66,7 +66,7 @@
     name: pageTitle,
     description: $t('gazettePageSubtitle'),
     url: canonical,
-    inLanguage: $lang === 'ru' ? 'ru' : 'en',
+    inLanguage: $lang,
     isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
   }));
 </script>

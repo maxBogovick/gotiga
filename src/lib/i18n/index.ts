@@ -1,48 +1,103 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { en, type TranslationKey as PublicKey } from './en';
 import type { AdminTranslationKey } from './en.admin';
 
-export type Lang = 'en' | 'ru';
+export const LANGS = ['en', 'ru', 'uk'] as const;
+export type Lang = (typeof LANGS)[number];
 export type TranslationKey = PublicKey | AdminTranslationKey;
 
 type Dict = Record<string, string>;
 
+/** Everything a language needs to say about itself, in one place: the three
+ *  spellings used by browsers (BCP 47 for `Intl`, `og:locale`, `hreflang`),
+ *  the name a reader of that language recognises, and its quotation marks. */
+export interface LangMeta {
+	/** Name in its own language — the only form a reader can be expected to find. */
+	native: string;
+	/** Short mark shown on the button. */
+	mark: string;
+	/** BCP 47 tag for `Intl` and `toLocaleString`. */
+	locale: string;
+	/** Open Graph locale. */
+	og: string;
+	/** Opening and closing quotation marks. */
+	quotes: [string, string];
+}
+
+export const LANG_META: Record<Lang, LangMeta> = {
+	en: { native: 'English', mark: 'EN', locale: 'en-US', og: 'en_US', quotes: ['“', '”'] },
+	ru: { native: 'Русский', mark: 'RU', locale: 'ru-RU', og: 'ru_RU', quotes: ['«', '»'] },
+	uk: { native: 'Українська', mark: 'UA', locale: 'uk-UA', og: 'uk_UA', quotes: ['«', '»'] },
+};
+
+export function isLang(value: unknown): value is Lang {
+	return typeof value === 'string' && (LANGS as readonly string[]).includes(value);
+}
+
 const dicts: Record<Lang, Dict> = {
 	en: { ...en },
 	ru: { ...en },
+	uk: { ...en },
 };
 
-let ruLoaded = false;
-let ruLoading: Promise<void> | null = null;
+const loaded: Record<Lang, boolean> = { en: true, ru: false, uk: false };
+const loading: Partial<Record<Lang, Promise<void>>> = {};
 
+const loaders: Record<Exclude<Lang, 'en'>, () => Promise<Dict>> = {
+	ru: () => import('./ru').then((m) => m.ru),
+	uk: () => import('./uk').then((m) => m.uk),
+};
+
+/** Brings one language's dictionary into memory. English ships with the page;
+ *  the others are fetched on demand so a reader pays only for the one they read. */
+export async function loadLang(l: Lang): Promise<void> {
+	if (l === 'en' || loaded[l]) return;
+	loading[l] ??= loaders[l]().then((d) => {
+		dicts[l] = { ...dicts[l], ...d };
+		loaded[l] = true;
+	});
+	await loading[l];
+}
+
+/** The language a first-time reader gets: an explicit `?lang=`, then what they
+ *  chose last time, then what their browser asks for. English is the default
+ *  for anything else, as before. */
 function getInitialLang(): Lang {
 	if (typeof window === 'undefined') return 'en';
-	const saved = localStorage.getItem('gotiga_lang');
-	return saved === 'ru' ? 'ru' : 'en';
-}
-
-async function loadRu(): Promise<void> {
-	if (ruLoaded) return;
-	if (!ruLoading) {
-		ruLoading = import('./ru').then((m) => {
-			dicts.ru = { ...dicts.ru, ...m.ru };
-			ruLoaded = true;
-		});
+	try {
+		const asked = new URLSearchParams(window.location.search).get('lang');
+		if (isLang(asked)) return asked;
+	} catch { /* an unreadable address is not a reason to fail */ }
+	try {
+		const saved = localStorage.getItem('gotiga_lang');
+		if (isLang(saved)) return saved;
+	} catch { /* storage may be closed */ }
+	const wanted = (navigator.languages?.length ? navigator.languages : [navigator.language]) ?? [];
+	for (const raw of wanted) {
+		const base = String(raw || '').toLowerCase().split('-')[0];
+		if (base === 'uk') return 'uk';
+		if (base === 'ru') return 'ru';
+		if (base === 'en') return 'en';
 	}
-	await ruLoading;
+	return 'en';
 }
 
-export const lang = writable<Lang>(getInitialLang());
+const initialLang = getInitialLang();
+
+export const lang = writable<Lang>(initialLang);
 
 lang.subscribe((l) => {
-	if (typeof window !== 'undefined') localStorage.setItem('gotiga_lang', l);
+	if (typeof window === 'undefined') return;
+	try {
+		localStorage.setItem('gotiga_lang', l);
+	} catch { /* storage may be closed */ }
 });
 
-if (typeof window !== 'undefined' && getInitialLang() === 'ru') {
-	void loadRu().then(() => lang.update((l) => l));
+if (typeof window !== 'undefined' && initialLang !== 'en') {
+	void loadLang(initialLang).then(() => lang.update((l) => l));
 }
 
-export const copyOverrides = writable<Record<Lang, Record<string, string>>>({ en: {}, ru: {} });
+export const copyOverrides = writable<Record<Lang, Record<string, string>>>({ en: {}, ru: {}, uk: {} });
 
 // Brand name resolution. Precedence:
 //   1. admin override (copyOverrides → `brandName` key, per-language, en as fallback)
@@ -76,19 +131,72 @@ export const t = derived([lang, copyOverrides], ([$lang, $overrides]) => {
 	};
 });
 
+/** BCP 47 tag of the language on screen — for dates, numbers, `Intl`. */
+export const locale = derived(lang, ($lang) => LANG_META[$lang].locale);
+
+/** The same as `$locale`, for plain functions that format a date when called
+ *  and are not part of a component's reactive tree (the admin tables). */
+export function currentLocale(): string {
+	return LANG_META[get(lang)].locale;
+}
+
 export async function setLang(l: Lang): Promise<void> {
-	if (l === 'ru') await loadRu();
+	await loadLang(l);
 	lang.set(l);
 }
 
-export function setCopyOverrides(overrides: Record<Lang, Record<string, string>>): void {
-	copyOverrides.set(overrides);
+export function setCopyOverrides(overrides: Partial<Record<Lang, Record<string, string>>>): void {
+	copyOverrides.set({ en: {}, ru: {}, uk: {}, ...overrides });
 }
 
 /** Merge admin copy into the live dictionaries. Call from the admin route
  *  so the public bundle never ships those strings. */
-export function registerAdminDicts(enAdmin: Dict, ruAdmin: Dict): void {
-	Object.assign(dicts.en, enAdmin);
-	Object.assign(dicts.ru, ruAdmin);
+export function registerAdminDicts(admin: Record<Lang, Dict>): void {
+	for (const l of LANGS) Object.assign(dicts[l], admin[l]);
 	copyOverrides.update((v) => v);
+}
+
+// ── Text that lives in data, not in the dictionaries ───────────────────────
+
+/** Which languages to try, in order, when a text is missing in the one asked
+ *  for. A Ukrainian reader is shown English before Russian: an untranslated
+ *  line is shown in the world language, not in the language of the aggressor. */
+const FALLBACK: Record<Lang, readonly Lang[]> = {
+	en: ['en', 'ru', 'uk'],
+	ru: ['ru', 'en', 'uk'],
+	uk: ['uk', 'en', 'ru'],
+};
+
+/** One value per language, for the few places that choose by language in
+ *  code (a date format, a quotation mark). A missing language falls back to
+ *  English. */
+export function pick<T>(l: Lang, values: { en: T } & Partial<Record<Exclude<Lang, 'en'>, T>>): T {
+	return values[l] ?? values.en;
+}
+
+/** The first non-empty text of the list for this language. */
+export function firstText(l: Lang, texts: Partial<Record<Lang, string | null | undefined>>): string {
+	for (const k of FALLBACK[l]) {
+		const v = texts[k]?.trim();
+		if (v) return v;
+	}
+	return '';
+}
+
+const cap = (l: Lang) => l[0].toUpperCase() + l.slice(1);
+
+/** `titleEn` / `titleRu` / `titleUk` of one record, by field stem. */
+export function localized(
+	record: object | null | undefined,
+	stem: string,
+	l: Lang,
+): string {
+	if (!record) return '';
+	const r = record as Record<string, unknown>;
+	const texts: Partial<Record<Lang, string>> = {};
+	for (const k of LANGS) {
+		const v = r[stem + cap(k)];
+		if (typeof v === 'string') texts[k] = v;
+	}
+	return firstText(l, texts);
 }

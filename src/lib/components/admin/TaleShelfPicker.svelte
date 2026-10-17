@@ -5,7 +5,7 @@
   // момент выбора. Теперь это одна строка в шапке: закрытая, она называет
   // открытый рассказ, раскрытая — ищет, ведёт стрелками и переставляет порядок
   // на полке перетаскиванием.
-  import { t } from '$lib/i18n';
+  import { t, localized } from '$lib/i18n';
   import type { Lang } from '$lib/i18n';
   import type { AdminTaleStat, GazetteLeaf, GazetteStatus } from '$lib/types/api';
 
@@ -47,7 +47,7 @@
   let search = $state<HTMLInputElement | null>(null);
 
   function titleOf(tale: GazetteLeaf): string {
-    return (lang === 'ru' ? tale.titleRu : tale.titleEn) || tale.titleEn || tale.titleRu || $t('adminTalesUntitled');
+    return localized(tale, 'title', lang) || $t('adminTalesUntitled');
   }
 
   let rows = $derived.by(() => {

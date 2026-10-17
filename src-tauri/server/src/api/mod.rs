@@ -171,6 +171,11 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             // === NEWSLETTER ("visitor book") ===
             .route("/subscribe", post(handlers::subscribe))
+            .route("/subscribe/telegram", post(handlers::subscribe_via_telegram))
+            .route(
+                "/subscribe/confirm/:token",
+                post(handlers::confirm_subscription),
+            )
             .route(
                 "/subscribe/leave/:token",
                 get(handlers::get_subscription_by_token).post(handlers::unsubscribe_by_token),
@@ -193,6 +198,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/gazette", get(handlers::list_gazette))
             .route("/gazette/:slug/watch", post(handlers::watch_gazette_leaf))
             .route(
+                "/gazette/watch/confirm/:token",
+                post(handlers::confirm_gazette_watch),
+            )
+            .route(
                 "/gazette/watch/:token",
                 get(handlers::get_gazette_watch).post(handlers::leave_gazette_watch),
             )
@@ -205,6 +214,9 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // The shelf and the five frames are the same for every visitor;
             // what a given person owns is not, and lives behind a session.
             .route("/battles/cards", get(handlers::list_battle_cards))
+            // Снаряжение этюдов: стены, башни, таран. Полке не нужно, сцене этюда
+            // нужно ради картинок.
+            .route("/battles/etude-cards", get(handlers::list_battle_etude_cards))
             .route("/battles/frames", get(handlers::get_battle_frames))
             .route("/battles/motions", get(handlers::get_battle_motions))
             .route("/battles/races", get(handlers::list_battle_races))
@@ -231,6 +243,11 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/battles/challenges/:id/restart",
                 post(handlers::restart_battle_match),
+            )
+            // Расстановка перед встречей — на поле этой встречи.
+            .route(
+                "/battles/challenges/:id/lineup",
+                get(handlers::get_battle_lineup).put(handlers::save_battle_lineup),
             )
             // Кошелёк и владение. Всё под сессией: книга лежит на сервере
             // именно потому, что кошелёк в localStorage — бесконечные деньги.
@@ -684,6 +701,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 ),
             )
             .route(
+                "/admin/battles/cards/race",
+                post(handlers::admin_set_battle_cards_race).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/battles/cards/:id",
                 get(handlers::admin_get_battle_card)
                     .put(handlers::admin_update_battle_card)
@@ -1087,6 +1110,19 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/admin/battles/grant",
                 post(handlers::admin_grant_battle_coin).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            // Проверка проходимости: партии ботов в фоне, стол спрашивает итог.
+            .route(
+                "/admin/battles/probe",
+                post(handlers::admin_start_battle_probe).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/battles/probe/:id",
+                get(handlers::admin_read_battle_probe).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )
@@ -1578,6 +1614,8 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             // === USER AUTH ===
             .route("/auth/register", post(handlers::user_register))
+            // Гость боя: первый бой обучения без формы входа.
+            .route("/auth/guest", post(handlers::guest_player))
             .route(
                 "/auth/login/challenge",
                 post(handlers::user_login_challenge),
@@ -1605,6 +1643,18 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             )
             .route("/auth/telegram/link", delete(handlers::telegram_unlink))
             .route("/auth/email", post(handlers::user_name_email))
+            // Вход через Google и Apple. Callback публичный: провайдер не носит
+            // ни ключа админа, ни сессии, а результат он человеку не отдаёт —
+            // только возвращает его на сайт. Забирает результат `redeem`, и
+            // только с привязкой, которая есть лишь у вкладки, просившей вход.
+            .route("/auth/oauth/config", get(handlers::oauth_config))
+            .route("/auth/oauth/redeem", post(handlers::oauth_redeem))
+            .route("/auth/oauth/:provider/start", post(handlers::oauth_start))
+            .route(
+                "/auth/oauth/:provider/callback",
+                get(handlers::oauth_callback_get).post(handlers::oauth_callback_post),
+            )
+            .route("/auth/oauth/:provider/link", delete(handlers::oauth_unlink))
             .route("/telegram/webhook/:secret", post(handlers::telegram_webhook))
             .route(
                 "/certificates/:token",
@@ -1841,6 +1891,7 @@ fn is_public_cacheable(path: &str) -> bool {
         "/gazette/home",
         "/gazette/blotter",
         "/battles/cards",
+        "/battles/etude-cards",
         "/battles/frames",
         "/battles/motions",
         "/battles/races",

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Плитки местности для поля боя: стена, овраг, яма, болото, укрытие, холм,
-родник.
+родник, жар, алтарь, лёд.
 
 Рисуются не фигурами, а ПОЛЕМ — как огонь и яд в `magic_strips.py`: у каждой
 земли есть карта высот, её освещает свет сверху слева (тот же, что падает в
@@ -13,7 +13,7 @@
   <name>-mark.webp  — медальон: круглый срез той же плитки в золотой оправе.
                       Его ставят над картой, когда клетку занимает тело.
 
-    tools/cutout/.venv/bin/python tools/ground_tiles.py
+    tools/cutout/.venv/bin/python tools/ground_tiles.py [земля …]
 
 Подвижные слои (болото, родник, овраг, холм) лежат рядом
 и запечены на полную силу — сколько их видно, решает CSS: <земля>-<слой>.webp. Рисует их
@@ -636,6 +636,177 @@ def spring() -> Image.Image:
     return finish(col, np.maximum(water, np.clip(ring * 1.6, 0, 1)), x, y, 8, 12, 7.0, 0.4)
 
 
+def embers_geo(x: np.ndarray, y: np.ndarray) -> dict:
+    """Геометрия жара: пятно корки и сеть трещин. Одна на плитку и на кадры
+    огня (`ground_fx.py`): огонь обязан гореть ровно в тех швах, что нарисованы
+    на плитке, а две копии формулы разошлись бы на первой правке."""
+    cx, cy = W * 0.5, H * 0.54
+    rr = np.sqrt(((x - cx) / (W * 0.43)) ** 2 + ((y - cy) / (H * 0.34)) ** 2) \
+        + (vfx.fbm(x, y, 30.0, 201, 3) - 0.5) * 0.2 + (vfx.fbm(x, y, 9.0, 202, 3) - 0.5) * 0.05
+    mask = 1 - vfx.smooth(0.93, 1.0, rr)
+    rng = np.random.default_rng(203)
+    pts = []
+    while len(pts) < 15:
+        px, py = rng.uniform(0.04, 0.96) * W, rng.uniform(0.12, 0.92) * H
+        if np.hypot((px - cx) / (W * 0.5), (py - cy) / (H * 0.38)) < 1.05:
+            pts.append((px, py))
+    d1, d2, idx = vfx.voronoi(x, y, np.array(pts, np.float32))
+    edge = d2 - d1                                    # 0 на шве пластин
+    width = 5.5 + 5.0 * vfx.fbm(x, y, 22.0, 204, 3)
+    return {"mask": mask, "edge": edge, "width": width, "idx": idx, "rng": rng, "n": len(pts)}
+
+
+def embers() -> Image.Image:
+    """Жар: плита обугленной корки, расколотая на пластины; в трещинах лава.
+    Корка тёмная и рельефная, свет только в трещинах. Горит и бурлит она в
+    покадровой полосе `embers-fire` (`ground_fx.py`), а плитка — это то, что
+    остаётся, когда огонь не виден: остывающая лава."""
+    x, y = coords()
+    g = embers_geo(x, y)
+    mask, edge, width, idx, rng = g["mask"], g["edge"], g["width"], g["idx"], g["rng"]
+    core = vfx.smooth(width, 0.0, edge)               # 1 в середине трещины
+    plate = vfx.smooth(0.0, 26.0, edge)
+    cell_tone = rng.uniform(0.0, 1.0, g["n"]).astype(np.float32)[idx]
+    height = plate * 0.9 + vfx.fbm(x, y, 7.0, 205, 4) * 0.35 - core * 0.6
+    crust = mix(C("#1a1411", x), C("#4a3a30", x), vfx.fbm(x, y, 34.0, 206, 3) * 0.6 + cell_tone * 0.4)
+    crust = mix(crust, C("#6b5446", x), vfx.smooth(0.7, 0.8, vfx.fbm(x, y, 5.0, 207, 3)) * 0.4)
+    col = paint(crust, lit(height, 9.0), 0.32)
+    spill = vfx.smooth(30.0, 0.0, edge)
+    col = col + C("#ff6a1a", x) * (spill ** 1.6 * 0.4)[..., None]
+    hot = np.clip(core * (0.5 + 0.5 * vfx.fbm(x, y, 40.0, 208, 3)), 0, 1)
+    heat = vfx.ramp(hot, [(0.0, (110, 22, 8, 0)), (0.2, (150, 34, 10, 255)),
+                          (0.55, (225, 96, 22, 255)), (0.85, (255, 170, 70, 255)),
+                          (1.0, (255, 220, 150, 255))])
+    col = mix(col, heat[..., :3], heat[..., 3] / 255.0)
+    return finish(col, mask, x, y, 8, 12, 7.0, 0.45)
+
+
+def altar() -> Image.Image:
+    """Алтарь: двухступенчатый каменный круг. По внешнему кольцу — руны, во
+    внутреннем — шестиконечная звезда; когда на нём стоят, руны разгораются, и
+    над серединой встаёт столб света."""
+    x, y = coords()
+    cx, cy = W * 0.5, H * 0.55
+    rx, ry = W * 0.42, H * 0.285
+    ux, uy = (x - cx) / rx, (y - cy) / ry
+    wob = (vfx.fbm(x, y, 26.0, 231, 3) - 0.5) * 0.06
+    r = np.sqrt(ux * ux + uy * uy) + wob
+    disk = 1 - vfx.smooth(0.97, 1.02, r)
+    # Две ступени с фаской: внешняя ниже, внутренняя выше.
+    height = 0.45 * vfx.smooth(1.02, 0.94, r) + 0.9 * vfx.smooth(0.7, 0.62, r) \
+        + vfx.fbm(x, y, 8.0, 232, 4) * 0.08
+    ang = np.arctan2(uy, ux)
+    joint = vfx.smooth(0.0, 0.05, np.abs(np.sin(ang * 6.0 + (r > 0.68) * 0.5)))
+    stone = mix(C("#58534c", x), C("#9a9487", x), vfx.fbm(x, y, 22.0, 233, 3))
+    stone = mix(stone, C("#3e3f33", x), vfx.smooth(0.55, 0.7, vfx.fbm(x, y, 14.0, 234, 3)) * 0.4)  # лишайник
+    col = paint(stone, lit(height, 26.0), 0.34)
+    col = col * (0.55 + 0.45 * joint)[..., None]
+    col = col * (1 - 0.35 * vfx.smooth(0.86, 1.0, r))[..., None]
+
+    def stroke(x0: float, y0: float, x1: float, y1: float, w: float) -> np.ndarray:
+        # Штрих задан в долях эллипса, считается в пикселях клетки.
+        dd, _t = vfx.segment_distance(x, y, cx + x0 * rx, cy + y0 * ry, cx + x1 * rx, cy + y1 * ry)
+        return vfx.smooth(w + 1.0, w * 0.35, dd)
+
+    rng = np.random.default_rng(235)
+    outer = np.zeros_like(x)
+    for i in range(12):                                  # руны по кольцу
+        a = i / 12 * 2 * np.pi + 0.1
+        rm = 0.84
+        ca, sa = np.cos(a), np.sin(a)
+        for _ in range(int(rng.integers(2, 4))):
+            o1, o2 = rng.uniform(-0.06, 0.06), rng.uniform(-0.06, 0.06)
+            r1, r2 = rm + rng.uniform(-0.08, 0.08), rm + rng.uniform(-0.08, 0.08)
+            outer = np.maximum(outer, stroke(r1 * ca - o1 * sa, r1 * sa + o1 * ca,
+                                             r2 * ca - o2 * sa, r2 * sa + o2 * ca, 3.4))
+    outer = np.maximum(outer, np.abs(0) + vfx.smooth(2.6, 0.8, np.abs(r - 0.7) * rx) * 0.9)  # граница ступеней
+    inner = np.zeros_like(x)
+    star = [(np.cos(k * np.pi / 3 - np.pi / 2) * 0.5, np.sin(k * np.pi / 3 - np.pi / 2) * 0.5) for k in range(6)]
+    for k in range(6):                                   # звезда: две накладные тройки
+        inner = np.maximum(inner, stroke(*star[k], *star[(k + 2) % 6], 3.4))
+    inner = np.maximum(inner, vfx.smooth(2.6, 0.8, np.abs(r - 0.16) * rx))
+    runes = np.clip(np.maximum(outer, inner), 0, 1) * disk
+    # Выбито в камне: узкая тень и тусклый фиолетовый отсвет в бороздке.
+    col = col * (1 - 0.45 * runes)[..., None]
+    col = col + C("#9a82ea", x) * (runes * 0.85)[..., None]
+    # Слои. Руны светятся двумя половинами и перекликаются: кольцо — звезда.
+    EXTRA["altar-runes-a"] = to_image(C("#e3d6ff", x), np.clip(outer, 0, 1) * disk)
+    EXTRA["altar-runes-b"] = to_image(C("#fff0c4", x), np.clip(inner, 0, 1) * disk)
+    # Столб света: из середины вверх, у основания плотный, к вершине растворяется.
+    bx = cx + (vfx.fbm(x * 0.3, y * 1.0, 20.0, 236, 3) - 0.5) * 20
+    rise = np.clip((cy - y) / (cy - H * 0.04), 0, 1)
+    half = W * (0.12 + 0.05 * rise)
+    beam = vfx.smooth(half, half * 0.2, np.abs(x - bx)) * (1 - rise) ** 0.8 * (y <= cy + 6)
+    beam = beam * (0.55 + 0.45 * vfx.fbm(x * 0.4, y * 0.12, 11.0, 237, 3))
+    EXTRA["altar-pillar"] = to_image(C("#efe6ff", x), np.clip(beam, 0, 1) * 0.85)
+    # Круг расходится от середины, как у родника, но по рунам и светлее.
+    EXTRA["altar-ring"] = to_image(C("#e9dcff", x), vfx.smooth(0.07, 0.0, np.abs(r - 0.84)) * disk)
+    return finish(col, disk, x, y, 10, 15, 8.0, 0.45)
+
+
+def ice() -> Image.Image:
+    """Лёд: гранёная плита, под гранями глубина, на поверхности иней и
+    царапины от скольжения. Цвет холодный и светлый — единственная земля,
+    которая на тёмном сукне светлее самого сукна."""
+    x, y = coords()
+    cx, cy = W * 0.5, H * 0.54
+    u, v = (x - cx) / (W * 0.47), (y - cy) / (H * 0.36)
+    wob = (vfx.fbm(x, y, 34.0, 251, 3) - 0.5) * 0.1 + (vfx.fbm(x, y, 8.0, 252, 3) - 0.5) * 0.03
+    rr = (np.abs(u) ** 3.2 + np.abs(v) ** 3.2) ** (1 / 3.2) + wob       # скруглённый прямоугольник
+    mask = 1 - vfx.smooth(0.965, 1.0, rr)
+    rng = np.random.default_rng(253)
+    pts = np.array([(rng.uniform(0.05, 0.95) * W, rng.uniform(0.12, 0.92) * H) for _ in range(13)], np.float32)
+    d1, d2, idx = vfx.voronoi(x, y, pts)
+    edge = d2 - d1
+    seam = vfx.smooth(3.2, 0.3, edge)                              # тонкий шов между гранями
+    facet = rng.uniform(-1, 1, (len(pts), 2)).astype(np.float32)
+    # Каждая грань чуть наклонена: свет разный на соседних гранях — «гранёность».
+    gx, gy = facet[idx, 0], facet[idx, 1]
+    height = (gx * (x - cx) + gy * (y - cy)) * 0.012 + vfx.fbm(x, y, 12.0, 254, 4) * 0.25
+    depth = vfx.warped(x, y, 90.0, 255, 50.0)
+    base = mix(C("#d6f1f9", x), C("#2f74a2", x), vfx.smooth(0.25, 0.7, depth))
+    col = paint(base, lit(height, 18.0), 0.62)
+    col = mix(col, C("#f6fcff", x), seam * 0.75)
+    # Иней по кромке: белая пелена, плотнее у края и в нескольких пятнах.
+    frost = vfx.smooth(0.7, 1.0, rr) * (0.5 + 0.5 * vfx.fbm(x, y, 5.0, 256, 4))
+    frost = np.maximum(frost, vfx.smooth(0.66, 0.72, vfx.fbm(x, y, 28.0, 257, 3)) * 0.4)
+    col = mix(col, C("#eef8fc", x), np.clip(frost, 0, 1) * 0.65)
+    # Царапины: тонкие вытянутые вдоль клетки линии от скольжения.
+    scratch = vfx.smooth(0.74, 0.8, vfx.fbm((x + y * 0.6) * 0.1, (y - x * 0.4) * 1.0, 9.0, 258, 3)) \
+        * vfx.smooth(0.4, 0.6, vfx.fbm(x, y, 40.0, 259, 3))
+    col = mix(col, C("#ffffff", x), scratch * 0.3)
+    # Блик: широкая диагональная полоса света сверху слева, на тёмном сукне
+    # он читается как гладкая поверхность.
+    band = vfx.smooth(70.0, 0.0, np.abs((x - W * 0.2) + (y - H * 0.25) * 0.75 - W * 0.22))
+    col = mix(col, C("#ffffff", x), band * 0.28 * (1 - frost))
+
+    col = col * 1.14
+    # Слои. Блик, проходящий по плите: рисунок для маски-полосы в CSS.
+    EXTRA["ice-sheen"] = to_image(C("#ffffff", x), np.clip(0.35 + 0.65 * vfx.fbm(x * 0.5, y * 0.5, 30.0, 261, 3)
+                                                          + seam * 0.4, 0, 1) * mask * 0.85)
+    # Искры инея: четырёхлучевые звёздочки, две группы мерцают по очереди.
+    for tag, seed in (("a", 262), ("b", 263)):
+        r2 = np.random.default_rng(seed)
+        star = np.zeros_like(x)
+        for _ in range(9):
+            for _try in range(40):
+                px, py = r2.uniform(0.12, 0.88) * W, r2.uniform(0.2, 0.9) * H
+                if mask[int(py * SS), int(px * SS)] > 0.95:
+                    break
+            size = r2.uniform(7.0, 15.0)
+            dx, dy = np.abs(x - px), np.abs(y - py)
+            cross = np.maximum(vfx.smooth(1.6, 0.2, dy) * vfx.smooth(size, 0.0, dx),
+                               vfx.smooth(1.6, 0.2, dx) * vfx.smooth(size, 0.0, dy))
+            halo = vfx.smooth(size * 0.55, 0.0, np.hypot(dx, dy)) * 0.55
+            star = np.maximum(star, np.maximum(cross, halo))
+        EXTRA[f"ice-spark-{tag}"] = to_image(C("#ffffff", x), star * mask)
+    # Холодное дыхание: низкий стелющийся туман, сносит вбок.
+    fog = vfx.smooth(0.45, 0.78, vfx.warped(x * 0.6, y * 1.4, 60.0, 264, 35.0)) \
+        * vfx.smooth(0.2, 0.9, y / H) * vfx.smooth(0.0, 0.3, 1 - rr * 0.6)
+    EXTRA["ice-mist"] = to_image(C("#e6f6fb", x), fog * 0.6 * vfx.smooth(1.05, 0.7, rr))
+    return finish(col, mask, x, y, 8, 12, 7.0, 0.4)
+
+
 GROUNDS = {
     "wall": wall,
     "ravine": ravine,
@@ -644,6 +815,9 @@ GROUNDS = {
     "cover": cover,
     "hill": hill,
     "spring": spring,
+    "embers": embers,
+    "altar": altar,
+    "ice": ice,
 }
 
 
@@ -676,8 +850,13 @@ def medallion(tile: Image.Image, ground: str, size: int = 112) -> Image.Image:
 
 
 def main() -> None:
+    """Без аргументов рисует все земли; с именами — только названные (и их
+    слои): так новую землю дорисовывают, не трогая файлов прежних."""
     OUT.mkdir(parents=True, exist_ok=True)
+    only = set(sys.argv[1:])
     for name, draw in GROUNDS.items():
+        if only and name not in only:
+            continue
         tile = draw()
         tile.save(OUT / f"{name}.webp", "WEBP", quality=88, method=6)
         medallion(tile, name).save(OUT / f"{name}-mark.webp", "WEBP", quality=90, method=6)

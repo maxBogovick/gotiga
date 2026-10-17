@@ -45,6 +45,8 @@ fn step_name(step: StepId) -> &'static str {
         StepId::AttackerBless => "благословения бьющего",
         StepId::AttackerCurse => "проклятия бьющего",
         StepId::TargetVulnerable => "уязвимость цели",
+        StepId::RaceAttack => "раса бьющего против расы цели",
+        StepId::RaceDefence => "защита цели от расы бьющего",
         StepId::ChannelDefence => "защита по каналу",
         StepId::Floor => "минимум 1",
         StepId::Shield => "щит",

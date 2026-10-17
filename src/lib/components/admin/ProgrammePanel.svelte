@@ -101,8 +101,10 @@
     caseBg: null,
     curatorNoteEn: null,
     curatorNoteRu: null,
+    curatorNoteUk: null,
     curatorSignEn: null,
     curatorSignRu: null,
+    curatorSignUk: null,
     frameTone: null,
     frameThickness: null,
     frameMode: null,
@@ -429,6 +431,16 @@
             bind:value={settings.curatorNoteRu}
           ></textarea>
         </label>
+        <label class="field" for="note-uk">
+          <span class="label">Note (UK)</span>
+          <textarea
+            id="note-uk"
+            class="input textarea"
+            rows="3"
+            placeholder="Музей готує кілька показів. Їх не можна підганяти — кожен відчиниться у свою годину."
+            bind:value={settings.curatorNoteUk}
+          ></textarea>
+        </label>
       </div>
       <div class="bilingual">
         <label class="field" for="sign-en">
@@ -438,6 +450,10 @@
         <label class="field" for="sign-ru">
           <span class="label">Signature (RU)</span>
           <input id="sign-ru" class="input" type="text" placeholder="— СМОТРИТЕЛЬ" bind:value={settings.curatorSignRu} />
+        </label>
+        <label class="field" for="sign-uk">
+          <span class="label">Signature (UK)</span>
+          <input id="sign-uk" class="input" type="text" placeholder="— ДОГЛЯДАЧ" bind:value={settings.curatorSignUk} />
         </label>
       </div>
     </section>
@@ -519,7 +535,7 @@
   .textarea { resize: vertical; }
   .bilingual {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
     gap: 16px;
     margin-bottom: 14px;
   }

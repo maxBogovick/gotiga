@@ -1,6 +1,6 @@
 <script lang="ts">
   /** Слежение за листами вестника: кому дом обещал написать, когда выйдет. */
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import { userDesk } from '$lib/stores/user-desk.svelte';
   import type { GazetteWatchDto } from '$lib/types/api';
@@ -9,8 +9,7 @@
   let error = $state('');
 
   function title(w: GazetteWatchDto): string {
-    const ru = $lang === 'ru' && w.titleRu.trim();
-    return (ru ? w.titleRu : w.titleEn).trim();
+    return localized(w, 'title', $lang);
   }
 
   async function release(w: GazetteWatchDto) {

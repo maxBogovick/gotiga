@@ -40,8 +40,9 @@
     import { t, registerAdminDicts, type TranslationKey } from '$lib/i18n';
     import { enAdmin } from '$lib/i18n/en.admin';
     import { ruAdmin } from '$lib/i18n/ru.admin';
+    import { ukAdmin } from '$lib/i18n/uk.admin';
 
-    registerAdminDicts(enAdmin, ruAdmin);
+    registerAdminDicts({ en: enAdmin, ru: ruAdmin, uk: ukAdmin });
     import FigurineForm from '$lib/components/admin/FigurineForm.svelte';
     import SlugsPanel from '$lib/components/admin/SlugsPanel.svelte';
     import ShowingRoomsPanel from '$lib/components/admin/ShowingRoomsPanel.svelte';

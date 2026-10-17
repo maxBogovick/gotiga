@@ -6,6 +6,7 @@
   import { api } from '$lib/api';
   import { VISUAL_CATEGORIES, iconLabel, getIconById, generatePersonalPool } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
+  import { authStore } from '$lib/stores/auth.svelte';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
 
   // steps: 0=validating, 1-4=icon selection, 5=success, -1=error
@@ -15,6 +16,8 @@
   let userEmail   = $state('');
   let token       = $state('');
   let selections  = $state<string[]>(['', '', '', '']);
+  // Сервер гасит прежние сессии и выдаёт одну новую: человек не выброшен.
+  let signedIn    = $state(false);
 
   // Reset regenerates the personal subset, so the new selections are always
   // replayable at login. Generated once and sent with the reset.
@@ -59,7 +62,11 @@
   async function submit() {
     loading = true;
     try {
-      await api.applyPasswordReset(token, selections as [string, string, string, string], pool);
+      const res = await api.applyPasswordReset(token, selections as [string, string, string, string], pool);
+      if (res?.sessionToken && res.user) {
+        authStore.setSession(res.sessionToken, res.user);
+        signedIn = true;
+      }
       step = 5;
     } catch {
       error = $t('authErrorServer');
@@ -125,8 +132,8 @@
     <div class="success-wrap">
       <div class="wax-seal">✦</div>
       <h1 class="auth-title">{$t('setPasswordSuccess')}</h1>
-      <button class="auth-btn-primary" onclick={() => goto('/login')}>
-        {$t('setPasswordGoLogin')}
+      <button class="auth-btn-primary" onclick={() => goto(signedIn ? '/profile/account' : '/login')}>
+        {signedIn ? $t('setPasswordContinue') : $t('setPasswordGoLogin')}
       </button>
     </div>
   {/if}

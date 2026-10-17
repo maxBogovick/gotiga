@@ -9,7 +9,7 @@
   // оставшуюся высоту, и всё, что встанет под ней, человек увидит только
   // прокруткой — то есть не увидит.
   import { onMount } from 'svelte';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import BattleMotionsDesk from '$lib/components/BattleMotionsDesk.svelte';
@@ -78,7 +78,7 @@
   }
 
   const nameOf = (one: StudioMotion) =>
-    ($lang === 'en' ? one.body.nameEn : one.body.nameRu) || one.body.id;
+    localized(one.body, 'name', $lang) || one.body.id;
 
   /** Что с движением сейчас — одним словом. Взятое домом названо своим: оно
    *  стоит в своде и здесь больше не правится. */

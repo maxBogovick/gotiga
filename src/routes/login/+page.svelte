@@ -10,7 +10,7 @@
   import { getIconById, iconLabel, type IconCategory } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
-  import TelegramDoor from '$lib/components/auth/TelegramDoor.svelte';
+  import AuthDoors from '$lib/components/auth/AuthDoors.svelte';
   import type { ChallengeStepDto, ContactSettings, UserDto } from '$lib/types/api';
   import { onMount } from 'svelte';
 
@@ -235,7 +235,7 @@
                id="auth-email" name="email" autocomplete="email" onkeydown={(e) => e.key === 'Enter' && advance()} />
       </label>
     </div>
-    <TelegramDoor ondone={(token, user) => { void afterSignIn(token, user); }} />
+    <AuthDoors ondone={(token, user) => { void afterSignIn(token, user); }} />
   {/if}
 
   {#if step >= 2 && step <= 5}

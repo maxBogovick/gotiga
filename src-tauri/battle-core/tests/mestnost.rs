@@ -397,3 +397,234 @@ fn a_spring_mends_at_the_start_of_the_turn() {
     assert_eq!(st.units[0].health.current, hurt + SPRING_MEND);
     assert!(events.iter().any(|e| matches!(e, Event::Healed { target: 0, by: None, .. })));
 }
+
+// ── Жар, алтарь, лёд ────────────────────────────────────────────────────────
+
+fn camper_on(ground: Ground) -> MatchState {
+    let setup = Setup {
+        player_board: vec![(body("Путник", 8, 1), cell(1, 4))],
+        player_hand: vec![],
+        keeper_board: vec![(body("Страж", 8, 1), cell(1, 0))],
+        keeper_hand: vec![],
+        terrain: vec![tile(1, 4, ground)],
+        field: Default::default(),
+    };
+    MatchState::begin_with(setup, rules())
+}
+
+/// Жар жжёт стоящего на нём в начале СВОЕГО хода, и только его.
+#[test]
+fn embers_burn_at_the_start_of_the_owners_turn() {
+    let st = camper_on(Ground::Embers);
+    assert_eq!(st.units[0].health.current, 8, "в начале партии жар не жжёт");
+    let (st, _) = act(&st, Action::EndTurn);
+    assert_eq!(st.units[0].health.current, 8, "ход хранителя: чужой жар молчит");
+    let (st, events) = act(&st, Action::EndTurn);
+    assert_eq!(st.units[0].health.current, 8 - EMBERS_HARM);
+    assert!(events.iter().any(|e| matches!(e, Event::Damaged { target: 0, .. })));
+}
+
+/// Жар не лечится и не копится: каждый свой ход ровно `EMBERS_HARM`.
+#[test]
+fn embers_burn_every_turn_by_the_same_amount() {
+    let mut st = camper_on(Ground::Embers);
+    for turn in 1..=3 {
+        st = act(&st, Action::EndTurn).0;
+        st = act(&st, Action::EndTurn).0;
+        assert_eq!(st.units[0].health.current, 8 - EMBERS_HARM * turn);
+    }
+}
+
+/// Тело, ушедшее с жара, больше не горит.
+#[test]
+fn leaving_the_embers_stops_the_burning() {
+    let st = camper_on(Ground::Embers);
+    let (st, _) = act(&st, Action::Move { unit: 0, to: cell(1, 5) });
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::EndTurn);
+    assert_eq!(st.units[0].health.current, 8);
+}
+
+/// Алтарь платит стороне маной в начале хода — один раз, а не по телу.
+#[test]
+fn an_altar_pays_its_side_one_coin() {
+    let plain = camper_on(Ground::Hill);
+    let altar = camper_on(Ground::Altar);
+    let (plain, _) = act(&plain, Action::EndTurn);
+    let (plain, _) = act(&plain, Action::EndTurn);
+    let (altar, _) = act(&altar, Action::EndTurn);
+    let (altar, events) = act(&altar, Action::EndTurn);
+    assert_eq!(altar.player.mana, plain.player.mana + ALTAR_COIN);
+    assert!(events.iter().any(|e| matches!(e, Event::Mana { side: Side::Player, amount } if *amount == ALTAR_COIN)));
+}
+
+/// Два тела на двух алтарях платят один раз.
+#[test]
+fn two_altars_pay_once() {
+    let setup = Setup {
+        player_board: vec![(body("Раз", 8, 1), cell(0, 4)), (body("Два", 8, 1), cell(2, 4))],
+        player_hand: vec![],
+        keeper_board: vec![(body("Страж", 8, 1), cell(1, 0))],
+        keeper_hand: vec![],
+        terrain: vec![tile(0, 4, Ground::Altar), tile(2, 4, Ground::Altar)],
+        field: Default::default(),
+    };
+    let st = MatchState::begin_with(setup, rules());
+    let plain = camper_on(Ground::Hill);
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::EndTurn);
+    let (plain, _) = act(&plain, Action::EndTurn);
+    let (plain, _) = act(&plain, Action::EndTurn);
+    assert_eq!(st.player.mana, plain.player.mana + ALTAR_COIN);
+}
+
+/// Алтарь чужой стороны своей не платит.
+#[test]
+fn an_altar_does_not_pay_the_other_side() {
+    let (st, _) = act(&camper_on(Ground::Altar), Action::EndTurn);
+    let (plain, _) = act(&camper_on(Ground::Hill), Action::EndTurn);
+    assert_eq!(st.keeper.mana, plain.keeper.mana);
+}
+
+/// Со льда ходят на клетку дальше; на льду — нет, лёд даёт тому, кто уходит.
+#[test]
+fn from_the_ice_a_body_walks_one_further() {
+    let on_ice = runner_at(1, 5, 1, vec![tile(1, 5, Ground::Ice)]);
+    let off_ice = runner_at(1, 5, 1, vec![]);
+    assert!(!moves_of(&off_ice, 0).contains(&cell(1, 3)));
+    assert!(moves_of(&on_ice, 0).contains(&cell(1, 3)));
+    assert!(!moves_of(&on_ice, 0).contains(&cell(1, 2)), "ровно на одну клетку дальше");
+}
+
+/// Шаг по льду не делает льдом всё остальное поле: пришедший на лёд ещё не скользит.
+#[test]
+fn stepping_onto_the_ice_gives_nothing_yet() {
+    let st = runner_at(1, 6, 1, vec![tile(1, 5, Ground::Ice)]);
+    assert!(!moves_of(&st, 0).contains(&cell(1, 4)));
+}
+
+// ── Гроза, могила, хрусталь ─────────────────────────────────────────────────
+
+/// Стоящий на земле нападает на соседа, у которого здоровье 100 и брони нет:
+/// сколько снято — ровно сила нападающего.
+fn dealt_by_a_body_on(ground: Option<Ground>) -> i32 {
+    let setup = Setup {
+        player_board: vec![(body("Боец", 8, 3), cell(1, 4))],
+        player_hand: vec![],
+        keeper_board: vec![(body("Цель", 100, 1), cell(1, 3))],
+        keeper_hand: vec![],
+        terrain: ground.map(|g| vec![tile(1, 4, g)]).unwrap_or_default(),
+        field: Default::default(),
+    };
+    let st = MatchState::begin_with(setup, rules());
+    let (st, _) = act(&st, Action::Attack { attacker: 0, target: 1 });
+    100 - st.units[1].health.current
+}
+
+/// Удар по телу на земле: сколько снимет враг с того, кто на ней стоит.
+fn taken_by_a_body_on(ground: Option<Ground>) -> i32 {
+    let setup = Setup {
+        player_board: vec![(body("Цель", 100, 1), cell(1, 4))],
+        player_hand: vec![],
+        keeper_board: vec![(body("Враг", 8, 4), cell(1, 3))],
+        keeper_hand: vec![],
+        terrain: ground.map(|g| vec![tile(1, 4, g)]).unwrap_or_default(),
+        field: Default::default(),
+    };
+    let st = MatchState::begin_with(setup, rules());
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::Attack { attacker: 1, target: 0 });
+    100 - st.units[0].health.current
+}
+
+/// Гроза прибавляет, могила отнимает, ровная земля — ничего.
+#[test]
+fn a_storm_strengthens_and_a_grave_weakens_the_one_who_stands() {
+    let plain = dealt_by_a_body_on(None);
+    assert_eq!(dealt_by_a_body_on(Some(Ground::Storm)), plain + STORM_POWER);
+    assert_eq!(dealt_by_a_body_on(Some(Ground::Grave)), plain - GRAVE_CURSE);
+}
+
+/// Хрусталь снижает телесный урон на свою броню.
+#[test]
+fn crystal_blunts_a_blow_by_its_armor() {
+    let plain = taken_by_a_body_on(None);
+    assert_eq!(taken_by_a_body_on(Some(Ground::Crystal)), plain - CRYSTAL_ARMOR);
+}
+
+/// Прибавка земли держится местом: сошёл — снята в тот же миг.
+#[test]
+fn the_earths_gift_is_gone_when_the_body_steps_off() {
+    let setup = Setup {
+        player_board: vec![(body("Боец", 8, 3), cell(1, 4))],
+        player_hand: vec![],
+        keeper_board: vec![(body("Цель", 100, 1), cell(1, 1))],
+        keeper_hand: vec![],
+        terrain: vec![tile(1, 4, Ground::Storm)],
+        field: Default::default(),
+    };
+    let st = MatchState::begin_with(setup, rules());
+    assert_eq!(st.units[0].aura.len(), 1, "на плите аура есть с первой минуты");
+    let (st, _) = act(&st, Action::Move { unit: 0, to: cell(1, 3) });
+    assert!(st.units[0].aura.is_empty(), "сошёл — аура снята");
+}
+
+// ── Витраж, разлом, омут ────────────────────────────────────────────────────
+
+/// Тело на земле получает колдовской удар силой 6; сколько снято.
+fn charm_taken_on(ground: Option<Ground>, ward: i32) -> i32 {
+    let mut mage = body("Маг", 8, 6);
+    mage.channel = Channel::Magic;
+    let mut target = body("Цель", 100, 1);
+    target.ward = ward;
+    let setup = Setup {
+        player_board: vec![(target, cell(1, 4))],
+        player_hand: vec![],
+        keeper_board: vec![(mage, cell(1, 3))],
+        keeper_hand: vec![],
+        terrain: ground.map(|g| vec![tile(1, 4, g)]).unwrap_or_default(),
+        field: Default::default(),
+    };
+    let st = MatchState::begin_with(setup, rules());
+    let (st, _) = act(&st, Action::EndTurn);
+    let (st, _) = act(&st, Action::Attack { attacker: 1, target: 0 });
+    100 - st.units[0].health.current
+}
+
+/// Витраж гасит чары на свой оберег.
+#[test]
+fn glass_blunts_a_charm_by_its_ward() {
+    let plain = charm_taken_on(None, 0);
+    assert_eq!(charm_taken_on(Some(Ground::Glass), 0), plain - GLASS_WARD);
+}
+
+/// Разлом: бьёт сильнее и принимает больше — обе стороны в одном теле.
+#[test]
+fn a_rift_hits_harder_and_takes_more() {
+    assert_eq!(dealt_by_a_body_on(Some(Ground::Rift)), dealt_by_a_body_on(None) + RIFT_POWER);
+    assert_eq!(taken_by_a_body_on(Some(Ground::Rift)), taken_by_a_body_on(None) + RIFT_FRAGILE);
+}
+
+/// Омут смывает то, что есть: броню, но не создаёт слабости из ничего.
+#[test]
+fn a_maelstrom_washes_off_armor_it_finds() {
+    // Без брони омут ничего не меняет: защита зажата снизу нулём.
+    assert_eq!(taken_by_a_body_on(Some(Ground::Maelstrom)), taken_by_a_body_on(None));
+    let mut target = body("Цель", 100, 1);
+    target.armor = 3;
+    let take = |g: Option<Ground>| {
+        let setup = Setup {
+            player_board: vec![(target.clone(), cell(1, 4))],
+            player_hand: vec![],
+            keeper_board: vec![(body("Враг", 8, 4), cell(1, 3))],
+            keeper_hand: vec![],
+            terrain: g.map(|g| vec![tile(1, 4, g)]).unwrap_or_default(),
+            field: Default::default(),
+        };
+        let st = MatchState::begin_with(setup, rules());
+        let (st, _) = act(&st, Action::EndTurn);
+        let (st, _) = act(&st, Action::Attack { attacker: 1, target: 0 });
+        100 - st.units[0].health.current
+    };
+    assert_eq!(take(Some(Ground::Maelstrom)), take(None) + MAELSTROM_SOAK);
+}

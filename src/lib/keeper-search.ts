@@ -1,3 +1,4 @@
+import { pick, type Lang } from '$lib/i18n';
 import type { FigurineListItem, SemanticHit } from '$lib/types/api';
 
 /** Server already ranks; archive shows this many of that order. */
@@ -119,7 +120,7 @@ export function matchKind(query: string, f: KeeperListFields): MatchKind {
     return 'description';
 }
 
-export function whisperSeeds(figurines: FigurineListItem[], lang: 'en' | 'ru'): string[] {
+export function whisperSeeds(figurines: FigurineListItem[], lang: Lang): string[] {
     const series = [
         ...new Set(
             figurines
@@ -127,9 +128,10 @@ export function whisperSeeds(figurines: FigurineListItem[], lang: 'en' | 'ru'): 
                 .filter((s): s is string => Boolean(s)),
         ),
     ].slice(0, 2);
-    const fixed =
-        lang === 'ru'
-            ? ['для тёмной библиотеки', 'закрытое лицо', 'ещё в доме', 'со свечой']
-            : ['for a dark library', 'a veiled face', 'still in the house', 'holding a candle'];
+    const fixed = pick(lang, {
+        en: ['for a dark library', 'a veiled face', 'still in the house', 'holding a candle'],
+        ru: ['для тёмной библиотеки', 'закрытое лицо', 'ещё в доме', 'со свечой'],
+        uk: ['для темної бібліотеки', 'закрите обличчя', 'ще в домі', 'зі свічкою'],
+    });
     return [...series, ...fixed];
 }

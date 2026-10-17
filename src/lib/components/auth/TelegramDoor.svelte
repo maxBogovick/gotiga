@@ -10,8 +10,10 @@
     mode?: 'login' | 'link';
     sessionToken?: string | null;
     ondone?: (sessionToken: string, user: UserDto | null) => void;
+    /** Отметил ли человек «мне 16 или больше». Нужно, только если заводится новое имя. */
+    ageConfirmed?: boolean;
   }
-  let { mode = 'login', sessionToken = null, ondone }: Props = $props();
+  let { mode = 'login', sessionToken = null, ondone, ageConfirmed = false }: Props = $props();
 
   // Опрос раз в две с половиной секунды: за пять минут жизни слова это сто
   // двадцать вопросов — заметно ниже предела, и человек не ждёт лишнего.
@@ -33,7 +35,7 @@
   let playing = $state(false);
   // Не `state`: в компоненте это имя забирает себе `$state`, и компонент молча
   // уезжает в legacy-режим (CLAUDE.md § 14.1).
-  let stage = $state<'idle' | 'waiting' | 'asked' | 'done' | 'refused' | 'cold' | 'failed'>('idle');
+  let stage = $state<'idle' | 'waiting' | 'asked' | 'done' | 'refused' | 'age' | 'cold' | 'failed'>('idle');
   let word = $state('');
   let link = $state('');
 
@@ -149,7 +151,7 @@
     if (busy) return;
     busy = true;
     try {
-      const res = await api.telegramLoginCode(sessionToken);
+      const res = await api.telegramLoginCode(sessionToken, ageConfirmed);
       code = res.code;
       word = res.word;
       link = res.link;
@@ -192,6 +194,13 @@
       stopPolling();
       forget();
       stage = 'refused';
+      return;
+    }
+    // Имени ещё нет, а возраст не подтверждён: новое имя заводится на регистрации.
+    if (res.state === 'age') {
+      stopPolling();
+      forget();
+      stage = 'age';
       return;
     }
     if (res.state === 'expired') {
@@ -240,10 +249,9 @@
 {#if enabled}
   <div class="door">
     {#if stage === 'idle' || stage === 'failed'}
-      {#if mode === 'login'}
-        <div class="rule"><span>{$t('authTelegramOr')}</span></div>
-      {/if}
-      <button class="door-btn" onclick={begin} disabled={busy}>
+      <!-- Линию «или» рисует блок дверей (`AuthDoors`): она общая для всех
+           дверей, и с появлением второй рядом у каждой была бы своя. -->
+      <button class="door-btn" class:door-btn--wide={mode === 'login'} onclick={begin} disabled={busy}>
         <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
           <path d="M1.5 7L13.5 2L11 13L7.5 9.5L5.5 11.5V8.5L11 4L5 8L1.5 7Z"
                 stroke="currentColor" stroke-width="1" stroke-linejoin="round" />
@@ -306,6 +314,9 @@
         <span class="door-seal-word">{$t('authTelegramDone')}</span>
         {#if enteredAs}<span class="door-seal-name">{enteredAs}</span>{/if}
       </div>
+    {:else if stage === 'age'}
+      <p class="door-note door-note--warn" role="alert">{$t('authTelegramAge')}</p>
+      <a class="door-btn door-btn--go" href="/register">{$t('authRegister')}</a>
     {:else}
       <p class="door-note door-note--warn">
         {stage === 'refused' ? $t('authTelegramRefused') : $t('authTelegramCold')}
@@ -330,27 +341,7 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    margin-top: 14px;
-  }
-
-  /* «или» на линии: две двери равны, и ни одна не объявлена главной. */
-  .rule {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    margin: 2px 0 6px;
-    color: rgba(95, 70, 54, 0.4);
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: 12px;
-    font-style: italic;
-  }
-  .rule::before,
-  .rule::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: #d8c6b1;
+    margin-top: 10px;
   }
 
   /* Своя кнопка, а не телеграмовская: чужой синий прямоугольник на пергаменте
@@ -377,6 +368,8 @@
     color: #c65f3c;
   }
   .door-btn:disabled { opacity: 0.6; cursor: default; }
+  /* Рядом с кнопками Google и Apple все двери одной ширины. */
+  .door-btn--wide { min-width: 15rem; }
   .door-btn--go {
     background: #6f3b24;
     border-color: #6f3b24;

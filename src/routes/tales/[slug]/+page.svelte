@@ -4,7 +4,7 @@
   import { cubicOut } from 'svelte/easing';
   import { api, resolveLargestImageUrl } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META } from '$lib/i18n';
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
   import { leafCopy, leafCoverUrl, neighborTitle, workHref } from '$lib/gazette';
@@ -24,7 +24,7 @@
   import TaleStage from '$lib/components/TaleStage.svelte';
   import TaleStageHeat from '$lib/components/TaleStageHeat.svelte';
   import TaleScenePlate from '$lib/components/TaleScenePlate.svelte';
-  import { taleSceneFor, sceneFromData } from '$lib/taleScenes';
+  import { taleSceneFor, sceneFromData, sceneAfter } from '$lib/taleScenes';
   import { sceneAssignment } from '$lib/sceneAb';
 
   let { data } = $props();
@@ -75,6 +75,8 @@
   let likes = $state(0);
   let myVote = $state<TaleVote>(0);
   let voting = $state(false);
+  // Голос отдают под именем: гостю вместо голоса предлагается войти.
+  let voteNeedsLogin = $state(false);
 
   /**
    * После последней строки: просил ли читатель продолжение, вышло ли оно,
@@ -152,6 +154,11 @@
   async function vote(next: 1 | -1) {
     const id = data.leaf?.id;
     if (!id || voting) return;
+    if (!authStore.isLoggedIn) {
+      voteNeedsLogin = true;
+      return;
+    }
+    voteNeedsLogin = false;
     const value: TaleVote = myVote === next ? 0 : next;
 
     // Кнопка отвечает пальцу, а не сети: голос и счётчик меняются сразу, а
@@ -214,7 +221,7 @@
     });
     return named.map((n) => (n && count.get(n) === 1 && !taken.has(n) ? n : ''));
   });
-  let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+  let ogLocale = $derived(LANG_META[$lang].og);
 
   /**
    * Дочитано — тому, кто дочитал до конца, а не тому, кто открыл. Конец
@@ -299,7 +306,7 @@
           mainEntityOfPage: { '@type': 'WebPage', '@id': taleUrl },
           datePublished: data.leaf.publishedAt ?? data.leaf.createdAt,
           dateModified: data.leaf.updatedAt ?? data.leaf.publishedAt ?? data.leaf.createdAt,
-          inLanguage: $lang === 'ru' ? 'ru' : 'en',
+          inLanguage: $lang,
           image: plateAbsolute ?? undefined,
           articleSection: $t('talesPageTitle'),
           ...(wordCount ? { wordCount } : {}),
@@ -475,7 +482,7 @@
               {/if}
             </aside>
           {/if}
-          {#if scene && sceneOn && scene.place === 'inline' && scene.after && scene.glow && i === scene.after[$lang === 'ru' ? 'ru' : 'en']}
+          {#if scene && sceneOn && scene.place === 'inline' && scene.after && scene.glow && i === sceneAfter(scene.after, $lang)}
             <TaleStage figure={scene.figure} veins={scene.glow} />
           {/if}
           {/snippet}
@@ -530,6 +537,12 @@
             {$t('talesDislikeAction')}
           </button>
         </div>
+        {#if voteNeedsLogin}
+          <p class="vote-login" role="status">
+            {$t('talesVoteNeedLogin')}
+            <a href="/login">{$t('talesVoteLogin')}</a>
+          </p>
+        {/if}
         <!-- Число печатается, только когда оно не ноль. «0 откликов» под
              только что дочитанной байкой говорит одно — «здесь никого», —
              и это то же правило, по которому числа спрашиваются после
@@ -905,6 +918,12 @@
   .vote:hover { color: var(--ink, #34251c); border-color: rgba(52, 37, 28, 0.4); }
   .vote:active { transform: translateY(1px); }
   .vote-mark { font-size: 12px; line-height: 1; }
+  .vote-login {
+    margin: 10px 0 0;
+    font-size: 13px;
+    color: var(--ink-soft, #5a4638);
+  }
+  .vote-login a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 
   /* Выбранный голос залит: цвета текста мало — его не видно рядом с соседней
      кнопкой, и именно на неё смотрят, решая, засчиталось ли. */

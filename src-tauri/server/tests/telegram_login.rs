@@ -57,6 +57,12 @@ async fn spawn(pool: PgPool) -> String {
         admin_log_db_path: format!("/tmp/gotiga-tg-logs-{}.sqlite", Uuid::new_v4()),
         analytics_hash_secret: "test-analytics-secret-0123456789".into(),
         auth_pepper: "pepper-for-tests-0123456789".into(),
+        google_client_id: None,
+        google_client_secret: None,
+        apple_client_id: None,
+        apple_team_id: None,
+        apple_key_id: None,
+        apple_private_key: None,
         auth_pepper_old: None,
     };
 
@@ -83,10 +89,16 @@ fn print_of(token: &str) -> String {
 
 /// Начать вход. `as_user` — сессия, и тогда это привязка из профиля.
 async fn ask_for_word(addr: &str, as_user: Option<&str>) -> Value {
+    ask_for_word_aged(addr, as_user, true).await
+}
+
+/// `age` — отметил ли человек «мне 16 или больше» там, где просил вход.
+async fn ask_for_word_aged(addr: &str, as_user: Option<&str>, age: bool) -> Value {
     let client = reqwest::Client::new();
     let mut req = client
         .post(format!("{addr}/api/v1/auth/telegram/code"))
-        .header("user-agent", "Mozilla/5.0 (Macintosh) Chrome/131.0");
+        .header("user-agent", "Mozilla/5.0 (Macintosh) Chrome/131.0")
+        .json(&json!({ "ageConfirmed": age }));
     if let Some(token) = as_user {
         req = req.header("authorization", format!("Bearer {token}"));
     }
@@ -599,4 +611,65 @@ async fn a_taken_email_is_refused(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(email, None);
+}
+
+/// Возраст: новое имя без отметки не заводится, и странице говорят об этом
+/// словом `age`, а не «вход отменён» — человек ничего не отменял.
+#[sqlx::test]
+async fn a_new_telegram_name_needs_the_age_mark(pool: PgPool) {
+    sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
+    let addr = spawn(pool.clone()).await;
+
+    let word = ask_for_word_aged(&addr, None, false).await;
+    let code = word["code"].as_str().unwrap().to_string();
+    webhook(&addr, start(7001, "novyj", "Новый", &code)).await;
+    webhook(&addr, press(7001, "novyj", "Новый", &format!("ok:{code}"))).await;
+
+    let said = poll(&addr, &code).await;
+    assert_eq!(said["state"], "age");
+    assert!(said["sessionToken"].is_null());
+    let made: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(&pool).await.unwrap();
+    assert_eq!(made, 0, "имя заведено без подтверждения возраста");
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM user_sessions").fetch_one(&pool).await.unwrap();
+    assert_eq!(sessions, 0);
+
+    // Запрос вовсе без тела — то же самое, что «не отмечено».
+    let bare = reqwest::Client::new()
+        .post(format!("{addr}/api/v1/auth/telegram/code"))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let code2 = bare["code"].as_str().unwrap().to_string();
+    webhook(&addr, start(7002, "bez", "Без", &code2)).await;
+    webhook(&addr, press(7002, "bez", "Без", &format!("ok:{code2}"))).await;
+    assert_eq!(poll(&addr, &code2).await["state"], "age");
+
+    // С отметкой — заводится.
+    let ok = ask_for_word_aged(&addr, None, true).await;
+    let code3 = ok["code"].as_str().unwrap().to_string();
+    webhook(&addr, start(7001, "novyj", "Новый", &code3)).await;
+    webhook(&addr, press(7001, "novyj", "Новый", &format!("ok:{code3}"))).await;
+    assert_eq!(poll(&addr, &code3).await["state"], "ready");
+}
+
+/// Вернувшегося вопрос о возрасте не касается: нового человека там нет.
+#[sqlx::test]
+async fn a_returning_telegram_visitor_is_not_asked_for_age(pool: PgPool) {
+    sqlx::migrate!("./migrations/").run(&pool).await.unwrap();
+    let addr = spawn(pool.clone()).await;
+
+    let first = ask_for_word(&addr, None).await;
+    let code = first["code"].as_str().unwrap().to_string();
+    webhook(&addr, start(7003, "vernulsya", "Вернулся", &code)).await;
+    webhook(&addr, press(7003, "vernulsya", "Вернулся", &format!("ok:{code}"))).await;
+    assert_eq!(poll(&addr, &code).await["state"], "ready");
+
+    let again = ask_for_word_aged(&addr, None, false).await;
+    let code2 = again["code"].as_str().unwrap().to_string();
+    webhook(&addr, start(7003, "vernulsya", "Вернулся", &code2)).await;
+    webhook(&addr, press(7003, "vernulsya", "Вернулся", &format!("ok:{code2}"))).await;
+    assert_eq!(poll(&addr, &code2).await["state"], "ready", "вернувшегося остановил вопрос о возрасте");
 }

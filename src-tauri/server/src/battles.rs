@@ -14,7 +14,13 @@ use crate::slug::slugify;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CARD_STATUSES: &[&str] = &["draft", "published", "retired"];
+pub const CARD_STATUSES: &[&str] = &["draft", "published", "retired", CARD_ETUDE_ONLY];
+
+/// Статус «только для этюдов»: карта встаёт в этюд, но не стоит на полке и не
+/// продаётся (стена, башня, таран). Полка, покупка, подарок и колода гостя
+/// спрашивают `published` и потому её не видят; видит её только расстановка
+/// этюда (`can_stand_in_an_etude`).
+pub const CARD_ETUDE_ONLY: &str = "etude";
 
 pub const TIER_MIN: i16 = 1;
 pub const TIER_MAX: i16 = 5;
@@ -326,6 +332,21 @@ pub const GIFTS_SHOWN: i64 = 5;
 /// длина, которую сервер не ограничил, однажды придёт длиной в миллион.
 pub const DEVELOP_MAX: usize = 60;
 
+/// Сколько пыли за внимание (смотрел, читал, сердечко) оседает на одно имя за
+/// сутки. Внимание платится маячком страницы, и верить ему на слово можно ровно
+/// настолько, насколько мало за него дают: сколько бы имён ни завёл один
+/// человек, каждое получает не больше этого. Обычный день читателя — несколько
+/// работ и одна-две небылицы — под потолок подходит с запасом.
+pub const ATTENTION_DAILY_CAP: i32 = 30;
+
+/// Как давно сервер должен был видеть посетителя на этой странице, чтобы
+/// внимание к ней считалось настоящим.
+pub const ATTENTION_WITNESS_MINUTES: i64 = 60;
+
+/// Сколько секунд присутствия на странице байки нужно, чтобы «прочитано» было
+/// не отметкой, а прочтением.
+pub const ATTENTION_READ_MIN_MS: i32 = 20_000;
+
 /// Потолок одной выдачи. Не про баланс — про опечатку: лишний ноль в поле
 /// хранителя не должен становиться экономикой.
 pub const GRANT_MAX: i32 = 10_000;
@@ -413,6 +434,7 @@ pub fn normalize_rules(raw: &battle_core::Rules) -> battle_core::Rules {
         long_shot_power: raw.long_shot_power.min(100),
         point_blank_power: raw.point_blank_power.min(100),
         breakthrough: raw.breakthrough,
+        keeper_holds_on_time: raw.keeper_holds_on_time,
     }
 }
 
@@ -423,6 +445,21 @@ pub fn rules_of(setup: &crate::models::ChallengeSetup) -> battle_core::Rules {
         .as_ref()
         .map(normalize_rules)
         .unwrap_or_default()
+}
+
+/// Фон поля, как его можно оставить: пусто или путь к нашему же складу.
+///
+/// Чужой адрес не принимается: страница гостя подгрузила бы картинку с чужого
+/// сервера при каждом открытии этюда. Путь проходит `..` и схему — склад
+/// отдаёт только то, что лежит под `/static/`.
+pub fn check_background(background: &Option<String>) -> Result<Option<String>, &'static str> {
+    let Some(raw) = background.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if raw.len() > 300 || !raw.starts_with("/static/") || raw.contains("..") || raw.contains("//") {
+        return Err("The field background must be a picture from the house store");
+    }
+    Ok(Some(raw.to_string()))
 }
 
 /// Величина поля, как её можно оставить: та, которую умеет движок, или отказ
@@ -481,6 +518,103 @@ pub fn check_terrain(setup: &crate::models::ChallengeSetup) -> Result<Vec<battle
     Ok(kept)
 }
 
+/// Поле одной встречи, каким его видит расстановка гостя: величина, местность
+/// и клетки, занятые картами противника на его половине (этюд может поставить
+/// туда строение или засаду).
+///
+/// Расстановка проверяется по этому полю, а не по половине 3 × 3: встречи
+/// бывают шириной 3–4 и глубиной 3–5, и стол, собранный под одну величину,
+/// на другой ставил карты не туда, где их видел человек.
+#[derive(Debug, Clone)]
+pub struct LineupGround {
+    pub field: battle_core::Field,
+    pub terrain: Vec<battle_core::Tile>,
+    pub occupied: std::collections::HashSet<(u8, u8)>,
+}
+
+impl LineupGround {
+    pub fn of(setup: &crate::models::ChallengeSetup) -> Self {
+        // Величина и местность проверены при сохранении этюда; здесь они
+        // только читаются, и поле, которое не прочлось, считается обычным.
+        let field = check_field(setup.field).unwrap_or_default();
+        let terrain = setup
+            .terrain
+            .iter()
+            .filter(|t| field.contains(t.cell))
+            .copied()
+            .collect();
+        let occupied = setup.keeper_board.iter().map(|p| (p.x, p.y)).collect();
+        LineupGround { field, terrain, occupied }
+    }
+
+    fn ground(&self, x: u8, y: u8) -> Option<battle_core::Ground> {
+        self.terrain
+            .iter()
+            .find(|t| t.cell.x == x && t.cell.y == y)
+            .map(|t| t.ground)
+    }
+
+    /// Можно ли гостю поставить карту на эту клетку до начала боя.
+    pub fn cell_fault(&self, x: u8, y: u8) -> Result<(), DeckFault> {
+        let Some(cell) = self.field.cell(x, y) else {
+            return Err(DeckFault::NotYourHalf);
+        };
+        if self.field.side_of(cell) != battle_core::Side::Player {
+            return Err(DeckFault::NotYourHalf);
+        }
+        if self.occupied.contains(&(x, y)) {
+            return Err(DeckFault::CellBlocked);
+        }
+        if matches!(
+            self.ground(x, y),
+            Some(battle_core::Ground::Wall | battle_core::Ground::Ravine)
+        ) {
+            return Err(DeckFault::CellBlocked);
+        }
+        Ok(())
+    }
+
+    /// Клетки, на которые гость может поставить карту, в порядке, в котором
+    /// их занимают временные карты дома: сначала без опасной земли, затем
+    /// ближе к среднему ряду своей половины, затем ближе к средней колонке.
+    /// Средний ряд — то же место, что прежде (`DECK_DEFAULT_CELLS`): не в
+    /// упор к противнику и не у самого края.
+    pub fn open_cells(&self) -> Vec<(u8, u8)> {
+        let depth = self.field.depth;
+        let middle = depth + (depth - 1) / 2;
+        let width = self.field.width;
+        let mut cells: Vec<(u8, u8)> = (depth..depth * 2)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .filter(|(x, y)| self.cell_fault(*x, *y).is_ok())
+            .collect();
+        cells.sort_by_key(|(x, y)| {
+            let hazard = self.ground(*x, *y).is_some_and(ground_is_hazard);
+            (
+                hazard,
+                y.abs_diff(middle),
+                (2 * *x).abs_diff(width - 1),
+                *y,
+                *x,
+            )
+        });
+        cells
+    }
+}
+
+/// Земля, которая вредит или мешает стоящему на ней. Временную карту дом туда
+/// не ставит, пока есть другое место. Зеркало `GROUND_KIND` (`hazard`) в
+/// `battles.ts`.
+pub fn ground_is_hazard(ground: battle_core::Ground) -> bool {
+    use battle_core::Ground::*;
+    matches!(ground, Pit | Mire | Embers | Grave | Rift | Maelstrom)
+}
+
+/// Сколько раз в минуту одно имя сохраняет расстановку. Страница сохраняет
+/// после каждой правки с паузой 350 мс и по одному запросу за раз, то есть
+/// человек упирается в предел только перекладывая карты без остановки
+/// полминуты; цикл упирается сразу.
+pub const LINEUP_SAVES_PER_MINUTE: u32 = 90;
+
 pub const DECK_BOARD: usize = 3;
 pub const DECK_HAND: usize = 3;
 
@@ -516,6 +650,8 @@ pub enum DeckFault {
     NotYours,
     TooManyOfRankFive,
     TooManyOfRankFour,
+    /// Клетка своя, но на ней нельзя стоять: стена, овраг или карта противника.
+    CellBlocked,
 }
 
 impl DeckFault {
@@ -531,6 +667,7 @@ impl DeckFault {
             DeckFault::NotYours => "notYours",
             DeckFault::TooManyOfRankFive => "tooManyOfRankFive",
             DeckFault::TooManyOfRankFour => "tooManyOfRankFour",
+            DeckFault::CellBlocked => "cellBlocked",
         }
     }
 }
@@ -547,6 +684,70 @@ pub fn check_deck(
     owned: &std::collections::HashSet<uuid::Uuid>,
     tier_of: &std::collections::HashMap<uuid::Uuid, i16>,
 ) -> Result<(), DeckFault> {
+    check_layout(board, hand, owned, tier_of, |x, y| {
+        if own_half(x, y) {
+            Ok(())
+        } else {
+            Err(DeckFault::NotYourHalf)
+        }
+    })
+}
+
+/// Законна ли расстановка на поле одной встречи: тот же состав, что у стола,
+/// но клетки проверяются по полю этой встречи — его величине, местности и
+/// картам противника (`LineupGround`).
+pub fn check_lineup(
+    ground: &LineupGround,
+    board: &[(uuid::Uuid, u8, u8)],
+    hand: &[uuid::Uuid],
+    owned: &std::collections::HashSet<uuid::Uuid>,
+    tier_of: &std::collections::HashMap<uuid::Uuid, i16>,
+) -> Result<(), DeckFault> {
+    check_layout(board, hand, owned, tier_of, |x, y| ground.cell_fault(x, y))
+}
+
+/// Клетки временных карт, названные гостем: на своей половине, открытые, не
+/// повторяются и не заняты его же картами. Мест под заём не больше, чем мест
+/// на поле.
+pub fn check_loan_cells(
+    ground: &LineupGround,
+    board: &[(uuid::Uuid, u8, u8)],
+    lent: &[crate::models::DeckCell],
+) -> Result<(), DeckFault> {
+    if lent.len() > DECK_BOARD {
+        return Err(DeckFault::TooManyOnBoard);
+    }
+    let mut seen: Vec<(u8, u8)> = board.iter().map(|(_, x, y)| (*x, *y)).collect();
+    for c in lent {
+        ground.cell_fault(c.x, c.y)?;
+        if seen.contains(&(c.x, c.y)) {
+            return Err(DeckFault::CellTaken);
+        }
+        seen.push((c.x, c.y));
+    }
+    Ok(())
+}
+
+/// Лимиты колоды, как их видит страница.
+pub fn deck_limits() -> crate::models::DeckLimits {
+    crate::models::DeckLimits {
+        board: DECK_BOARD,
+        hand: DECK_HAND,
+        rank_five: DECK_TIER5_MAX,
+        rank_four: DECK_TIER4_MAX,
+    }
+}
+
+/// Общая часть обеих проверок. Различаются они только тем, какая клетка своя,
+/// поэтому это правило приходит снаружи, а состав и ранги проверяются здесь
+/// один раз.
+fn check_layout(
+    board: &[(uuid::Uuid, u8, u8)],
+    hand: &[uuid::Uuid],
+    owned: &std::collections::HashSet<uuid::Uuid>,
+    tier_of: &std::collections::HashMap<uuid::Uuid, i16>,
+    cell_ok: impl Fn(u8, u8) -> Result<(), DeckFault>,
+) -> Result<(), DeckFault> {
     if board.len() > DECK_BOARD {
         return Err(DeckFault::TooManyOnBoard);
     }
@@ -556,9 +757,7 @@ pub fn check_deck(
 
     let mut cells = std::collections::HashSet::new();
     for (_, x, y) in board {
-        if !own_half(*x, *y) {
-            return Err(DeckFault::NotYourHalf);
-        }
+        cell_ok(*x, *y)?;
         if !cells.insert((*x, *y)) {
             return Err(DeckFault::CellTaken);
         }
@@ -599,7 +798,11 @@ pub fn check_deck(
 // the migration repeat them. Repeated deliberately: the database refuses what a
 // broken client sends, and these clamp what a keeper types by hand.
 
-pub const CARD_KINDS: &[&str] = &["unit", "spell", "relic"];
+pub const CARD_KINDS: &[&str] = &["unit", "spell", "relic", KIND_STRUCTURE];
+
+/// Строение: сторона, у которой остались одни строения, побеждена
+/// (`battle_core::CardSnapshot::structure`).
+pub const KIND_STRUCTURE: &str = "structure";
 pub const ATTACK_CHANNELS: &[&str] = &["physical", "magic", "pure", "none"];
 
 /// Range and step are counted in king's moves on a field three wide and six
@@ -807,6 +1010,12 @@ pub struct CardTrait {
     pub text_en: String,
     #[serde(default)]
     pub text_ru: String,
+    /// Ukrainian is optional: a property may carry it or not, and a Ukrainian
+    /// reader sees English where it is missing.
+    #[serde(default)]
+    pub name_uk: String,
+    #[serde(default)]
+    pub text_uk: String,
 }
 
 /// The properties of a card, as they will be stored.
@@ -822,8 +1031,10 @@ pub fn normalize_traits(traits: &[CardTrait]) -> Option<String> {
             name_ru: t.name_ru.trim().chars().take(TRAIT_NAME_MAX).collect(),
             text_en: t.text_en.trim().chars().take(TRAIT_TEXT_MAX).collect(),
             text_ru: t.text_ru.trim().chars().take(TRAIT_TEXT_MAX).collect(),
+            name_uk: t.name_uk.trim().chars().take(TRAIT_NAME_MAX).collect(),
+            text_uk: t.text_uk.trim().chars().take(TRAIT_TEXT_MAX).collect(),
         })
-        .filter(|t| !t.name_en.is_empty() || !t.name_ru.is_empty())
+        .filter(|t| !t.name_en.is_empty() || !t.name_ru.is_empty() || !t.name_uk.is_empty())
         .take(TRAITS_MAX)
         .collect();
     if cleaned.is_empty() {
@@ -854,7 +1065,11 @@ pub fn prose_blockers(status: &str, traits: &[CardTrait], has_abilities: bool) -
     }
     let speaks = traits
         .iter()
-        .any(|t| !t.text_en.trim().is_empty() || !t.text_ru.trim().is_empty());
+        .any(|t| {
+            !t.text_en.trim().is_empty()
+                || !t.text_ru.trim().is_empty()
+                || !t.text_uk.trim().is_empty()
+        });
     if speaks && !has_abilities {
         out.push("traitsWithoutAbilities");
     }
@@ -961,6 +1176,8 @@ pub struct CardAbility {
     pub name_en: String,
     #[serde(default)]
     pub name_ru: String,
+    #[serde(default)]
+    pub name_uk: String,
     /// From `ABILITY_VERBS`. Anything else is refused.
     pub verb: String,
     #[serde(default = "default_channel")]
@@ -1039,6 +1256,7 @@ pub fn normalize_abilities(abilities: &[CardAbility]) -> Option<String> {
                 id: cut(&a.id, ABILITY_NAME_MAX),
                 name_en: cut(&a.name_en, ABILITY_NAME_MAX),
                 name_ru: cut(&a.name_ru, ABILITY_NAME_MAX),
+                name_uk: cut(&a.name_uk, ABILITY_NAME_MAX),
                 verb: a.verb.trim().to_string(),
                 channel,
                 amount: a.amount.clamp(0, POWER_MAX),
@@ -1327,6 +1545,16 @@ pub fn to_snapshot_with<'a>(
         mend: card.mend as i32,
         channel: to_channel(&card.attack_channel),
         strikes: strikes(&card.attack_channel),
+        structure: card.kind == KIND_STRUCTURE,
+        shoots: card.shoots,
+        race: card.race_id.clone(),
+        // Предел и при чтении: таблица, записанная до того, как его снизили,
+        // не должна играть старыми числами.
+        race_damage: battle_core::RaceDamage {
+            attack: card.race_damage.attack.clamp(0, RACE_DAMAGE_MAX),
+            defence: card.race_damage.defence.clamp(0, RACE_DAMAGE_MAX),
+            ..card.race_damage.clone()
+        },
         abilities: card
             .abilities
             .iter()
@@ -1401,6 +1629,13 @@ pub fn to_stat(raw: &str) -> Option<battle_core::Stat> {
 /// so a match refuses to start rather than ending on its own first tick.
 pub fn can_take_the_field(card: &crate::models::BattleCardDto) -> bool {
     card.health > 0 && card.status == "published"
+}
+
+/// Может ли карта стоять в расстановке этюда: та же проверка, что выше, плюс
+/// карты «только для этюдов». Колода гостя, подарок и полка спрашивают
+/// `can_take_the_field` — им снаряжение этюда не положено.
+pub fn can_stand_in_an_etude(card: &crate::models::BattleCardDto) -> bool {
+    card.health > 0 && (card.status == "published" || card.status == CARD_ETUDE_ONLY)
 }
 
 /// A price of `None` means "not to be had for this coin", which is not zero.
@@ -2405,6 +2640,8 @@ pub struct BattleFrame {
     pub tier: i16,
     pub name_en: String,
     pub name_ru: String,
+    #[serde(default)]
+    pub name_uk: String,
     /// The card's paper. Still the ground under a photograph that fails to load.
     pub paper: String,
     /// Ink for title and stats.
@@ -2868,6 +3105,20 @@ pub const DEFAULT_FREE_NAME_Y: f32 = 60.0;
 pub const DEFAULT_FREE_LORE_X: f32 = 50.0;
 pub const DEFAULT_FREE_LORE_Y: f32 = 84.0;
 
+/// What the five ranks are called in Ukrainian. The ranks themselves are fixed
+/// by tier; the keeper may rename them per language, and a rank she has not
+/// named in Ukrainian keeps this.
+fn default_frame_name_uk(tier: i16) -> &'static str {
+    match tier {
+        1 => "Скромна",
+        2 => "Міцна",
+        3 => "Пам’ятна",
+        4 => "Рідкісна",
+        5 => "Епічна",
+        _ => "",
+    }
+}
+
 fn painted(
     tier: i16,
     name_en: &str,
@@ -2881,6 +3132,7 @@ fn painted(
         tier,
         name_en: name_en.into(),
         name_ru: name_ru.into(),
+        name_uk: default_frame_name_uk(tier).into(),
         paper: paper.into(),
         ink: ink.into(),
         border: border.into(),
@@ -3022,6 +3274,9 @@ pub fn normalize_frame(mut found: BattleFrame, fallback: BattleFrame) -> BattleF
     }
     if found.name_ru.trim().is_empty() {
         found.name_ru = fallback.name_ru;
+    }
+    if found.name_uk.trim().is_empty() {
+        found.name_uk = fallback.name_uk;
     }
     if found.paper.trim().is_empty() {
         found.paper = fallback.paper;
@@ -3406,6 +3661,8 @@ pub struct Motion {
     pub name_en: String,
     #[serde(default)]
     pub name_ru: String,
+    #[serde(default)]
+    pub name_uk: String,
     /// Ради чего играется. Из `MOTION_OCCASIONS`.
     #[serde(default)]
     pub occasion: String,
@@ -3606,6 +3863,7 @@ pub fn normalize_motion(mut m: Motion) -> Motion {
     m.id = m.id.trim().chars().take(64).collect();
     m.name_en = m.name_en.trim().chars().take(MOTION_NAME_MAX).collect();
     m.name_ru = m.name_ru.trim().chars().take(MOTION_NAME_MAX).collect();
+    m.name_uk = m.name_uk.trim().chars().take(MOTION_NAME_MAX).collect();
     m.occasion = word(&m.occasion, MOTION_OCCASIONS, "blow");
     let gestures: Vec<MotionGesture> = m
         .gestures
@@ -3657,6 +3915,50 @@ pub fn normalize_motions(saved: Vec<Motion>) -> Vec<Motion> {
 /// Неизвестное имя на показе просто уступает умолчанию дома
 /// (`BATTLE-MOTION.md` §9.9) — так же, как незнакомый признак шага в разборе
 /// показывается как есть, а не заменяется чужим словом.
+/// Самая большая прибавка или защита в таблице урона по расам.
+///
+/// Единица, а не тройка, по замеру (600 зеркальных партий бот против бота,
+/// сила 3–6, раса у всей колоды): без рас сторона выигрывает 51 %, с +1
+/// против расы противника — 80 %, с +2 — 93 %, с +3 — 96 %. Уже +2 решает
+/// встречу до первого хода. Держит баланс только цикл, где у каждой расы
+/// есть и плюс, и минус: +1 в обе стороны даёт 52–56 %.
+pub const RACE_DAMAGE_MAX: i32 = 1;
+
+/// Таблица урона, как её прочли из колонки. Сломанный JSON — пустая таблица, а
+/// не отказ: карта из-за неё не должна перестать выходить на поле.
+pub fn parse_race_damage(raw: Option<&str>) -> battle_core::RaceDamage {
+    raw.and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default()
+}
+
+/// Числа в пределах `0..=RACE_DAMAGE_MAX`, в списках — только расы из
+/// справочника (`known`), без повторов. Ноль при пустом списке и пустой список
+/// при нуле приводятся к пустому: «+2 ни против кого» — не настройка.
+pub fn normalize_race_damage(
+    raw: &battle_core::RaceDamage,
+    known: &[String],
+) -> battle_core::RaceDamage {
+    let list = |ids: &[String]| -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for id in ids {
+            let id = id.trim().to_string();
+            if known.contains(&id) && !out.contains(&id) {
+                out.push(id);
+            }
+        }
+        out
+    };
+    let attack = raw.attack.clamp(0, RACE_DAMAGE_MAX);
+    let defence = raw.defence.clamp(0, RACE_DAMAGE_MAX);
+    let against = if attack > 0 { list(&raw.against) } else { Vec::new() };
+    let from = if defence > 0 { list(&raw.from) } else { Vec::new() };
+    battle_core::RaceDamage {
+        attack: if against.is_empty() { 0 } else { attack },
+        against,
+        defence: if from.is_empty() { 0 } else { defence },
+        from,
+    }
+}
+
 pub fn normalize_motion_wear(raw: Option<&str>) -> Option<String> {
     let text = raw?.trim();
     if text.is_empty() {
@@ -3708,6 +4010,7 @@ pub fn default_motions() -> Vec<Motion> {
             id: "house-blow".into(),
             name_en: "A blow".into(),
             name_ru: "Удар".into(),
+            name_uk: "Удар".into(),
             occasion: "blow".into(),
             gestures: vec![
                 // Подача и возврат — ОДИН жест: 220 туда и 180 обратно живут в
@@ -3722,6 +4025,7 @@ pub fn default_motions() -> Vec<Motion> {
             id: "house-mend".into(),
             name_en: "Mending".into(),
             name_ru: "Лечение".into(),
+            name_uk: "Лікування".into(),
             occasion: "mend".into(),
             gestures: vec![gesture("target", "rise", 0, 300)],
             ..Motion::default()
@@ -3730,6 +4034,7 @@ pub fn default_motions() -> Vec<Motion> {
             id: "house-arrive".into(),
             name_en: "Taking the field".into(),
             name_ru: "Выставление".into(),
+            name_uk: "Виставлення".into(),
             occasion: "arrive".into(),
             gestures: vec![gesture("striker", "swell", 0, 300)],
             ..Motion::default()
@@ -3738,6 +4043,7 @@ pub fn default_motions() -> Vec<Motion> {
             id: "house-fall".into(),
             name_en: "Falling".into(),
             name_ru: "Падение".into(),
+            name_uk: "Падіння".into(),
             occasion: "fall".into(),
             gestures: vec![gesture("target", "sink", 0, 500)],
             ..Motion::default()
@@ -3746,6 +4052,7 @@ pub fn default_motions() -> Vec<Motion> {
             id: "house-unseen".into(),
             name_en: "No author".into(),
             name_ru: "Без автора".into(),
+            name_uk: "Без автора".into(),
             occasion: "unseen".into(),
             gestures: vec![gesture("target", "shiver", 0, 160)],
             ..Motion::default()
@@ -4037,6 +4344,8 @@ mod tests {
             name_ru: String::new(),
             text_en: String::new(),
             text_ru: "игнорирует 1 урона".into(),
+            name_uk: String::new(),
+            text_uk: String::new(),
         };
         assert_eq!(
             missing_fields("A", "А", Some("e"), Some("э"), &[half], &[], Some(1), None),
@@ -4048,6 +4357,8 @@ mod tests {
             name_ru: String::new(),
             text_en: String::new(),
             text_ru: String::new(),
+            name_uk: String::new(),
+            text_uk: String::new(),
         };
         assert!(missing_fields("A", "А", Some("e"), Some("э"), &[empty], &[], Some(1), None).is_empty());
     }
@@ -4059,6 +4370,8 @@ mod tests {
             name_ru: "Вихрь Души".into(),
             text_en: "ignores 1 damage".into(),
             text_ru: "игнорирует 1 урона".into(),
+            name_uk: String::new(),
+            text_uk: String::new(),
         };
         assert_eq!(
             prose_blockers("published", &[trait_.clone()], false),
@@ -4690,6 +5003,7 @@ mod tests {
             id: "cure".into(),
             name_en: "Cure".into(),
             name_ru: "Лечение".into(),
+            name_uk: String::new(),
             verb: "heal".into(),
             channel: "none".into(),
             amount: 1,
@@ -4823,6 +5137,68 @@ mod tests {
     }
 
     #[test]
+    fn lineup_on_the_old_field_starts_where_the_old_table_did() {
+        let ground = LineupGround::of(&crate::models::ChallengeSetup::default());
+        let open = ground.open_cells();
+        assert_eq!(open.len(), 9);
+        // Средний ряд, средняя колонка первой: туда дом и ставил заём.
+        assert_eq!(&open[..3], &[(1, 4), (0, 4), (2, 4)]);
+        let defaults: std::collections::HashSet<_> = DECK_DEFAULT_CELLS.iter().copied().collect();
+        let first: std::collections::HashSet<_> = open[..3].iter().copied().collect();
+        assert_eq!(first, defaults);
+    }
+
+    #[test]
+    fn lineup_follows_the_size_of_the_field() {
+        let setup = crate::models::ChallengeSetup {
+            field: battle_core::Field { width: 4, depth: 5 },
+            ..Default::default()
+        };
+        let ground = LineupGround::of(&setup);
+        let open = ground.open_cells();
+        assert_eq!(open.len(), 20);
+        assert!(open.iter().all(|&(x, y)| x < 4 && (5..10).contains(&y)));
+        assert_eq!(open[0].1, 7, "middle row of a half five deep");
+        assert!(ground.cell_fault(3, 9).is_ok());
+        assert_eq!(ground.cell_fault(3, 4), Err(DeckFault::NotYourHalf));
+        assert_eq!(ground.cell_fault(4, 6), Err(DeckFault::NotYourHalf));
+    }
+
+    #[test]
+    fn lineup_keeps_off_walls_ravines_and_the_keepers_own() {
+        let setup = crate::models::ChallengeSetup {
+            terrain: vec![
+                ground(1, 4, battle_core::Ground::Wall),
+                ground(0, 4, battle_core::Ground::Ravine),
+                ground(2, 4, battle_core::Ground::Pit),
+            ],
+            keeper_board: vec![crate::models::ChallengePlacement {
+                card: "zasada".into(),
+                x: 1,
+                y: 3,
+            }],
+            ..Default::default()
+        };
+        let ground = LineupGround::of(&setup);
+        assert_eq!(ground.cell_fault(1, 4), Err(DeckFault::CellBlocked));
+        assert_eq!(ground.cell_fault(0, 4), Err(DeckFault::CellBlocked));
+        assert_eq!(ground.cell_fault(1, 3), Err(DeckFault::CellBlocked));
+        assert!(ground.cell_fault(2, 4).is_ok(), "a pit can be stood in");
+        let open = ground.open_cells();
+        assert_eq!(open.len(), 6);
+        assert_eq!(*open.last().unwrap(), (2, 4), "the pit is the last resort");
+
+        let card = uuid::Uuid::new_v4();
+        let owned = std::collections::HashSet::from([card]);
+        let tiers = std::collections::HashMap::new();
+        assert_eq!(
+            check_lineup(&ground, &[(card, 1, 4)], &[], &owned, &tiers),
+            Err(DeckFault::CellBlocked)
+        );
+        assert_eq!(check_lineup(&ground, &[(card, 1, 5)], &[], &owned, &tiers), Ok(()));
+    }
+
+    #[test]
     fn terrain_rides_inside_the_arrangement_and_old_ones_have_none() {
         let setup = crate::models::ChallengeSetup {
             terrain: vec![ground(1, 2, battle_core::Ground::Wall)],
@@ -4836,6 +5212,19 @@ mod tests {
             serde_json::from_str(r#"{"keeperHand":["vedma"]}"#).unwrap();
         assert!(older.terrain.is_empty());
         assert!(!serde_json::to_string(&older).unwrap().contains("terrain"));
+    }
+
+    #[test]
+    fn a_field_background_must_come_from_the_house_store() {
+        assert_eq!(check_background(&None), Ok(None));
+        assert_eq!(check_background(&Some("  ".into())), Ok(None));
+        assert_eq!(
+            check_background(&Some("/static/frames/a.webp".into())),
+            Ok(Some("/static/frames/a.webp".into()))
+        );
+        assert!(check_background(&Some("https://evil.example/a.png".into())).is_err());
+        assert!(check_background(&Some("/static/../etc/passwd".into())).is_err());
+        assert!(check_background(&Some("//evil.example/a.png".into())).is_err());
     }
 
     #[test]
@@ -4959,6 +5348,32 @@ mod tests {
         assert!(!can_take_the_field(&card), "черновик не воюет");
     }
 
+    #[test]
+    fn etude_only_cards_stand_in_etudes_and_nowhere_else() {
+        let mut card = sample_card();
+        card.status = CARD_ETUDE_ONLY.into();
+        assert!(can_stand_in_an_etude(&card), "стена встаёт в этюд");
+        assert!(!can_take_the_field(&card), "но не в колоду гостя и не в подарок");
+        card.status = "draft".into();
+        assert!(!can_stand_in_an_etude(&card), "черновик не воюет и в этюде");
+        assert!(valid_status(CARD_ETUDE_ONLY));
+    }
+
+    #[test]
+    fn a_structure_card_freezes_as_a_structure() {
+        let mut card = sample_card();
+        assert!(!to_snapshot(&card).structure);
+        card.kind = KIND_STRUCTURE.into();
+        assert!(to_snapshot(&card).structure);
+        assert!(valid_kind(KIND_STRUCTURE));
+    }
+
+    #[test]
+    fn the_siege_clock_survives_normalising() {
+        let raw = battle_core::Rules { keeper_holds_on_time: true, ..Default::default() };
+        assert!(normalize_rules(&raw).keeper_holds_on_time);
+    }
+
     fn sample_card() -> crate::models::BattleCardDto {
         crate::models::BattleCardDto {
             id: String::new(),
@@ -4968,17 +5383,23 @@ mod tests {
             race_id: None,
             race_name_en: None,
             race_name_ru: None,
+            race_name_uk: None,
             race_icon_url: None,
             race_level_frames: None,
             race_motion_wear: None,
+            race_damage: Default::default(),
             type_en: None,
             type_ru: None,
+            type_uk: None,
             title_en: "Witch".into(),
             title_ru: "Ведьма".into(),
+            title_uk: String::new(),
             effect_en: None,
             effect_ru: None,
+            effect_uk: None,
             lore_en: None,
             lore_ru: None,
+            lore_uk: None,
             cost: 3,
             power: 4,
             health: 6,
@@ -5006,6 +5427,7 @@ mod tests {
             motion_wear: None,
             shelf_order: None,
             lendable: false,
+            shoots: false,
             credit_name: None,
             edition_size: None,
             minted: 0,
@@ -5097,6 +5519,7 @@ mod tests {
             id: String::new(),
             name_en: String::new(),
             name_ru: String::new(),
+            name_uk: String::new(),
             verb: "damage".into(),
             channel: default_channel(),
             amount: 0,
@@ -5122,12 +5545,16 @@ mod tests {
                 name_ru: "Вихрь".into(),
                 text_en: long.clone(),
                 text_ru: "х".into(),
+                name_uk: String::new(),
+                text_uk: String::new(),
             },
             CardTrait {
                 name_en: "  ".into(),
                 name_ru: "".into(),
                 text_en: "orphan".into(),
                 text_ru: "".into(),
+                name_uk: String::new(),
+                text_uk: String::new(),
             },
         ];
         let stored = normalize_traits(&traits).unwrap();

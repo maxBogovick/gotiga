@@ -27,6 +27,8 @@
   let ageConfirmed = $state(false);
   let busy = $state(false);
   let watching = $state(false);
+  // Слежение ждёт ссылки из письма: адрес ещё не доказан.
+  let pending = $state(false);
   let error = $state('');
   let copied = $state(false);
 
@@ -63,6 +65,7 @@
     try {
       const info = await api.getGazetteWatchByToken(token);
       watching = !!info;
+      pending = !!info && !info.confirmed;
       if (!info) clearToken();
     } catch {
       /* keep local mark */
@@ -102,6 +105,7 @@
       );
       writeToken(res.cancelToken);
       watching = true;
+      pending = !res.confirmed;
       open = false;
     } catch (e) {
       error = e instanceof Error ? e.message : $t('gazetteWatchError');
@@ -118,6 +122,7 @@
       await api.leaveGazetteWatchByToken(token);
       clearToken();
       watching = false;
+      pending = false;
     } catch {
       error = $t('gazetteWatchError');
     } finally {
@@ -159,7 +164,7 @@
     {#if watching}
       <p class="kept">
         <span class="disc" aria-hidden="true"></span>
-        {$t('gazetteWatchLeft')}
+        {pending ? $t('gazetteWatchCheckMail') : $t('gazetteWatchLeft')}
         <button type="button" class="text" onclick={release} disabled={busy}>
           {$t('gazetteWatchRelease')}
         </button>

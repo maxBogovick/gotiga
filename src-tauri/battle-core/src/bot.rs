@@ -37,6 +37,7 @@ fn toll(state: &MatchState, cell: Cell) -> u16 {
     match state.ground(cell) {
         Some(crate::state::Ground::Mire) => MIRE_TOLL,
         Some(crate::state::Ground::Pit) => PIT_TOLL,
+        Some(crate::state::Ground::Embers) => crate::state::EMBERS_HARM as u16,
         _ => 0,
     }
 }

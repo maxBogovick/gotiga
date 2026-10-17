@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META } from '$lib/i18n';
   import { resolveLargestImageUrl } from '$lib/api';
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
@@ -39,7 +39,7 @@
       (data.leaf ? quietDate(data.leaf.publishedAt ?? data.leaf.createdAt, $lang) : ''),
   );
   let outside = $derived(data.leaf?.href?.startsWith('http') ? data.leaf.href : null);
-  let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+  let ogLocale = $derived(LANG_META[$lang].og);
   let prevTitle = $derived(
     data.leaf?.prev ? neighborTitle(data.leaf.prev, $lang) : '',
   );
@@ -66,7 +66,7 @@
           description: copy.dek || $t('gazettePageSubtitle'),
           url: `${SITE_URL}/gazette/${data.leaf.slug}`,
           datePublished: data.leaf.publishedAt ?? data.leaf.createdAt,
-          inLanguage: $lang === 'ru' ? 'ru' : 'en',
+          inLanguage: $lang,
           image: coverAbsolute ?? undefined,
           author: byline
             ? { '@type': 'Person', name: byline }

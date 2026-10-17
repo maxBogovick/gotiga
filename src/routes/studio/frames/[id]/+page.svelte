@@ -10,7 +10,7 @@
   import { onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { DEFAULT_FRAMES, emptyBattleCard } from '$lib/battles';
@@ -77,6 +77,8 @@
     tier: 1,
     titleEn: 'The Keeper of the Key',
     titleRu: 'Хранительница Ключа',
+    titleUk: 'Охоронниця Ключа',
+    effectUk: 'Вир Душі: кожне третє закляття створює копію ефекту.',
     effectRu: 'Вихрь Души: каждое третье заклинание создаёт копию эффекта.',
     effectEn: 'Wind of Soul: every third spell makes a copy of its effect.',
     cost: 5,
@@ -459,7 +461,7 @@
         {ahead}
         {mark}
         {flash}
-        titleOf={(card) => card.titleRu || card.titleEn}
+        titleOf={(card) => localized(card, 'title', $lang)}
         moveRow={() => {}}
         {stepBack}
         {stepOn}

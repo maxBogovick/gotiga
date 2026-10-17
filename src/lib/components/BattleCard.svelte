@@ -25,7 +25,7 @@
     SheetSlot,
     SliceSide,
   } from '$lib/types/api';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, type Lang } from '$lib/i18n';
   import {
     cardCopy,
     frameFor,
@@ -72,7 +72,7 @@
     carvedCopies,
     kindOf,
     kindLabelKey,
-    channelLabelKey,
+    blowWordKeys,
     bodyPassport,
     badgeReserve,
     badgeSpot,
@@ -168,7 +168,7 @@
     editable?: boolean;
     /** Which language the inline fields read and write. Falls back to the
      *  site's reader language if the desk hasn't set its own toggle. */
-    editLang?: 'en' | 'ru' | null;
+    editLang?: Lang | null;
     /** The rank's own shape becomes draggable: the header/art/footer seams and
      *  the four edges of the window, each a handle onto that one frame's own
      *  numbers. Set only by the Frames tab, on the sample it dresses — never
@@ -274,7 +274,7 @@
    *  site's language; the keeper's desk passes its RU/EN toggle instead, so
    *  the preview shows exactly the language being typed into the sidebar
    *  form, never the other one. */
-  let editLang2 = $derived((editLang ?? $lang) as 'en' | 'ru');
+  let editLang2 = $derived((editLang ?? $lang) as Lang);
   let copy = $derived(cardCopy(card, editLang2));
   let torn = $derived(owned ? paperClip(hurt, wearSeed) : null);
   let flake = $derived(scrap ? scrapFlight(scrap.blow, scrap.remain, scrap.seed) : null);
@@ -286,10 +286,9 @@
   );
   let kindWord = $derived($t(kindLabelKey(card.kind)));
   let channelWord = $derived(
-    (() => {
-      const key = channelLabelKey(card.attackChannel);
-      return key ? $t(key) : '';
-    })(),
+    blowWordKeys(card)
+      .map((key) => $t(key))
+      .join(' · '),
   );
   let passport = $derived(bodyPassport(card));
   /** A colon-and-text trait is a rule. Until `abilities` names one, the face
@@ -1544,15 +1543,12 @@
 
   /** Сырой текст места на языке — до `lineInLang`, который молча снимает
    *  кириллицу из английского поля. Нужен заглушке, чтобы сказать почему. */
-  function markRaw(slot: FreePrintedSlot, side: 'en' | 'ru'): string {
-    const ru = side === 'ru';
-    switch (slot) {
-      case 'title': return ((ru ? card.titleRu : card.titleEn) ?? '').trim();
-      case 'effect': return ((ru ? card.effectRu : card.effectEn) ?? '').trim();
-      case 'lore': return ((ru ? card.loreRu : card.loreEn) ?? '').trim();
-      case 'kind': return ((ru ? card.typeRu : card.typeEn) ?? '').trim();
-      default: return '';
-    }
+  function markRaw(slot: FreePrintedSlot, side: Lang): string {
+    const cap = side === 'ru' ? 'Ru' : side === 'uk' ? 'Uk' : 'En';
+    const stem =
+      slot === 'title' ? 'title' : slot === 'effect' ? 'effect' : slot === 'lore' ? 'lore' : slot === 'kind' ? 'type' : '';
+    if (!stem) return '';
+    return (((card as unknown as Record<string, string | null | undefined>)[stem + cap]) ?? '').trim();
   }
 
   /**
@@ -1569,7 +1565,7 @@
     if (side === 'en' && own && mostlyCyrillic(own)) {
       return $t('adminBattlesReadyCyrillicInEn').replace('{label}', label);
     }
-    const other = markRaw(slot, side === 'ru' ? 'en' : 'ru');
+    const other = (['en', 'ru', 'uk'] as Lang[]).filter((l) => l !== side).map((l) => markRaw(slot, l)).find(Boolean) ?? '';
     if (!own && other) {
       return $t('adminBattlesReadyNoLang').replace('{label}', label).replace('{lang}', LANG);
     }
@@ -2255,6 +2251,7 @@
               class:corner--marked={marked}
               class:corner--unfilled={!!fill && badgeUnfilled(fill)}
               class:corner--plate={!!plate}
+              class:corner--relief={baked}
               style={paint}
               aria-label={named}
               onpointerdown={(e) => badgeDragStart(kind, e)}
@@ -2272,6 +2269,7 @@
               class:corner--marked={marked}
               class:corner--unfilled={!!fill && badgeUnfilled(fill)}
               class:corner--plate={!!plate}
+              class:corner--relief={baked}
               style={paint}
               role="img"
               aria-label={named}
@@ -2287,7 +2285,7 @@
       {/snippet}
       {#each BADGE_KINDS as kind (kind)}
         {@const marked = freeBadgeShown(frame, kind)}
-        {#if (marked ?? (!!badgeRow[kind] && badgeRow[kind].show !== 'never')) && !(inMatch && kind === 'cost')}
+        {#if (marked ?? (!!badgeRow[kind] && badgeRow[kind].show !== 'never')) && !(inMatch && kind === 'cost' && !baked)}
           {@render badge(kind)}
           <!-- Отдельный знак значка — в слое значков: виден там же, где число,
                включая клетку боя. Чернила — числа. -->
@@ -2451,6 +2449,7 @@
               class="free-mark"
               class:free-mark--caps={look.caps}
               class:free-mark--stat={!look.width}
+              class:free-mark--relief={baked && !look.width}
               class:free-mark--empty={!said}
               class:free-mark--held={markPopoverOpen === slot || markDragSlot === slot}
               data-mark={slot}
@@ -2468,6 +2467,7 @@
               class="free-mark"
               class:free-mark--caps={look.caps}
               class:free-mark--stat={!look.width}
+              class:free-mark--relief={baked && !look.width}
               style={freeMarkStyle(look)}
               title={look.width ? undefined : `${$t(freeMarkLabel(slot))}: ${said}`}
             >{#if look.glyph}{@render markGlyph(slot)}{/if}{said}</p>
@@ -3072,6 +3072,28 @@
 
   .corner-num {
     flex: 0 0 auto;
+  }
+
+  /* Цифра на готовой карте — выпуклая, из полированного металла: на нарисованной
+     медали плоский шрифт читается наклейкой. Цвет — чернила значка, из них же
+     выходит градиент: свет сверху, тёмный пояс, отсвет снизу. Заливка
+     обрезана по буквам, поэтому тень — фильтром, а не `text-shadow`: тот лёг
+     бы на прозрачную заливку сплошным пятном. */
+  .corner--relief .corner-num,
+  .free-mark--relief {
+    -webkit-text-fill-color: transparent;
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklab, currentColor 45%, #fff) 0%,
+      currentColor 34%,
+      color-mix(in oklab, currentColor 62%, #000) 64%,
+      color-mix(in oklab, currentColor 88%, #fff) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    text-shadow: none;
+    filter: drop-shadow(0 0.08cqi 0 color-mix(in oklab, #000 70%, transparent))
+      drop-shadow(0 0.4cqi 0.3cqi color-mix(in oklab, #000 70%, transparent));
   }
 
   /* Со знаком кружок перестаёт быть кружком: он ровно на знак шире.

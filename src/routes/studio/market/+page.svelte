@@ -8,7 +8,7 @@
   // Лицензия показана НАСТОЯЩЕЙ картой в её раме, тем же отрисовщиком, каким
   // она встанет в игру: второй облик однажды соврёт.
   import { onMount } from 'svelte';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { emptyBattleCard } from '$lib/battles';
@@ -70,6 +70,8 @@
     tier: 1,
     titleEn: 'The Keeper of the Key',
     titleRu: 'Хранительница Ключа',
+    titleUk: 'Охоронниця Ключа',
+    effectUk: 'Вир Душі: кожне третє закляття створює копію ефекту.',
     effectRu: 'Вихрь Души: каждое третье заклинание создаёт копию эффекта.',
     effectEn: 'Wind of Soul: every third spell makes a copy of its effect.',
     cost: 5,
@@ -429,7 +431,7 @@
               />
             {/if}
             <p class="name">
-              {$lang === 'en' ? one.titleEn : one.titleRu}
+              {localized(one, 'title', $lang)}
             </p>
             <p class="by">
               {#if one.serial}{$t('studioSerial').replace('{n}', String(one.serial))} · {/if}
@@ -465,7 +467,7 @@
                     (ask = {
                       kind: 'buy',
                       listing: one.id,
-                      name: $lang === 'en' ? one.titleEn : one.titleRu,
+                      name: localized(one, 'title', $lang),
                       price: one.price,
                     })}
                   disabled={busy === one.id || (dust !== null && dust < one.price)}
@@ -628,7 +630,7 @@
                 <BattleCard card={cardOf(own.cardId)!} {frames} owned={true} level={own.level} />
               {/if}
               <p class="name">
-                {$lang === 'en' ? own.titleEn : own.titleRu}
+                {localized(own, 'title', $lang)}
               </p>
               <p class="by">
                 {#if own.serial}{$t('studioSerial').replace('{n}', String(own.serial))} · {/if}
@@ -724,7 +726,7 @@
                   : 'border-[#d8c6b1] hover:bg-[#34251c]/5'}"
               >
                 <span class="block truncate text-[#34251c]"
-                  >{$lang === 'en' ? own.titleEn : own.titleRu}</span
+                  >{localized(own, 'title', $lang)}</span
                 >
                 <span class="text-[10px] text-[#8a6a55]"
                   >{$t('studioCopyLevel').replace('{n}', String(own.level))}</span

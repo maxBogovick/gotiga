@@ -15,7 +15,7 @@
   // неделю закрывают вместе с настоящей новостью.
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { errandHref } from '$lib/battles';
   import WaxSeal from '$lib/components/WaxSeal.svelte';
   import type { BattleErrand, BattleWelcomeGift } from '$lib/types/api';
@@ -46,8 +46,8 @@
     onclose: () => void;
   } = $props();
 
-  const titleOf = (e: BattleErrand) => ($lang === 'ru' ? e.titleRu : e.titleEn);
-  const noteOf = (e: BattleErrand) => ($lang === 'ru' ? e.noteRu : e.noteEn);
+  const titleOf = (e: BattleErrand) => localized(e, 'title', $lang);
+  const noteOf = (e: BattleErrand) => localized(e, 'note', $lang);
 
   const coinWord = (currency: 'dust' | 'feed') =>
     currency === 'dust' ? $t('battleGreetDust') : $t('battleGreetFeed');

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import type { GazetteWatchInfo } from '$lib/types/api';
 
@@ -16,7 +16,7 @@
 
   let title = $derived(
     info
-      ? ($lang === 'ru' && info.titleRu.trim() ? info.titleRu : info.titleEn).trim()
+      ? localized(info, 'title', $lang)
       : '',
   );
 

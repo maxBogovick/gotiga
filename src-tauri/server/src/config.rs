@@ -28,6 +28,20 @@ pub struct Config {
     /// `-100…`). Пишет в него бот уведомлений (`telegram_bot_token`), и он
     /// должен быть администратором канала. Пусто — объявлений нет.
     pub telegram_channel_id: Option<String>,
+    /// Вход через Google: идентификатор и секрет клиента из консоли Google
+    /// Cloud. Оба или ни одного — половина настройки двери не открывает.
+    pub google_client_id: Option<String>,
+    pub google_client_secret: Option<String>,
+    /// Вход через Apple. `client_id` — это **Services ID** (не Bundle ID), а
+    /// секрета клиента в консоли нет: сервер подписывает его сам закрытым
+    /// ключом `.p8` (`team_id`, `key_id`, `private_key`). Все четыре или ни
+    /// одного.
+    pub apple_client_id: Option<String>,
+    pub apple_team_id: Option<String>,
+    pub apple_key_id: Option<String>,
+    /// Содержимое `AuthKey_XXXX.p8`: PEM, PEM с `\n` вместо переводов строк
+    /// или base64 от файла — `oauth::apple_key` понимает все три.
+    pub apple_private_key: Option<String>,
     pub smtp_host: Option<String>,
     pub smtp_port: Option<u16>,
     pub smtp_user: Option<String>,
@@ -152,6 +166,12 @@ impl Config {
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
+            google_client_id: env_nonempty("GOOGLE_CLIENT_ID"),
+            google_client_secret: env_nonempty("GOOGLE_CLIENT_SECRET"),
+            apple_client_id: env_nonempty("APPLE_CLIENT_ID"),
+            apple_team_id: env_nonempty("APPLE_TEAM_ID"),
+            apple_key_id: env_nonempty("APPLE_KEY_ID"),
+            apple_private_key: env_nonempty("APPLE_PRIVATE_KEY"),
             smtp_host: dotenvy::var("SMTP_HOST").ok(),
             smtp_port: dotenvy::var("SMTP_PORT").ok().and_then(|v| v.parse().ok()),
             smtp_user: dotenvy::var("SMTP_USER").ok(),
@@ -236,6 +256,46 @@ impl Config {
                 );
             }
         }
+
+        // Google и Apple — тоже целиком или никак. Половина настройки не
+        // отключает дверь тихо, а роняет запуск со словами о том, чего нет:
+        // иначе кнопка «Войти через Google» исчезла бы, и о причине узнали бы
+        // по жалобе.
+        match (self.google_client_id.is_some(), self.google_client_secret.is_some()) {
+            (true, true) | (false, false) => {}
+            _ => panic!("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together"),
+        }
+        let apple = [
+            ("APPLE_CLIENT_ID", self.apple_client_id.is_some()),
+            ("APPLE_TEAM_ID", self.apple_team_id.is_some()),
+            ("APPLE_KEY_ID", self.apple_key_id.is_some()),
+            ("APPLE_PRIVATE_KEY", self.apple_private_key.is_some()),
+        ];
+        if apple.iter().any(|(_, set)| *set) {
+            let missing: Vec<&str> = apple.iter().filter(|(_, set)| !*set).map(|(n, _)| *n).collect();
+            if !missing.is_empty() {
+                panic!(
+                    "Sign in with Apple needs all four of APPLE_CLIENT_ID, APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY; missing: {}",
+                    missing.join(", ")
+                );
+            }
+            // Ключ проверяется подписью, а не разбором: ошибка в нём иначе
+            // вылезла бы на первом входе первого человека.
+            if let (Some(key), Some(team), Some(kid), Some(client)) = (
+                self.apple_private_key.as_deref(),
+                self.apple_team_id.as_deref(),
+                self.apple_key_id.as_deref(),
+                self.apple_client_id.as_deref(),
+            ) && let Err(e) = crate::oauth::check_apple_setup(key, team, kid, client)
+            {
+                panic!("{e}");
+            }
+            if self.public_url_is_local() {
+                tracing::warn!(
+                    "Sign in with Apple is configured, but PUBLIC_URL is local: Apple accepts only https addresses on a real domain, so the Apple button stays off on this machine."
+                );
+            }
+        }
     }
 }
 
@@ -246,6 +306,12 @@ impl Config {
     pub fn public_url_is_local(&self) -> bool {
         is_local_public_url(&self.public_url)
     }
+}
+
+/// Переменная окружения, если она не пустая. Пустая строка в `.env` значит
+/// «не задано», а не «задано пустым».
+fn env_nonempty(name: &str) -> Option<String> {
+    dotenvy::var(name).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 fn is_local_public_url(public_url: &str) -> bool {

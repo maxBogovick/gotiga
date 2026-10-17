@@ -8,7 +8,7 @@
   // the work stands in the margin exactly where the visitor will meet it.
   import { onMount, onDestroy, tick } from 'svelte';
   import { api, ApiError } from '$lib/api';
-  import { t, lang, type Lang } from '$lib/i18n';
+  import { t, lang, LANGS, LANG_META, localized, pick, type Lang } from '$lib/i18n';
   import { TITLE_MAX, DEK_MAX, BODY_MAX, AUTHOR_MAX, workFrameUrls, leafHref } from '$lib/gazette';
   import { ORNAMENT, readingMinutes, minutesKey, renderTale } from '$lib/tales';
   import { resolveSiteRefs, siteRefsIn, type SiteRefInfo } from '$lib/siteLinks';
@@ -53,10 +53,13 @@
   let selectedId = $state<string | null>(null);
   let titleEn = $state('');
   let titleRu = $state('');
+  let titleUk = $state('');
   let dekEn = $state('');
   let dekRu = $state('');
+  let dekUk = $state('');
   let bodyEn = $state('');
   let bodyRu = $state('');
+  let bodyUk = $state('');
   let figurineId = $state('');
   // Кем написана история. Одно поле на оба языка: имя не переводится.
   let author = $state('');
@@ -147,23 +150,57 @@
   let sealTimer: ReturnType<typeof setTimeout> | null = null;
   let syncing = false;
 
+  // One text per language, read and written by code: the desk used to know two
+  // languages and every `editLang === 'ru'` was a fork between them.
+  const getTitle = (l: Lang) => (l === 'ru' ? titleRu : l === 'uk' ? titleUk : titleEn);
+  const getDek = (l: Lang) => (l === 'ru' ? dekRu : l === 'uk' ? dekUk : dekEn);
+  const getBody = (l: Lang) => (l === 'ru' ? bodyRu : l === 'uk' ? bodyUk : bodyEn);
+  function setTitle(l: Lang, v: string) {
+    if (l === 'ru') titleRu = v;
+    else if (l === 'uk') titleUk = v;
+    else titleEn = v;
+  }
+  function setDek(l: Lang, v: string) {
+    if (l === 'ru') dekRu = v;
+    else if (l === 'uk') dekUk = v;
+    else dekEn = v;
+  }
+  function setBody(l: Lang, v: string) {
+    if (l === 'ru') bodyRu = v;
+    else if (l === 'uk') bodyUk = v;
+    else bodyEn = v;
+  }
+  /** The language a reader of `l` is shown when `l` has no text: English first,
+   *  and English falls to Russian. The same order the site uses. */
+  const fallbackOf = (l: Lang): Lang => (l === 'en' ? 'ru' : 'en');
+
   let selectedFig = $derived(figurines.find((f) => f.id === figurineId) ?? null);
   let plate = $derived(imageUrls[0] ?? '');
   let frames = $derived(selectedFig ? workFrameUrls(selectedFig, extraFig) : []);
-  let titleNow = $derived(editLang === 'ru' ? titleRu : titleEn);
-  let dekNow = $derived(editLang === 'ru' ? dekRu : dekEn);
-  let bodyNow = $derived(editLang === 'ru' ? bodyRu : bodyEn);
-  let otherLang = $derived<Lang>(editLang === 'ru' ? 'en' : 'ru');
-  let otherTitle = $derived(editLang === 'ru' ? titleEn : titleRu);
-  let otherBody = $derived(editLang === 'ru' ? bodyEn : bodyRu);
+  let titleNow = $derived(getTitle(editLang));
+  let dekNow = $derived(getDek(editLang));
+  let bodyNow = $derived(getBody(editLang));
+  // The second page in «both languages» mode: the one the keeper picked, or the
+  // one most likely wanted — the other of English and Russian, Ukrainian beside
+  // whichever it was translated from.
+  let otherPick = $state<Lang | null>(null);
+  let otherLang = $derived<Lang>(
+    otherPick && otherPick !== editLang ? otherPick : editLang === 'en' ? 'ru' : 'en',
+  );
+  let otherTitle = $derived(getTitle(otherLang));
+  let otherBody = $derived(getBody(otherLang));
   let chars = $derived(bodyNow.length);
   let fill = $derived(Math.min(1, chars / LITTLE));
   let tooLong = $derived(chars > LITTLE);
-  let open = $derived(selectedId !== null || titleEn !== '' || titleRu !== '');
+  let open = $derived(selectedId !== null || titleEn !== '' || titleRu !== '' || titleUk !== '');
   let mine = $derived(selectedId ? stats[selectedId] ?? null : null);
   let minutes = $derived(readingMinutes(bodyNow));
   /** Какая половина сайта осталась без текста. */
-  let bodyMissing = $derived<Record<Lang, boolean>>({ en: !bodyEn.trim(), ru: !bodyRu.trim() });
+  let bodyMissing = $derived<Record<Lang, boolean>>({
+    en: !bodyEn.trim(),
+    ru: !bodyRu.trim(),
+    uk: !bodyUk.trim(),
+  });
   /** Адрес на сайте. Ссылка открывается только у байки, которая на людях. */
   let siteHref = $derived(selectedId && slug ? leafHref({ kind: 'tale', slug } as GazetteLeaf) : '');
   /** На людях ли байка сейчас: опубликована или её час уже наступил. */
@@ -175,7 +212,7 @@
 
   function fieldsKey(): string {
     return JSON.stringify({
-      titleEn, titleRu, dekEn, dekRu, bodyEn, bodyRu, author,
+      titleEn, titleRu, titleUk, dekEn, dekRu, dekUk, bodyEn, bodyRu, bodyUk, author,
       figurineId, imageUrls, slug, status, pinned, scheduledAt,
     });
   }
@@ -293,10 +330,13 @@
     selectedId = null;
     titleEn = '';
     titleRu = '';
+    titleUk = '';
     dekEn = '';
     dekRu = '';
+    dekUk = '';
     bodyEn = '';
     bodyRu = '';
+    bodyUk = '';
     figurineId = '';
     author = '';
     imageUrls = [];
@@ -324,10 +364,13 @@
     selectedId = leaf.id;
     titleEn = leaf.titleEn;
     titleRu = leaf.titleRu;
+    titleUk = leaf.titleUk ?? '';
     dekEn = leaf.dekEn ?? '';
     dekRu = leaf.dekRu ?? '';
+    dekUk = leaf.dekUk ?? '';
     bodyEn = leaf.bodyEn ?? '';
     bodyRu = leaf.bodyRu ?? '';
+    bodyUk = leaf.bodyUk ?? '';
     figurineId = leaf.figurineId ?? '';
     author = leaf.author ?? '';
     imageUrls = leaf.imageUrls?.length ? leaf.imageUrls.filter(Boolean) : leaf.imageUrl ? [leaf.imageUrl] : [];
@@ -371,10 +414,13 @@
     if (!d) return;
     titleEn = (d.titleEn as string) ?? titleEn;
     titleRu = (d.titleRu as string) ?? titleRu;
+    titleUk = (d.titleUk as string) ?? titleUk;
     dekEn = (d.dekEn as string) ?? dekEn;
     dekRu = (d.dekRu as string) ?? dekRu;
+    dekUk = (d.dekUk as string) ?? dekUk;
     bodyEn = (d.bodyEn as string) ?? bodyEn;
     bodyRu = (d.bodyRu as string) ?? bodyRu;
+    bodyUk = (d.bodyUk as string) ?? bodyUk;
     author = (d.author as string) ?? author;
     // Работа и фотография — тоже часть написанного: восстановленный текст
     // без них вернул бы байку к чужой обложке.
@@ -467,7 +513,7 @@
 
   $effect(() => {
     if (!reading) return;
-    const refs = siteRefsIn(`${bodyEn}\n${bodyRu}`);
+    const refs = siteRefsIn(`${bodyEn}\n${bodyRu}\n${bodyUk}`);
     if (!refs.length) {
       readingLinks = {};
       return;
@@ -500,12 +546,19 @@
       // them would put Russian prose on the English page — and, worse, the
       // copy used to land back in the editor, so writing in one language made
       // text appear in the other while the author was still typing.
+      // Ukrainian is optional and never mirrored: a tale not yet translated
+      // shows English to a Ukrainian reader, which is the honest thing. A tale
+      // written ONLY in Ukrainian still gets a title in the other two (the
+      // server copies it) — the table requires both of them.
       titleEn: copyOr(titleEn, titleRu),
       titleRu: copyOr(titleRu, titleEn),
+      titleUk: titleUk.trim(),
       dekEn: dekEn.trim() || null,
       dekRu: dekRu.trim() || null,
+      dekUk: dekUk.trim() || null,
       bodyEn: bodyEn.trim() || null,
       bodyRu: bodyRu.trim() || null,
+      bodyUk: bodyUk.trim() || null,
       figurineId: figurineId || null,
       // Пустое поле — это «нет подписи», и оно обязано доехать до сервера:
       // пропущенное поле там значит то же самое, но молча.
@@ -531,7 +584,7 @@
    * identity the server owns is taken back.
    */
   async function save(): Promise<boolean> {
-    if (!titleEn.trim() && !titleRu.trim()) return false;
+    if (!titleEn.trim() && !titleRu.trim() && !titleUk.trim()) return false;
     const wasNew = selectedId === null;
     const sent = fieldsKey();
     saving = true;
@@ -554,7 +607,7 @@
       } else {
         tales = tales.map((tale) =>
           tale.id === saved.id
-            ? { ...tale, titleEn: saved.titleEn, titleRu: saved.titleRu, bodyEn: saved.bodyEn, bodyRu: saved.bodyRu, status: saved.status, pinned: saved.pinned, figurineName: saved.figurineName }
+            ? { ...tale, titleEn: saved.titleEn, titleRu: saved.titleRu, titleUk: saved.titleUk, bodyEn: saved.bodyEn, bodyRu: saved.bodyRu, bodyUk: saved.bodyUk, status: saved.status, pinned: saved.pinned, figurineName: saved.figurineName }
             : tale,
         );
       }
@@ -570,12 +623,14 @@
   /** Замечания перед выходом. Не запрещают — называют. */
   function releaseWarnings(): string[] {
     const out: string[] = [];
-    for (const code of ['en', 'ru'] as Lang[]) {
-      const other = code === 'en' ? 'ru' : 'en';
+    for (const code of LANGS) {
+      const other = fallbackOf(code);
+      const mark = LANG_META[code].mark;
+      const otherMark = LANG_META[other].mark;
       if (bodyMissing[code]) {
-        out.push($t('adminTalesCheckOneLang').replace('{lang}', code.toUpperCase()).replace('{other}', other.toUpperCase()));
-      } else if (!(code === 'en' ? titleEn : titleRu).trim()) {
-        out.push($t('adminTalesCheckNoTitle').replace('{lang}', code.toUpperCase()).replace('{other}', other.toUpperCase()));
+        out.push($t('adminTalesCheckOneLang').replaceAll('{lang}', mark).replaceAll('{other}', otherMark));
+      } else if (!getTitle(code).trim()) {
+        out.push($t('adminTalesCheckNoTitle').replaceAll('{lang}', mark).replaceAll('{other}', otherMark));
       }
     }
     if (!plate) out.push($t('adminTalesCheckNoPhoto'));
@@ -588,13 +643,13 @@
    * меняется, пока листок не подтвердили.
    */
   async function beginRelease(target: 'published' | 'scheduled', at: string | null) {
-    if (!titleEn.trim() && !titleRu.trim()) {
+    if (!titleEn.trim() && !titleRu.trim() && !titleUk.trim()) {
       flash($t('adminTalesNeedTitle'));
       return;
     }
     // Пустое тело — не замечание, а отказ: письмо «вышла новая байка» о
     // байке без единой строки уйти не должно.
-    if (!bodyEn.trim() && !bodyRu.trim()) {
+    if (!bodyEn.trim() && !bodyRu.trim() && !bodyUk.trim()) {
       flash($t('adminTalesCheckNoBody'));
       return;
     }
@@ -663,7 +718,7 @@
   function whenLetters(p: NonNullable<typeof preflight>): string {
     const mins = Math.round((p.forecast?.graceSecs ?? 600) / 60);
     if (p.target === 'scheduled' && p.at) {
-      const at = new Date(p.at).toLocaleString($lang === 'ru' ? 'ru-RU' : 'en-GB', {
+      const at = new Date(p.at).toLocaleString(pick($lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA' }), {
         day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
       });
       return $t('adminTalesLettersAfter').replace('{min}', String(mins)).replace('{at}', at);
@@ -713,8 +768,7 @@
     const before = box.value.slice(0, at).replace(/\n+$/, '');
     const after = box.value.slice(end).replace(/^\n+/, '');
     const next = `${before}\n\n${ORNAMENT}\n\n${after}`;
-    if (editLang === 'ru') bodyRu = next;
-    else bodyEn = next;
+    setBody(editLang, next);
     const caret = before.length + ORNAMENT.length + 4;
     void tick().then(() => {
       box.focus();
@@ -798,7 +852,7 @@
       if (!file) return;
       uploading = true;
       try {
-        const imported = await api.importMediaWithVariants(file, 'images', titleEn || titleRu || 'tale');
+        const imported = await api.importMediaWithVariants(file, 'images', titleEn || titleRu || titleUk || 'tale');
         imageUrls = [imported.url];
       } catch (e) {
         flash(String(e), 6000);
@@ -821,14 +875,14 @@
   }
 
   function clock(at: Date): string {
-    return at.toLocaleTimeString($lang === 'ru' ? 'ru-RU' : 'en-GB', {
+    return at.toLocaleTimeString(pick($lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA' }), {
       hour: '2-digit',
       minute: '2-digit',
     });
   }
 
   function titleOf(tale: GazetteLeaf): string {
-    return (editLang === 'ru' ? tale.titleRu : tale.titleEn) || tale.titleEn || tale.titleRu || $t('adminTalesUntitled');
+    return localized(tale, 'title', editLang) || $t('adminTalesUntitled');
   }
 
   onMount(async () => {
@@ -905,15 +959,23 @@
     <!-- ── Инструменты письма ───────────────────────────────────────────── -->
     <div class="tools desk-chrome">
       <div class="seg" role="group" aria-label="Language">
-        {#each ['en', 'ru'] as code}
+        {#each LANGS as code}
           <button
             class:on={editLang === code}
-            onclick={() => (editLang = code as Lang)}
-            title={bodyMissing[code as Lang] ? $t('adminTalesLangEmpty') : undefined}
-          >{code.toUpperCase()}{#if bodyMissing[code as Lang] && open}<span class="lang-hollow" aria-label={$t('adminTalesLangEmpty')}>○</span>{/if}</button>
+            onclick={() => (editLang = code)}
+            title={bodyMissing[code] ? $t('adminTalesLangEmpty') : LANG_META[code].native}
+          >{LANG_META[code].mark}{#if bodyMissing[code] && open}<span class="lang-hollow" aria-label={$t('adminTalesLangEmpty')}>○</span>{/if}</button>
         {/each}
       </div>
       <button class="tb" class:on={both} aria-pressed={both} onclick={() => (both = !both)}>{$t('adminTalesBoth')}</button>
+      {#if both}
+        <!-- Which language stands beside the one being written. -->
+        <div class="seg" role="group" aria-label={$t('adminBattlesEditLang')}>
+          {#each LANGS.filter((c) => c !== editLang) as code (code)}
+            <button class:on={otherLang === code} onclick={() => (otherPick = code)} title={LANG_META[code].native}>{LANG_META[code].mark}</button>
+          {/each}
+        </div>
+      {/if}
       <button class="tb tb--icon" onclick={insertOrnament} title={$t('adminTalesOrnament')} aria-label={$t('adminTalesOrnament')}>{ORNAMENT}</button>
       <span class="sep" aria-hidden="true"></span>
       <button class="tb" class:on={markupOpen} aria-expanded={markupOpen} onclick={() => (markupOpen = !markupOpen)}>{$t('adminTalesMarkup')}</button>
@@ -973,7 +1035,7 @@
     {#if sceneMode && selectedId}
       <div class="scroll">
         {#key selectedId}
-          <TaleSceneEditor taleId={selectedId} {slug} {bodyEn} {bodyRu} lang={editLang} />
+          <TaleSceneEditor taleId={selectedId} {slug} {bodyEn} {bodyRu} {bodyUk} lang={editLang} />
         {/key}
       </div>
     {:else}
@@ -992,7 +1054,7 @@
           <input
             bind:value={
               () => titleNow,
-              (v) => { if (editLang === 'ru') titleRu = v; else titleEn = v; }
+              (v) => setTitle(editLang, v)
             }
             maxlength={TITLE_MAX}
             placeholder={$t('adminTalesTitlePh')}
@@ -1001,7 +1063,7 @@
           <input
             bind:value={
               () => dekNow,
-              (v) => { if (editLang === 'ru') dekRu = v; else dekEn = v; }
+              (v) => setDek(editLang, v)
             }
             maxlength={DEK_MAX}
             placeholder={$t('adminTalesEpigraphPh')}
@@ -1034,7 +1096,7 @@
               bind:this={bodyBox}
               bind:value={
                 () => bodyNow,
-                (v) => { if (editLang === 'ru') bodyRu = v; else bodyEn = v; }
+                (v) => setBody(editLang, v)
               }
               onscroll={() => mirrorScroll(bodyBox, secondBox)}
               maxlength={BODY_MAX}
@@ -1047,11 +1109,11 @@
                 bind:this={secondBox}
                 bind:value={
                   () => otherBody,
-                  (v) => { if (otherLang === 'ru') bodyRu = v; else bodyEn = v; }
+                  (v) => setBody(otherLang, v)
                 }
                 onscroll={() => mirrorScroll(secondBox, bodyBox)}
                 maxlength={BODY_MAX}
-                placeholder={otherTitle || otherLang.toUpperCase()}
+                placeholder={otherTitle || LANG_META[otherLang].mark}
                 class="paper-body second"
               ></textarea>
             {/if}

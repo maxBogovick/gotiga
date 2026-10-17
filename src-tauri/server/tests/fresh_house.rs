@@ -42,6 +42,12 @@ fn config() -> Config {
         admin_log_db_path: format!("/tmp/gotiga-fresh-logs-{}.sqlite", Uuid::new_v4()),
         analytics_hash_secret: "test-analytics-secret-0123456789".into(),
         auth_pepper: "pepper-for-tests-0123456789".into(),
+        google_client_id: None,
+        google_client_secret: None,
+        apple_client_id: None,
+        apple_team_id: None,
+        apple_key_id: None,
+        apple_private_key: None,
         auth_pepper_old: None,
     }
 }

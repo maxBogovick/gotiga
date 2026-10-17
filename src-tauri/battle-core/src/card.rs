@@ -206,10 +206,78 @@ pub struct CardSnapshot {
     /// всё равно выходила и била.
     #[serde(default = "strikes_by_default")]
     pub strikes: bool,
+    /// Строение: стена, башня, ворота. Стоит и может быть сломано, но
+    /// сторона, у которой остались одни строения, побеждена.
+    ///
+    /// Отдельным полем, а не выводом из «не ходит и не бьёт»: котёл и знамя
+    /// тоже не ходят и не бьют, а сторона, у которой остался котёл, не
+    /// проиграла. И башня бьёт, а взятому городу не нужно ломать её до
+    /// последнего камня. Замер штурма (`BATTLE-GENRE-RESEARCH.md` § 7.5): без
+    /// этого поля в 14 партиях из 16 город «стоял» одной стеной с одним
+    /// здоровьем, когда защитников в нём уже не было.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub structure: bool,
+    /// Стреляет: лук, праща, самострел. Бьёт над строением — через стену
+    /// города. Маг (магический урон) делает это и без отметки.
+    ///
+    /// Отдельным полем, а не выводом из дальности: дальность 2 бывает и у
+    /// копья, а копьём через стену не бьют. Пока различия не было, через
+    /// стены города били все с дальностью от двух — и Бабушка с курицей тоже
+    /// (`BATTLE-GENRE-RESEARCH.md` § 7.7).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shoots: bool,
     /// Abilities frozen with the card. Empty on every match begun before this
     /// field existed — `default` keeps their board caches readable.
     #[serde(default)]
     pub abilities: Vec<AbilitySnapshot>,
+    /// Раса карты — её id в справочнике, как строка. Движку раса нужна только
+    /// для одного вопроса: «есть ли у бьющего прибавка против этой расы» и
+    /// «есть ли у цели защита от этой расы» (`RaceDamage`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race: Option<String>,
+    /// Урон расы против других рас. Заморожен вместе с картой, как и всё в
+    /// снимке: правка таблицы рас не меняет уже начатых партий.
+    #[serde(default, skip_serializing_if = "RaceDamage::is_empty")]
+    pub race_damage: RaceDamage,
+}
+
+/// Урон по расам: «+`attack` к урону по картам рас `against`» и «−`defence`
+/// урона от карт рас `from`». Одно число на список, а не число на каждую пару:
+/// так его настраивает стол рас (число и галочки), и так его легко держать в
+/// голове игроку.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RaceDamage {
+    #[serde(default)]
+    pub attack: i32,
+    #[serde(default)]
+    pub against: Vec<String>,
+    #[serde(default)]
+    pub defence: i32,
+    #[serde(default)]
+    pub from: Vec<String>,
+}
+
+impl RaceDamage {
+    pub fn is_empty(&self) -> bool {
+        (self.attack == 0 || self.against.is_empty()) && (self.defence == 0 || self.from.is_empty())
+    }
+
+    /// Прибавка к урону по карте расы `target`.
+    pub fn attack_on(&self, target: Option<&str>) -> i32 {
+        match target {
+            Some(r) if self.against.iter().any(|a| a == r) => self.attack.max(0),
+            _ => 0,
+        }
+    }
+
+    /// Сколько урона снимается, когда бьёт карта расы `attacker`.
+    pub fn defence_from(&self, attacker: Option<&str>) -> i32 {
+        match attacker {
+            Some(r) if self.from.iter().any(|a| a == r) => self.defence.max(0),
+            _ => 0,
+        }
+    }
 }
 
 fn strikes_by_default() -> bool {
@@ -231,8 +299,19 @@ impl CardSnapshot {
             mend: 0,
             channel: Channel::Physical,
             strikes: true,
+            structure: false,
+            shoots: false,
             abilities: Vec::new(),
+            race: None,
+            race_damage: RaceDamage::default(),
         }
+    }
+
+    /// Раса и её урон — для проверок.
+    pub fn with_race(mut self, race: &str, damage: RaceDamage) -> Self {
+        self.race = Some(race.to_string());
+        self.race_damage = damage;
+        self
     }
 
     pub fn with_armor(mut self, armor: i32) -> Self {

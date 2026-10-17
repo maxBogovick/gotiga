@@ -60,7 +60,7 @@ export interface ShelfFacets {
   kinds: BattleCardKind[];
 }
 
-const KIND_ORDER: BattleCardKind[] = ['unit', 'spell', 'relic'];
+const KIND_ORDER: BattleCardKind[] = ['unit', 'spell', 'relic', 'structure'];
 
 export function shelfFacets(cards: BattleCard[], lang: Lang): ShelfFacets {
   const races = new Map<string, string>();

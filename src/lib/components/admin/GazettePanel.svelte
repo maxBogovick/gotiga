@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, resolveMediaUrl } from '$lib/api';
-  import { t, lang, type TranslationKey, type Lang } from '$lib/i18n';
+  import { t, lang, LANGS, LANG_META, localized, type TranslationKey, type Lang } from '$lib/i18n';
   import {
     AUTHOR_MAX,
     DEK_MAX,
@@ -73,10 +73,13 @@
   let status = $state<GazetteStatus>('draft');
   let titleEn = $state('');
   let titleRu = $state('');
+  let titleUk = $state('');
   let dekEn = $state('');
   let dekRu = $state('');
+  let dekUk = $state('');
   let bodyEn = $state('');
   let bodyRu = $state('');
+  let bodyUk = $state('');
   let figurineId = $state('');
   let href = $state('');
   let imageUrls = $state<string[]>([]);
@@ -146,9 +149,9 @@
     const world = kind === 'world' ? (['world'] as GazetteKind[]) : [];
     return [...PRIMARY_KINDS, ...extra, ...world];
   });
-  let titleNow = $derived(editLang === 'ru' ? titleRu : titleEn);
-  let dekNow = $derived(editLang === 'ru' ? dekRu : dekEn);
-  let bodyNow = $derived(editLang === 'ru' ? bodyRu : bodyEn);
+  let titleNow = $derived(editLang === 'ru' ? titleRu : editLang === 'uk' ? titleUk : titleEn);
+  let dekNow = $derived(editLang === 'ru' ? dekRu : editLang === 'uk' ? dekUk : dekEn);
+  let bodyNow = $derived(editLang === 'ru' ? bodyRu : editLang === 'uk' ? bodyUk : bodyEn);
   let previewDate = $derived(
     quietDate(publishedAt ?? (picking ? '' : new Date().toISOString()), $lang),
   );
@@ -202,7 +205,7 @@
       if (statusFilter === 'draft' && l.status === 'published') return false;
       if (kindFilter !== 'all' && l.kind !== kindFilter) return false;
       if (!q) return true;
-      const hay = `${l.titleEn} ${l.titleRu} ${l.figurineName ?? ''}`.toLowerCase();
+      const hay = `${l.titleEn} ${l.titleRu} ${l.titleUk ?? ''} ${l.figurineName ?? ''}`.toLowerCase();
       return hay.includes(q);
     });
   });
@@ -223,10 +226,13 @@
       status,
       titleEn,
       titleRu,
+      titleUk,
       dekEn,
       dekRu,
+      dekUk,
       bodyEn,
       bodyRu,
+      bodyUk,
       figurineId,
       href,
       imageUrls,
@@ -244,14 +250,17 @@
 
   function setTitle(v: string) {
     if (editLang === 'ru') titleRu = v;
+    else if (editLang === 'uk') titleUk = v;
     else titleEn = v;
   }
   function setDek(v: string) {
     if (editLang === 'ru') dekRu = v;
+    else if (editLang === 'uk') dekUk = v;
     else dekEn = v;
   }
   function setBody(v: string) {
     if (editLang === 'ru') bodyRu = v;
+    else if (editLang === 'uk') bodyUk = v;
     else bodyEn = v;
   }
 
@@ -272,10 +281,13 @@
     status = 'draft';
     titleEn = '';
     titleRu = '';
+    titleUk = '';
     dekEn = '';
     dekRu = '';
+    dekUk = '';
     bodyEn = '';
     bodyRu = '';
+    bodyUk = '';
     figurineId = '';
     href = '';
     imageUrls = [];
@@ -304,10 +316,13 @@
     status = leaf.status;
     titleEn = leaf.titleEn;
     titleRu = leaf.titleRu;
+    titleUk = leaf.titleUk ?? '';
     dekEn = leaf.dekEn ?? '';
     dekRu = leaf.dekRu ?? '';
+    dekUk = leaf.dekUk ?? '';
     bodyEn = leaf.bodyEn ?? '';
     bodyRu = leaf.bodyRu ?? '';
+    bodyUk = leaf.bodyUk ?? '';
     figurineId = leaf.figurineId ?? '';
     href = leaf.href ?? '';
     imageUrls = leaf.imageUrls?.length
@@ -334,7 +349,7 @@
     bodyOpen =
       leaf.kind === 'tale' ||
       leaf.kind === 'guest_story' ||
-      !!(leaf.bodyEn?.trim() || leaf.bodyRu?.trim());
+      !!(leaf.bodyEn?.trim() || leaf.bodyRu?.trim() || leaf.bodyUk?.trim());
     moreKinds = MORE_KINDS.includes(leaf.kind);
     editLang = $lang;
     extraFig = null;
@@ -349,6 +364,8 @@
     if (!titleRu.trim() || titleRu === generic.titleRu) titleRu = fill.titleRu;
     if (!dekEn.trim() || dekEn === generic.dekEn) dekEn = fill.dekEn;
     if (!dekRu.trim() || dekRu === generic.dekRu) dekRu = fill.dekRu;
+    if (!titleUk.trim() || titleUk === generic.titleUk) titleUk = fill.titleUk;
+    if (!dekUk.trim() || dekUk === generic.dekUk) dekUk = fill.dekUk;
   }
 
   function setKind(k: GazetteKind) {
@@ -439,6 +456,11 @@
       dekRu: copyOr(dekRu, dekEn) || null,
       bodyEn: copyOr(bodyEn, bodyRu) || null,
       bodyRu: copyOr(bodyRu, bodyEn) || null,
+      // Ukrainian is never mirrored from the others: an untranslated leaf shows
+      // English to a Ukrainian reader, which is honest; a copy would not be.
+      titleUk: titleUk.trim(),
+      dekUk: dekUk.trim() || null,
+      bodyUk: bodyUk.trim() || null,
       figurineId: figurineId || null,
       href: href.trim() || null,
       sourceName: sourceName.trim() || null,
@@ -467,7 +489,7 @@
   }
 
   async function save(next?: GazetteStatus) {
-    if (!titleEn.trim() && !titleRu.trim()) {
+    if (!titleEn.trim() && !titleRu.trim() && !titleUk.trim()) {
       flash($t('adminGazetteNeedTitle'));
       return;
     }
@@ -567,7 +589,7 @@
         const imported = await api.importMediaWithVariants(
           file,
           'images',
-          titleEn || titleRu || 'gazette',
+          titleEn || titleRu || titleUk || 'gazette',
         );
         addImageUrl(imported.url);
       }
@@ -587,7 +609,7 @@
           const imported = await api.importMediaWithVariants(
             files[0],
             'images',
-            titleEn || titleRu || 'gazette',
+            titleEn || titleRu || titleUk || 'gazette',
           );
           imageUrls = [imported.url];
         } finally {
@@ -704,8 +726,10 @@
     if (kind === 'showing') {
       const enLine = showingDateline(s.startsAt, s.endsAt, s.venue, 'en');
       const ruLine = showingDateline(s.startsAt, s.endsAt, s.venue, 'ru');
+      const ukLine = showingDateline(s.startsAt, s.endsAt, s.venue, 'uk');
       if (enLine) dekEn = enLine;
       if (ruLine) dekRu = ruLine;
+      if (ukLine) dekUk = ukLine;
     }
     snapshot = fieldsKey();
     onSeedConsumed?.();
@@ -836,7 +860,7 @@
         {:else}
           {#each visibleLeaves as leaf (leaf.id)}
             <button class="row" class:sel={selectedId === leaf.id && !picking} onclick={() => selectRow(leaf)}>
-              <span class="row-title">{leaf.titleEn || leaf.titleRu}</span>
+              <span class="row-title">{localized(leaf, 'title', $lang)}</span>
               <span class="row-st">
                 {typeLabel(leaf.kind)}
                 · {publishedLabel(leaf)}
@@ -921,12 +945,11 @@
               </div>
 
               <div class="tabs lang-tabs">
-                <button type="button" class:on={editLang === 'en'} onclick={() => (editLang = 'en')}>
-                  {$t('adminGazetteLangEn')}
-                </button>
-                <button type="button" class:on={editLang === 'ru'} onclick={() => (editLang = 'ru')}>
-                  {$t('adminGazetteLangRu')}
-                </button>
+                {#each LANGS as code (code)}
+                  <button type="button" class:on={editLang === code} onclick={() => (editLang = code)}>
+                    {LANG_META[code].native}
+                  </button>
+                {/each}
               </div>
 
               {#if existingArrival}

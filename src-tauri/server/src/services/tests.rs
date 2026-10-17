@@ -33,6 +33,12 @@ fn test_config() -> Config {
         telegram_webhook_secret: None,
         telegram_channel_id: None,
         telegram_chat_id: None,
+        google_client_id: None,
+        google_client_secret: None,
+        apple_client_id: None,
+        apple_team_id: None,
+        apple_key_id: None,
+        apple_private_key: None,
         smtp_host: None,
         smtp_port: None,
         smtp_user: None,
@@ -698,11 +704,11 @@ async fn clean_media_path_normalises_backslashes() {
     );
 }
 
-// ── in-memory rate limiter ──────────────────────────────────────────────────
+// ── rate limiter (counted in the database) ──────────────────────────────────
 
-#[tokio::test]
-async fn check_rate_limit_allows_up_to_max_then_blocks_per_key() {
-    let svc = lazy_service();
+#[sqlx::test(migrations = "./migrations")]
+async fn check_rate_limit_allows_up_to_max_then_blocks_per_key(pool: sqlx::PgPool) {
+    let svc = AppService::new(Repository::new(pool), test_config());
     // First two requests for (bucket, ip) pass; the third is throttled.
     assert!(
         svc.check_rate_limit("auth", "1.2.3.4", 2, 3600)
@@ -740,13 +746,13 @@ async fn set_figurine_like_rejects_empty_and_oversized_token() {
     let svc = lazy_service();
     let id = Uuid::nil();
     assert_bad_request(
-        svc.set_figurine_like(id, "  ", None, true)
+        svc.set_figurine_like(id, "  ", None, true, &[])
             .await
             .unwrap_err(),
         "Invalid visitor token",
     );
     assert_bad_request(
-        svc.set_figurine_like(id, &"x".repeat(65), None, true)
+        svc.set_figurine_like(id, &"x".repeat(65), None, true, &[])
             .await
             .unwrap_err(),
         "Invalid visitor token",

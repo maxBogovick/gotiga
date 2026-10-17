@@ -28,6 +28,8 @@
     tier: 1,
     titleEn: 'The Keeper of the Key',
     titleRu: 'Хранительница Ключа',
+    titleUk: 'Охоронниця Ключа',
+    effectUk: 'Вир Душі: кожне третє закляття створює копію ефекту.',
     effectRu: 'Вихрь Души: каждое третье заклинание создаёт копию эффекта.',
     effectEn: 'Wind of Soul: every third spell makes a copy of its effect.',
     cost: 5,

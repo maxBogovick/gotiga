@@ -10,9 +10,9 @@
   // Перечислены типы поимённо: флажок и цвет — не строки, и общая рамка с
   // отступом превратила бы галочку в пустую коробку.
   import type { Snippet } from 'svelte';
-  import { t } from '$lib/i18n';
+  import { t, LANGS, type Lang } from '$lib/i18n';
 
-  type Side = 'en' | 'ru';
+  type Side = Lang;
 
   let {
     label,
@@ -45,13 +45,13 @@
     /** Поле на двух языках, а правится одна сторона за раз. Метки EN / RU у
      *  подписи говорят, где пусто, не переключая языка, — иначе пустая
      *  сторона видна только тому, кто догадался туда заглянуть. */
-    langs?: { en: boolean; ru: boolean; current: Side };
+    langs?: { en: boolean; ru: boolean; uk?: boolean; current: Side };
     /** Нажатие на метку языка. */
     onlang?: (side: Side) => void;
     children: Snippet;
   }>();
 
-  const SIDES: Side[] = ['en', 'ru'];
+  const SIDES: Side[] = [...LANGS];
 
   function pick(e: Event, side: Side) {
     // Метка стоит внутри `<label>`, и нажатие дойдёт до поля само — оно и
@@ -77,7 +77,8 @@
               tabindex="0"
               class="lang"
               class:lang--on={langs.current === side}
-              class:lang--empty={!langs[side]}
+              class:lang--empty={!(langs[side] ?? true)}
+              class:lang--soft={side === 'uk'}
               title={`${side.toUpperCase()} · ${langs[side] ? $t('adminBattlesLangFilled') : $t('adminBattlesLangEmpty')}`}
               onclick={(e) => pick(e, side)}
               onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && pick(e, side)}
@@ -146,6 +147,15 @@
      «не выбрано» тому, кто цвета не различает. */
   .lang--empty {
     color: #8f2f22;
+  }
+  /* Ukrainian is never required: its empty mark is a quiet hollow, not the
+     alarm English and Russian get — an untranslated card is not a fault. */
+  .lang--empty.lang--soft {
+    color: #8a6a55;
+  }
+  .lang--empty.lang--soft::before {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px currentColor;
   }
   .lang--empty::before {
     content: '';

@@ -69,10 +69,10 @@ impl TgUser {
         }
     }
 
-    pub fn speaks_russian(&self) -> bool {
-        self.language_code
-            .as_deref()
-            .is_some_and(|l| l.to_ascii_lowercase().starts_with("ru"))
+    /// The language the person's Telegram is set to: Ukrainian, Russian, or
+    /// English for everything else.
+    pub fn lang(&self) -> crate::lang::Lang {
+        crate::lang::Lang::from_tag(self.language_code.as_deref())
     }
 }
 
@@ -115,6 +115,12 @@ pub fn start_code(text: &str) -> Option<String> {
         return None;
     }
     Some(code.to_string())
+}
+
+/// `/stop` (и `/stop@имя_бота` из групп) — выход из книги дома.
+pub fn is_stop(text: &str) -> bool {
+    let word = text.trim().split_whitespace().next().unwrap_or("");
+    word == "/stop" || word.starts_with("/stop@")
 }
 
 // ============================================================
@@ -289,6 +295,17 @@ impl Bot {
         self.call("sendMessage", body).await;
     }
 
+    /// То же, но причина отказа достаётся вызывающему: подписчику, которого
+    /// бот не может достичь, нечего писать снова и снова.
+    pub async fn say_why(&self, chat_id: i64, text: &str) -> Result<(), String> {
+        let body = serde_json::json!({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+        });
+        self.call_why("sendMessage", body).await.map(|_| ())
+    }
+
     /// Переписать записку на месте: кнопки снимаются вместе с ней, и нажать
     /// «это я» второй раз становится не на что.
     pub async fn settle(&self, chat_id: i64, message_id: i64, text: &str) {
@@ -419,7 +436,7 @@ mod tests {
             language_code: Some("ru-RU".into()),
         };
         assert_eq!(full.display_name(), "Маша Иванова");
-        assert!(full.speaks_russian());
+        assert_eq!(full.lang(), crate::lang::Lang::Ru);
 
         let hidden = TgUser {
             id: 2,
@@ -429,7 +446,7 @@ mod tests {
             language_code: Some("en".into()),
         };
         assert_eq!(hidden.display_name(), "ghost");
-        assert!(!hidden.speaks_russian());
+        assert_eq!(hidden.lang(), crate::lang::Lang::En);
 
         let bare = TgUser {
             id: 3,
@@ -439,7 +456,15 @@ mod tests {
             language_code: None,
         };
         assert_eq!(bare.display_name(), "Telegram");
-        assert!(!bare.speaks_russian());
+        let kyiv = TgUser {
+            id: 4,
+            username: None,
+            first_name: Some("Оксана".into()),
+            last_name: None,
+            language_code: Some("uk".into()),
+        };
+        assert_eq!(kyiv.lang(), crate::lang::Lang::Uk);
+        assert_eq!(bare.lang(), crate::lang::Lang::En);
     }
 
     #[test]

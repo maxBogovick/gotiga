@@ -778,7 +778,7 @@ export interface CommissionRequest {
     attachmentUrls?: AttachmentInput[];
     /** Honeypot — leave empty. */
     website?: string | null;
-    /** UI language at submission ('ru' | 'en'). */
+    /** UI language at submission ('en' | 'ru' | 'uk'). */
     lang?: string | null;
     /** Self-certified "I am 16 or older" checkbox. */
     ageConfirmed: boolean;
@@ -1041,6 +1041,11 @@ export interface UserDto {
      * является: по нему не сбрасывают знаки и не привязывают гостевые расписки.
      */
     emailConfirmed?: boolean;
+    /** Привязан ли Google / Apple и какой адрес они назвали (строка в профиле, не ключ). */
+    googleLinked?: boolean;
+    googleEmail?: string | null;
+    appleLinked?: boolean;
+    appleEmail?: string | null;
 }
 
 /** Есть ли на этом сервере вход через Telegram и каким ботом. */
@@ -1068,12 +1073,53 @@ export interface TelegramCodeResponse {
 /**
  * Ответ на опрос. `waiting` — бота ещё не открывали, `asked` — записка
  * показана, ждём кнопку, `ready` — сессия (отдаётся один раз), `refused` —
- * нажали «не я», `expired` — слово остыло либо его никогда не было.
+ * нажали «не я», `age` — имени ещё нет, а возраст не подтверждён,
+ * `expired` — слово остыло либо его никогда не было.
  */
 export interface TelegramCodeStatus {
-    state: 'waiting' | 'asked' | 'ready' | 'refused' | 'expired';
+    state: 'waiting' | 'asked' | 'ready' | 'refused' | 'age' | 'expired';
     sessionToken: string | null;
     user: UserDto | null;
+}
+
+/** Ответ на назначение знаков: старые сессии погашены, взамен одна новая. */
+export interface ApplyPasswordResetResponse {
+    /** Пусто у заблокированного имени. */
+    sessionToken: string | null;
+    user: UserDto | null;
+}
+
+// ── Вход через Google и Apple ────────────────────────────────
+
+export type OauthProvider = 'google' | 'apple';
+
+/** Какие провайдеры включены на этом сервере. */
+export interface OauthConfig {
+    google: boolean;
+    apple: boolean;
+}
+
+/** Ссылка к провайдеру и секрет вкладки (привязка), без которого результат не забрать. */
+export interface OauthStart {
+    url: string;
+    state: string;
+    binder: string;
+    expiresAt: string;
+}
+
+/**
+ * Результат входа. `ready` — вошёл (или привязал: тогда `sessionToken` пуст,
+ * у вошедшего своя сессия), `failed` — отказ с причиной, `expired` — попытки
+ * нет, она остыла или предъявлена не той вкладкой.
+ */
+export interface OauthRedeem {
+    state: 'ready' | 'failed' | 'expired';
+    provider: OauthProvider | null;
+    sessionToken: string | null;
+    user: UserDto | null;
+    isNew: boolean;
+    /** `age` — имени ещё нет, а возраст не подтверждён: новое имя заводится на регистрации. */
+    failure: 'denied' | 'blocked' | 'conflict' | 'age' | 'failed' | null;
 }
 
 export interface ChallengeIconDto {
@@ -1240,6 +1286,11 @@ export interface AdminUserDetail {
     displayName: string;
     telegramUsername?: string | null;
     telegramLinked?: boolean;
+    /** Google / Apple: привязан ли вход и какой адрес назвал провайдер. */
+    googleLinked?: boolean;
+    googleEmail?: string | null;
+    appleLinked?: boolean;
+    appleEmail?: string | null;
     adminNotes: string | null;
     isBlocked: boolean;
     createdAt: string;
@@ -1318,6 +1369,7 @@ export interface AdminTaleCommentDto {
     taleId: string;
     taleTitleEn: string;
     taleTitleRu: string;
+    taleTitleUk?: string | null;
     taleSlug: string;
     authorName: string;
     authorEmail: string | null;
@@ -1574,8 +1626,10 @@ export interface ProgrammeSettings {
     caseBg: string | null;
     curatorNoteEn: string | null;
     curatorNoteRu: string | null;
+    curatorNoteUk?: string | null;
     curatorSignEn: string | null;
     curatorSignRu: string | null;
+    curatorSignUk?: string | null;
     /** Base bronze hex for the case molding; null = built-in bronze. */
     frameTone: string | null;
     /** Molding thickness in px; null = built-in clamp. */
@@ -1660,6 +1714,13 @@ export interface SubscriptionCreatedResponse {
     alreadySubscribed: boolean;
 }
 
+export interface TelegramSubscribeResponse {
+    /** Ссылка на бота с кодом; нет — подписка оформлена сразу. */
+    link: string | null;
+    confirmed: boolean;
+    unsubscribeToken: string;
+}
+
 export interface SubscriberInfo {
     email: string;
 }
@@ -1715,6 +1776,7 @@ export interface ThemeConfig {
 export interface CopyOverrides {
     en: Record<string, string>;
     ru: Record<string, string>;
+    uk: Record<string, string>;
 }
 
 // ============================================================
@@ -1972,10 +2034,13 @@ export interface GazetteLeaf {
     status: GazetteStatus;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     dekEn: string | null;
     dekRu: string | null;
+    dekUk?: string | null;
     bodyEn: string | null;
     bodyRu: string | null;
+    bodyUk?: string | null;
     figurineId: string | null;
     figurineName: string | null;
     figurineSlug: string | null;
@@ -2005,6 +2070,7 @@ export interface GazetteNeighbor {
     slug: string;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
 }
 
 export interface SaveGazetteLeafRequest {
@@ -2013,10 +2079,13 @@ export interface SaveGazetteLeafRequest {
     status: GazetteStatus;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     dekEn?: string | null;
     dekRu?: string | null;
+    dekUk?: string | null;
     bodyEn?: string | null;
     bodyRu?: string | null;
+    bodyUk?: string | null;
     figurineId?: string | null;
     href?: string | null;
     sourceName?: string | null;
@@ -2047,13 +2116,18 @@ export interface WatchGazetteLeafRequest {
 export interface GazetteWatchCreatedResponse {
     cancelToken: string;
     alreadyWatching: boolean;
+    /** Адрес уже доказан; нет — ушло письмо с просьбой подтвердить. */
+    confirmed: boolean;
 }
 
 export interface GazetteWatchInfo {
     leafSlug: string;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     notified: boolean;
+    /** Адрес подтверждён; нет — слежение ждёт ссылки из письма. */
+    confirmed: boolean;
 }
 
 export interface GazetteWatchDto {
@@ -2062,6 +2136,7 @@ export interface GazetteWatchDto {
     leafSlug: string;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     cancelToken: string;
     notifiedAt: string | null;
     createdAt: string;
@@ -2129,7 +2204,8 @@ export interface GazetteRefreshReport {
 
 // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
 
-export type BattleCardStatus = 'draft' | 'published' | 'retired';
+/** `etude` — только для этюдов: встаёт в расстановку, но не стоит на полке и не продаётся. */
+export type BattleCardStatus = 'draft' | 'published' | 'retired' | 'etude';
 
 /** 1..5. The card's rank — NOT the level of anyone's copy of it. */
 export type BattleTier = 1 | 2 | 3 | 4 | 5;
@@ -2139,8 +2215,10 @@ export type BattleTier = 1 | 2 | 3 | 4 | 5;
 export interface CardTrait {
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     textEn: string;
     textRu: string;
+    textUk?: string | null;
 }
 
 export interface BattleCard {
@@ -2153,23 +2231,30 @@ export interface BattleCard {
     raceId: string | null;
     raceNameEn: string | null;
     raceNameRu: string | null;
+    raceNameUk?: string | null;
     /** The race's shared icon, already a public URL. */
     raceIconUrl: string | null;
     /** The race's own dress per level, joined in the same way as the icon:
      *  JSON array of 5 `{frameImage?,frameMode?,aspect?}` patches, or `null`. */
     raceLevelFrames: string | null;
+    /** Урон по расам расы этой карты; нет — раса ни против кого не настроена. */
+    raceDamage?: RaceDamage;
     /** Движения расы, приложенные тем же швом: сцене они нужны на каждом
      *  событии, а второй запрос за справочником рас ради этого не успеет. */
     raceMotionWear?: string | null;
     typeEn: string | null;
     typeRu: string | null;
+    typeUk?: string | null;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     /** Up to 400 characters: room for a list of named abilities on a dressed card. */
     effectEn: string | null;
     effectRu: string | null;
+    effectUk?: string | null;
     loreEn: string | null;
     loreRu: string | null;
+    loreUk?: string | null;
     /** Top-left corner of the card. */
     cost: number;
     /** Strength. */
@@ -2223,6 +2308,8 @@ export interface BattleCard {
      *  Only rank 1 is ever actually lent — the pool is filtered by rank, not
      *  by this flag, so the keeper can mark a card before settling its rank. */
     lendable: boolean;
+    /** Стреляет: лук, праща. Через стены города бьют только стрелки и маги. */
+    shoots?: boolean;
     /** Автограф: чьё это придумано. Пусто у карт дома. */
     creditName?: string | null;
     /** Тираж: сколько экземпляров дом отпечатает вообще. Пусто — сколько
@@ -2244,12 +2331,16 @@ export interface SaveBattleCardRequest {
     raceId?: string | null;
     typeEn?: string | null;
     typeRu?: string | null;
+    typeUk?: string | null;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     effectEn?: string | null;
     effectRu?: string | null;
+    effectUk?: string | null;
     loreEn?: string | null;
     loreRu?: string | null;
+    loreUk?: string | null;
     cost: number;
     power: number;
     health: number;
@@ -2273,6 +2364,7 @@ export interface SaveBattleCardRequest {
     frameOverride?: string | null;
     motionWear?: string | null;
     lendable?: boolean;
+    shoots?: boolean;
     /** Тираж. `null` или 0 — не ограничивать. */
     editionSize?: number | null;
     figurineId?: string | null;
@@ -2497,8 +2589,10 @@ export interface StudioRace {
     id: string;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
+    noteUk?: string | null;
     iconUrl?: string | null;
     /** `taken` терминально: род стал строкой словаря дома. */
     status: 'draft' | 'shown' | 'withdrawn' | 'taken';
@@ -2514,8 +2608,10 @@ export interface StudioRaceWaiting {
     id: string;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
+    noteUk?: string | null;
     iconUrl?: string | null;
     author: string;
     updatedAt: string;
@@ -2524,8 +2620,10 @@ export interface StudioRaceWaiting {
 export interface SaveStudioRaceRequest {
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
+    noteUk?: string | null;
     iconUrl?: string | null;
     lang?: string;
 }
@@ -2605,6 +2703,7 @@ export interface CopyListing {
     cardId: string;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     creditName?: string | null;
     seller: string;
     createdAt: string;
@@ -2620,6 +2719,7 @@ export interface MyCopy {
     locked: boolean;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
 }
 
 /** Лот с молотка. */
@@ -2709,6 +2809,39 @@ export interface BattleDeck {
     nothingToLend: boolean;
 }
 
+/**
+ * Расстановка гостя на поле одной встречи. Те же места, что у стола, но клетки —
+ * клетки поля этой встречи, и какие из них можно занять, называет сервер
+ * (`cells`): правило поля на странице не повторяется.
+ */
+export interface BattleLineup {
+    board: BattleDeckSlot[];
+    hand: BattleDeckSlot[];
+    /** Сохранял ли гость расстановку для этой встречи. */
+    laid: boolean;
+    nothingToLend: boolean;
+    /** Клетки своей половины, на которые можно поставить карту, — в порядке,
+     *  в котором их занимают временные карты дома. */
+    cells: BattleCell[];
+    /** Сколько карт и каких рангов берёт колода. */
+    limits: DeckLimits;
+    /** Куда карты противника достают ударом за свой ход при этой расстановке. */
+    threats: StrikeZone[];
+}
+
+export interface DeckLimits {
+    board: number;
+    hand: number;
+    rankFive: number;
+    rankFour: number;
+}
+
+/** Карта противника и клетки, до которых она достаёт ударом. */
+export interface StrikeZone {
+    cell: BattleCell;
+    cells: BattleCell[];
+}
+
 export interface DeckPlacement {
     card: string;
     x: number;
@@ -2719,6 +2852,8 @@ export interface DeckPlacement {
 export interface SaveBattleDeckRequest {
     board: DeckPlacement[];
     hand: string[];
+    /** Только у расстановки перед встречей: клетки временных карт по порядку. */
+    lent?: BattleCell[];
 }
 
 export type BattleLayout = 'corners' | 'plaque';
@@ -2917,6 +3052,7 @@ export interface BattleFrame {
     tier: number;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     paper: string;
     ink: string;
     border: string;
@@ -3170,8 +3306,10 @@ export interface BattleRace {
     slug: string;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     noteEn: string | null;
     noteRu: string | null;
+    noteUk?: string | null;
     /** Shown in the header band of every card of this race. */
     iconUrl: string | null;
     /** This race's own dress per level of an owned copy — JSON array of 5
@@ -3183,6 +3321,21 @@ export interface BattleRace {
     sortOrder?: number | null;
     /** How many cards stand under it — what a rename or a removal would touch. */
     cardCount: number;
+    /** Урон по расам: прибавка против отмеченных рас и защита от отмеченных. */
+    raceDamage?: RaceDamage;
+    /** Сколько даёт одна отметка в таблице урона. Называет сервер
+     *  (`RACE_DAMAGE_MAX`), одно число на весь справочник. */
+    raceDamageStep?: number;
+}
+
+/** Урон по расам одной расы. Ссылки — id рас из справочника. */
+export interface RaceDamage {
+    /** +N к урону по картам рас `against`. */
+    attack: number;
+    against: string[];
+    /** −N урона от карт рас `from`. */
+    defence: number;
+    from: string[];
 }
 
 /**
@@ -3280,6 +3433,7 @@ export interface Motion {
     id: string;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     occasion: MotionOccasion;
     /** Пол длительности, мс. 0 — только по жестам. Больше последнего жеста —
      *  тишина после него. Потолок всё равно `MOTION_MS_MAX`: это не второй
@@ -3433,7 +3587,8 @@ export interface BattleAssetPick {
     rects?: BattleSplitRect[];
 }
 
-export type BattleCardKind = 'unit' | 'spell' | 'relic';
+/** `structure` — стена, башня: сторона, у которой остались одни строения, побеждена. */
+export type BattleCardKind = 'unit' | 'spell' | 'relic' | 'structure';
 export type BattleChannel = 'physical' | 'magic' | 'pure' | 'none';
 
 /** The closed list of verbs. A new card is a new combination, never a new verb. */
@@ -3457,6 +3612,7 @@ export interface CardAbility {
     id: string;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     verb: AbilityVerb;
     channel: BattleChannel;
     amount: number;
@@ -3560,6 +3716,9 @@ export interface BattleRules {
     /** Прорыв: тело, простоявшее ход противника на дальнем ряду его половины,
      *  выигрывает партию. Записанное без поля читается как «выключено». */
     breakthrough?: boolean;
+    /** Штурм: партия, дошедшая до лимита кругов, достаётся обороне, а не тому,
+     *  у кого больше здоровья. Записанное без поля — «выключено». */
+    keeperHoldsOnTime?: boolean;
 }
 
 /** A study sets BOTH sides. A meeting (`playerSide: 'deck'`) fills only the
@@ -3581,6 +3740,8 @@ export interface ChallengeSetup {
     terrain?: BattleTile[];
     /** Величина поля. Нет — 3 × 3 на половину. */
     field?: BattleField;
+    /** Фон поля: путь `/static/…` к картинке со стола поля. Только вид. */
+    background?: string | null;
 }
 
 /** Величина поля: клеток поперёк (3–4) и вглубь у каждой половины (3–5). */
@@ -3590,7 +3751,9 @@ export interface BattleField {
 }
 
 /** Земля под клеткой. Зеркало `battle_core::Ground`. */
-export type BattleGround = 'wall' | 'cover' | 'mire' | 'ravine' | 'pit' | 'hill' | 'spring';
+export type BattleGround =
+  | 'wall' | 'cover' | 'mire' | 'ravine' | 'pit' | 'hill' | 'spring'
+  | 'embers' | 'altar' | 'ice' | 'storm' | 'grave' | 'crystal' | 'glass' | 'rift' | 'maelstrom';
 
 export interface BattleTile {
     cell: BattleCell;
@@ -3602,8 +3765,10 @@ export interface BattleChallenge {
     slug: string;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     noteEn: string | null;
     noteRu: string | null;
+    noteUk?: string | null;
     setup: ChallengeSetup;
     botDepth: number;
     /** Paid once per challenge, never per victory. */
@@ -3646,8 +3811,10 @@ export interface SaveBattleChallengeRequest {
     slug?: string | null;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
+    noteUk?: string | null;
     setup: ChallengeSetup;
     botDepth: number;
     rewardDust: number;
@@ -3691,6 +3858,10 @@ export interface BattleBodyCard {
     channel: BattleChannel;
     /** Бьёт ли это тело вообще. Котёл, знамя, безоружный лекарь — нет. */
     strikes?: boolean;
+    /** Строение: стена, башня. Сторону не держит (`CardSnapshot::structure`). */
+    structure?: boolean;
+    /** Стреляет: бьёт над строениями (`CardSnapshot::shoots`). */
+    shoots?: boolean;
     /** Abilities frozen with the body. Empty on matches begun before this
      *  field existed. The scene lights cells from `legalActions`; this is for
      *  naming why a body can mend when `mend` itself is zero. */
@@ -3899,8 +4070,10 @@ export interface AdminBattleErrand {
     slug: string;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     noteEn: string | null;
     noteRu: string | null;
+    noteUk?: string | null;
     rule: string;
     threshold: number;
     currency: 'dust' | 'feed';
@@ -3923,8 +4096,10 @@ export interface SaveBattleErrandRequest {
     slug: string;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     noteEn: string | null;
     noteRu: string | null;
+    noteUk?: string | null;
     rule: string;
     threshold: number;
     currency: 'dust' | 'feed';
@@ -3977,8 +4152,10 @@ export interface BattleErrand {
     slug: string;
     titleEn: string;
     titleRu: string;
+    titleUk?: string | null;
     noteEn: string | null;
     noteRu: string | null;
+    noteUk?: string | null;
     /** Слово из словаря условий — по нему же выбирается, куда вести человека. */
     rule: string;
     threshold: number;
@@ -4230,6 +4407,7 @@ export interface BattleMatchRow {
     guest: string;
     challengeId: string | null;
     titleRu: string | null;
+    titleUk?: string | null;
     titleEn: string | null;
     /** `player` — победил гость, `keeper` — дом, `draw` — ничья, null — не доиграна. */
     outcome: 'player' | 'keeper' | 'draw' | null;
@@ -4243,6 +4421,7 @@ export interface BattleMatchRow {
 export interface BattleChallengeTally {
     challengeId: string | null;
     titleRu: string | null;
+    titleUk?: string | null;
     titleEn: string | null;
     played: number;
     guestWon: number;
@@ -4257,6 +4436,7 @@ export interface BattleChallengeTally {
 export interface BattleCardTally {
     slug: string;
     titleRu: string | null;
+    titleUk?: string | null;
     titleEn: string | null;
     played: number;
     won: number;
@@ -4292,9 +4472,11 @@ export interface BattleKeyword {
     slug: string;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     /** The canonical wording of the rule, one per game. */
     rulesEn: string | null;
     rulesRu: string | null;
+    rulesUk?: string | null;
     iconUrl: string | null;
     /** Points per unit, from the exchange table. `null` — not priced yet. */
     pointValue: number | null;
@@ -4305,8 +4487,10 @@ export interface SaveBattleKeywordRequest {
     slug?: string | null;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     rulesEn?: string | null;
     rulesRu?: string | null;
+    rulesUk?: string | null;
     iconUrl?: string | null;
     pointValue?: number | null;
 }
@@ -4315,11 +4499,14 @@ export interface SaveBattleRaceRequest {
     slug?: string | null;
     nameEn: string;
     nameRu: string;
+    nameUk?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
+    noteUk?: string | null;
     iconUrl?: string | null;
     levelFrames?: string | null;
     motionWear?: string | null;
+    raceDamage?: RaceDamage | null;
 }
 
 
@@ -4534,3 +4721,17 @@ export interface TaleSceneData {
     /** На один меньше, чем кадров: переход `i` ведёт из кадра `i` в `i + 1`. */
     transitions: SceneTransition[];
 }
+
+/** Итог проверки проходимости (`siege::ProbeReport`). */
+export interface BattleProbeReport {
+    planned: number;
+    skilledPlayed: number;
+    skilledTaken: number;
+    greedyPlayed: number;
+    greedyTaken: number;
+    finished: boolean;
+}
+
+export type BattleProbeState =
+    | { state: 'running' }
+    | { state: 'done'; report: BattleProbeReport };

@@ -61,6 +61,7 @@ const PATH_GROUP_SQL: &str = r#"
                     WHEN split_part(path, '?', 1) LIKE '/acquire%' THEN 'acquire'
                     WHEN split_part(path, '?', 1) LIKE '/hall/%' THEN 'hall'
                     WHEN split_part(path, '?', 1) LIKE '/privacy%'
+                      OR split_part(path, '?', 1) LIKE '/terms%'
                       OR split_part(path, '?', 1) LIKE '/rights%' THEN 'legal'
                     WHEN split_part(path, '?', 1) LIKE '/profile%'
                       OR split_part(path, '?', 1) LIKE '/bookings%' THEN 'account'
@@ -74,6 +75,57 @@ const PATH_GROUP_SQL: &str = r#"
                     ELSE 'other'
                 END
 "#;
+
+/// What came of a request to sign the book.
+pub enum SubscribeOutcome {
+    /// A new row: the letter with the confirmation link must be sent, and the
+    /// person who made the row is the one who gets its unsubscribe key.
+    Created(crate::models::Subscriber),
+    /// An old row (unconfirmed, or one that left): the letter is sent again,
+    /// but the key stays with the owner — the request may be a stranger's.
+    Sent(crate::models::Subscriber),
+    /// A letter went out within the last hour; none is sent again.
+    Throttled(crate::models::Subscriber),
+    /// Already an active subscriber; nothing was changed.
+    AlreadyActive(crate::models::Subscriber),
+}
+
+/// What came of paying one act of attention.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AttentionCredit {
+    Paid,
+    /// Already paid for this very thing.
+    Repeat,
+    /// The name has had its daily share.
+    CapReached,
+}
+
+/// What came of a person pressing Start with a subscription code.
+pub enum TelegramJoin {
+    Joined(crate::models::TelegramSubscriber),
+    /// This chat was already an active subscriber.
+    Already(crate::models::TelegramSubscriber),
+    /// No such code, or it has gone cold.
+    Cold,
+}
+
+/// What came of a request to watch a sketch.
+pub struct WatchOutcome {
+    pub watch: crate::models::GazetteWatch,
+    /// The requester made this row (or owns the address): the cancel key is his.
+    pub own_key: bool,
+    /// The row was there before and its owner asked again.
+    pub existed: bool,
+    /// A confirmation letter must be sent.
+    pub send_confirmation: bool,
+}
+
+/// What came of following the link from the confirmation letter.
+pub enum ConfirmOutcome {
+    Confirmed(crate::models::Subscriber),
+    AlreadyActive(crate::models::Subscriber),
+    Unknown,
+}
 
 #[derive(Clone)]
 pub struct Repository {
@@ -2172,6 +2224,15 @@ impl Repository {
         Ok(figurine)
     }
 
+    /// Стоит ли работа на людях (не скрыта хозяином).
+    pub async fn figurine_is_visible(&self, id: Uuid) -> Result<bool> {
+        let row: Option<(bool,)> = sqlx::query_as("SELECT is_visible FROM figurines WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pg_pool)
+            .await?;
+        Ok(row.is_some_and(|r| r.0))
+    }
+
     /// Resolve a work by its transliterated slug (the pretty-URL handle).
     pub async fn get_figurine_by_slug(&self, slug: &str) -> Result<Option<Figurine>> {
         let figurine = sqlx::query_as::<_, Figurine>("SELECT * FROM figurines WHERE slug = $1")
@@ -3555,6 +3616,7 @@ impl Repository {
                     password_reset_token = NULL, password_reset_expires_at = NULL,
                     signup_ip = $7, signup_country_code = $8, signup_city = $9
               WHERE email = $1 AND email_confirmed_at IS NULL AND telegram_id IS NULL
+                AND google_sub IS NULL AND apple_sub IS NULL
               RETURNING *",
         )
         .bind(email)
@@ -3634,17 +3696,19 @@ impl Repository {
         &self,
         code: &str,
         word: &str,
+        age_confirmed: bool,
         bind_user: Option<Uuid>,
         browser: Option<&str>,
         ctx: &crate::models::ClientContext,
     ) -> Result<crate::models::TelegramLoginCode> {
         let row = sqlx::query_as::<_, crate::models::TelegramLoginCode>(
             "INSERT INTO telegram_login_codes
-                (code, word, bind_user_id, browser, ip, country_code, city)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+                (code, word, age_confirmed, bind_user_id, browser, ip, country_code, city)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
         )
         .bind(code)
         .bind(word)
+        .bind(age_confirmed)
         .bind(bind_user)
         .bind(browser)
         .bind(&ctx.ip)
@@ -3736,6 +3800,20 @@ impl Repository {
         Ok(res.rows_affected() == 1)
     }
 
+    /// Имени ещё нет, а возраст не подтверждён: слово погашено с причиной.
+    /// Подтверждает отказ только тот Telegram, которому записку показали.
+    pub async fn telegram_login_aged(&self, code: &str, telegram_id: i64) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE telegram_login_codes SET state = 'age'
+              WHERE code = $1 AND telegram_id = $2 AND state = 'asked'",
+        )
+        .bind(code)
+        .bind(telegram_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
     /// Страница забирает сессию — ровно один раз. Условие `state = 'confirmed'`
     /// стоит в самом UPDATE: два опроса, пришедшие разом, иначе унесли бы одну
     /// сессию дважды.
@@ -3757,11 +3835,274 @@ impl Repository {
     pub async fn prune_telegram_login_codes(&self) -> Result<u64> {
         let res = sqlx::query(
             "DELETE FROM telegram_login_codes
-              WHERE expires_at < NOW() - INTERVAL '1 hour' OR state IN ('taken', 'refused')",
+              WHERE expires_at < NOW() - INTERVAL '1 hour' OR state IN ('taken', 'refused', 'age')",
         )
         .execute(&self.pg_pool)
         .await?;
         Ok(res.rows_affected())
+    }
+
+    // === ВХОД ЧЕРЕЗ GOOGLE И APPLE ===
+
+    /// Завести попытку входа. `bind_user` заполнен — это привязка из профиля.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_oauth_login(
+        &self,
+        state: &str,
+        provider: &str,
+        nonce: &str,
+        pkce_verifier: &str,
+        binder_hash: &str,
+        return_origin: &str,
+        age_confirmed: bool,
+        bind_user: Option<Uuid>,
+        browser: Option<&str>,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<crate::models::OauthLogin> {
+        let row = sqlx::query_as::<_, crate::models::OauthLogin>(
+            "INSERT INTO oauth_logins
+                (state, provider, nonce, pkce_verifier, binder_hash, return_origin,
+                 age_confirmed, bind_user_id, browser, ip, country_code, city)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *",
+        )
+        .bind(state)
+        .bind(provider)
+        .bind(nonce)
+        .bind(pkce_verifier)
+        .bind(binder_hash)
+        .bind(return_origin)
+        .bind(age_confirmed)
+        .bind(bind_user)
+        .bind(browser)
+        .bind(&ctx.ip)
+        .bind(&ctx.country_code)
+        .bind(&ctx.city)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Callback только смотрит: есть ли живая попытка и куда вернуть браузер.
+    /// Ничего не меняет и ничего не обменивает — обмен кода делает тот, кто
+    /// предъявит привязку (`claim_oauth_login`), а не тот, кто принёс код.
+    pub async fn peek_oauth_login(&self, state: &str) -> Result<Option<crate::models::OauthLogin>> {
+        Ok(sqlx::query_as::<_, crate::models::OauthLogin>(
+            "SELECT * FROM oauth_logins
+              WHERE state = $1 AND status = 'started' AND expires_at > NOW()",
+        )
+        .bind(state)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Вкладка берёт попытку себе — ровно один раз и только с привязкой.
+    /// Оба условия стоят в самом UPDATE: повторное предъявление того же кода
+    /// (двойной переход, «назад») второго обмена не даёт, а чужой привязки
+    /// строка не отдаёт и не сжигает.
+    pub async fn claim_oauth_login(
+        &self,
+        state: &str,
+        binder_hash: &str,
+    ) -> Result<Option<crate::models::OauthLogin>> {
+        Ok(sqlx::query_as::<_, crate::models::OauthLogin>(
+            "UPDATE oauth_logins SET status = 'working'
+              WHERE state = $1 AND binder_hash = $2 AND status = 'started' AND expires_at > NOW()
+              RETURNING *",
+        )
+        .bind(state)
+        .bind(binder_hash)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Вход состоялся, попытка отработана.
+    pub async fn close_oauth_login(&self, state: &str, user_id: Uuid, is_new: bool) -> Result<()> {
+        sqlx::query(
+            "UPDATE oauth_logins
+                SET status = 'taken', taken_at = NOW(), user_id = $2, is_new = $3
+              WHERE state = $1 AND status = 'working'",
+        )
+        .bind(state)
+        .bind(user_id)
+        .bind(is_new)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Отказ. Строка больше не берётся ни callback-ом, ни вкладкой.
+    pub async fn fail_oauth_login(&self, state: &str, failure: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE oauth_logins
+                SET status = 'failed', failure = $2
+              WHERE state = $1 AND status IN ('started', 'working')",
+        )
+        .bind(state)
+        .bind(failure)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn prune_oauth_logins(&self) -> Result<u64> {
+        let res = sqlx::query(
+            "DELETE FROM oauth_logins
+              WHERE expires_at < NOW() - INTERVAL '1 hour' OR status = 'taken'",
+        )
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Вернувшегося узнают по `sub` — и только по нему. Имя столбца берётся из
+    /// закрытого списка провайдеров, не из запроса.
+    pub async fn find_user_by_oauth(
+        &self,
+        p: crate::oauth::Provider,
+        sub: &str,
+    ) -> Result<Option<crate::models::User>> {
+        let sql = format!("SELECT * FROM users WHERE {}_sub = $1", p.as_str());
+        Ok(sqlx::query_as::<_, crate::models::User>(&sql)
+            .bind(sub)
+            .fetch_optional(&self.pg_pool)
+            .await?)
+    }
+
+    /// Имя с этой подтверждённой почтой. Неподтверждённый адрес не годится:
+    /// его мог набрать кто угодно.
+    pub async fn find_user_by_confirmed_email(&self, email: &str) -> Result<Option<crate::models::User>> {
+        Ok(sqlx::query_as::<_, crate::models::User>(
+            "SELECT * FROM users WHERE email = $1 AND email_confirmed_at IS NOT NULL",
+        )
+        .bind(email)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Привязать провайдера к существующему имени. Занятый `sub` — отказ (одно
+    /// число значит одного человека), и чужой уже закреплённый `sub` у этого
+    /// имени ничем не переписывается: условие стоит в самом UPDATE.
+    pub async fn link_oauth_to_user(
+        &self,
+        user_id: Uuid,
+        p: crate::oauth::Provider,
+        sub: &str,
+        email: Option<&str>,
+    ) -> Result<crate::models::User> {
+        let col = p.as_str();
+        let sql = format!(
+            "UPDATE users SET {col}_sub = $2, {col}_email = $3, {col}_linked_at = COALESCE({col}_linked_at, NOW())
+              WHERE id = $1 AND ({col}_sub IS NULL OR {col}_sub = $2) RETURNING *"
+        );
+        let user = sqlx::query_as::<_, crate::models::User>(&sql)
+            .bind(user_id)
+            .bind(sub)
+            .bind(email)
+            .fetch_optional(&self.pg_pool)
+            .await
+            .map_err(|e| {
+                if let sqlx::Error::Database(ref dbe) = e
+                    && dbe.is_unique_violation()
+                {
+                    return AppError::Conflict(format!("This {col} account is already linked"));
+                }
+                e.into()
+            })?;
+        user.ok_or_else(|| AppError::Conflict(format!("This account already has a different {col} linked")))
+    }
+
+    /// Освежить адрес, который назвал провайдер. Имя в профиле не трогается.
+    pub async fn touch_oauth_email(
+        &self,
+        user_id: Uuid,
+        p: crate::oauth::Provider,
+        email: Option<&str>,
+    ) -> Result<crate::models::User> {
+        let sql = format!("UPDATE users SET {}_email = $2 WHERE id = $1 RETURNING *", p.as_str());
+        Ok(sqlx::query_as::<_, crate::models::User>(&sql)
+            .bind(user_id)
+            .bind(email)
+            .fetch_one(&self.pg_pool)
+            .await?)
+    }
+
+    /// Снять дверь, если она не последняя. `false` — последняя, ничего не снято.
+    ///
+    /// Строка имени держится `FOR UPDATE` от подсчёта до снятия: иначе два
+    /// запроса разом («снять Google» и «снять Telegram») оба видели бы вторую
+    /// дверь на месте, оба проходили и оставляли имя без единой.
+    pub async fn unlink_door(&self, user_id: Uuid, door: crate::models::Door) -> Result<bool> {
+        use crate::models::Door;
+        let mut tx = self.pg_pool.begin().await?;
+        let user = sqlx::query_as::<_, crate::models::User>("SELECT * FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        if user.doors_besides(door) == 0 {
+            return Ok(false);
+        }
+        let sql = match door {
+            Door::Telegram => {
+                "UPDATE users SET telegram_id = NULL, telegram_username = NULL, telegram_linked_at = NULL WHERE id = $1"
+            }
+            Door::Google => {
+                "UPDATE users SET google_sub = NULL, google_email = NULL, google_linked_at = NULL WHERE id = $1"
+            }
+            Door::Apple => {
+                "UPDATE users SET apple_sub = NULL, apple_email = NULL, apple_linked_at = NULL WHERE id = $1"
+            }
+            Door::Mail => return Err(AppError::BadRequest("The email door is not unlinked here".into())),
+        };
+        sqlx::query(sql).bind(user_id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Имя, заведённое через провайдера. `email` заполнен, только когда
+    /// провайдер поручился за ящик: тогда он сразу подтверждён, и спрашивать
+    /// его у человека второй раз незачем. `None` вместо имени — адрес уже
+    /// занят другим; вызывающий заводит имя без почты.
+    pub async fn create_oauth_user(
+        &self,
+        p: crate::oauth::Provider,
+        sub: &str,
+        provider_email: Option<&str>,
+        email: Option<&str>,
+        display_name: &str,
+        ctx: &crate::models::ClientContext,
+    ) -> Result<Option<crate::models::User>> {
+        let col = p.as_str();
+        let sql = format!(
+            "INSERT INTO users (display_name, email, email_confirmed_at,
+                                {col}_sub, {col}_email, {col}_linked_at,
+                                signup_ip, signup_country_code, signup_city)
+             VALUES ($1, $2::text, CASE WHEN $2::text IS NULL THEN NULL ELSE NOW() END,
+                     $3, $4, NOW(), $5, $6, $7) RETURNING *"
+        );
+        let res = sqlx::query_as::<_, crate::models::User>(&sql)
+            .bind(display_name)
+            .bind(email)
+            .bind(sub)
+            .bind(provider_email)
+            .bind(&ctx.ip)
+            .bind(&ctx.country_code)
+            .bind(&ctx.city)
+            .fetch_one(&self.pg_pool)
+            .await;
+        match res {
+            Ok(user) => Ok(Some(user)),
+            Err(sqlx::Error::Database(dbe))
+                if dbe.is_unique_violation()
+                    && matches!(dbe.constraint(), Some("users_email_key") | Some("idx_users_email")) =>
+            {
+                Ok(None)
+            }
+            Err(sqlx::Error::Database(dbe)) if dbe.is_unique_violation() => {
+                Err(AppError::Conflict(format!("This {col} account is already linked")))
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     // === TELEGRAM-КАНАЛ ===
@@ -3959,20 +4300,6 @@ impl Repository {
         })
     }
 
-    /// Отвязать. Проверку «остаётся ли хоть одна дверь» делает слой выше:
-    /// здесь бы она молча зависела от того, кто позвал.
-    pub async fn unlink_telegram(&self, user_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE users
-                SET telegram_id = NULL, telegram_username = NULL, telegram_linked_at = NULL
-              WHERE id = $1",
-        )
-        .bind(user_id)
-        .execute(&self.pg_pool)
-        .await?;
-        Ok(())
-    }
-
     /// Освежить `@имя` при каждом входе: человек переименовался — в профиле
     /// должно стоять новое. Имя в профиле при этом НЕ трогается: его человек
     /// мог выбрать себе сам, и второй вход, вернувший телеграмовское, молча
@@ -4041,12 +4368,61 @@ impl Repository {
         let user = sqlx::query_as::<_, crate::models::User>(
             "SELECT u.* FROM users u
              JOIN user_sessions s ON s.user_id = u.id
+             WHERE s.token = $1 AND s.expires_at > NOW() AND u.is_blocked = false
+               AND u.is_guest = false",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    /// Та же сессия, но вместе с гостевыми. Единственный читатель — ручки боя:
+    /// всё прочее спрашивает `get_session_user`, который гостей не пускает.
+    pub async fn get_player_session_user(&self, token_hash: &str) -> Result<Option<crate::models::User>> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "SELECT u.* FROM users u
+             JOIN user_sessions s ON s.user_id = u.id
              WHERE s.token = $1 AND s.expires_at > NOW() AND u.is_blocked = false",
         )
         .bind(token_hash)
         .fetch_optional(&self.pg_pool)
         .await?;
         Ok(user)
+    }
+
+    /// Завести гостя боя: имя без почты, знаков и двери.
+    pub async fn create_guest_user(&self, ctx: &crate::models::ClientContext) -> Result<crate::models::User> {
+        let user = sqlx::query_as::<_, crate::models::User>(
+            "INSERT INTO users (display_name, is_guest, signup_ip, signup_country_code, signup_city)
+             VALUES ('Guest', true, $1, $2, $3) RETURNING *",
+        )
+        .bind(&ctx.ip)
+        .bind(&ctx.country_code)
+        .bind(&ctx.city)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(user)
+    }
+
+    pub async fn user_is_guest(&self, user_id: Uuid) -> Result<bool> {
+        let guest: Option<bool> = sqlx::query_scalar("SELECT is_guest FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pg_pool)
+            .await?;
+        Ok(guest.unwrap_or(false))
+    }
+
+    /// Суточная уборка: гости, чья сессия давно кончилась. Партии и сессии
+    /// уходят вместе с именем (`ON DELETE CASCADE`).
+    pub async fn prune_stale_guests(&self, days: i32) -> Result<u64> {
+        let res = sqlx::query(
+            "DELETE FROM users WHERE is_guest AND created_at < NOW() - make_interval(days => $1)",
+        )
+        .bind(days)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub async fn delete_session(&self, token_hash: &str) -> Result<()> {
@@ -4374,6 +4750,58 @@ impl Repository {
         Ok(result.rows_affected() as usize)
     }
 
+    /// Пытается занять одно обращение под ключом: `true` — принято и записано,
+    /// `false` — предел уже исчерпан. Проверка и запись идут под одной
+    /// консультативной блокировкой ключа: два запроса, пришедшие разом, иначе
+    /// оба увидели бы «девять из десяти» и оба прошли.
+    pub async fn rate_limit_take(&self, key: &str, max: i64, window_secs: i64) -> Result<bool> {
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+        let (used,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint FROM rate_limit_hits
+              WHERE key = $1 AND hit_at > NOW() - make_interval(secs => $2)",
+        )
+        .bind(key)
+        .bind(window_secs as f64)
+        .fetch_one(&mut *tx)
+        .await?;
+        if used >= max {
+            tx.commit().await?;
+            return Ok(false);
+        }
+        sqlx::query("INSERT INTO rate_limit_hits (key) VALUES ($1)")
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Стирает обращения старше самого широкого окна (час): позже они уже не
+    /// могут повлиять ни на один предел.
+    pub async fn prune_rate_limit_hits(&self, older_than_secs: i64) -> Result<u64> {
+        let res = sqlx::query(
+            "DELETE FROM rate_limit_hits WHERE hit_at < NOW() - make_interval(secs => $1)",
+        )
+        .bind(older_than_secs as f64)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Все просроченные сессии разом — суточная уборка. Прежде просроченная
+    /// сессия стиралась только при следующем входе того же человека, и у не
+    /// вернувшегося её строка (с адресом и браузером) оставалась навсегда.
+    pub async fn prune_all_expired_sessions(&self) -> Result<u64> {
+        let res = sqlx::query("DELETE FROM user_sessions WHERE expires_at < NOW()")
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn prune_expired_sessions(&self, user_id: Uuid) -> Result<()> {
         sqlx::query("DELETE FROM user_sessions WHERE user_id = $1 AND expires_at < NOW()")
             .bind(user_id)
@@ -4420,7 +4848,8 @@ impl Repository {
                  FROM users u
                  LEFT JOIN figurine_bookings b ON b.user_id = u.id
                  LEFT JOIN orders o ON o.user_id = u.id
-                 WHERE LOWER(u.email) LIKE $1 OR LOWER(u.display_name) LIKE $1
+                 WHERE u.is_guest = false
+                   AND (LOWER(u.email) LIKE $1 OR LOWER(u.display_name) LIKE $1)
                  GROUP BY u.id
                  ORDER BY u.created_at DESC
                  LIMIT $2 OFFSET $3",
@@ -4439,6 +4868,7 @@ impl Repository {
                  FROM users u
                  LEFT JOIN figurine_bookings b ON b.user_id = u.id
                  LEFT JOIN orders o ON o.user_id = u.id
+                 WHERE u.is_guest = false
                  GROUP BY u.id
                  ORDER BY u.created_at DESC
                  LIMIT $1 OFFSET $2",
@@ -4451,10 +4881,10 @@ impl Repository {
 
         let (total,): (i64,) = if let Some(ref p) = pattern {
             sqlx::query_as(
-                "SELECT COUNT(*) FROM users WHERE LOWER(email) LIKE $1 OR LOWER(display_name) LIKE $1"
+                "SELECT COUNT(*) FROM users WHERE is_guest = false AND (LOWER(email) LIKE $1 OR LOWER(display_name) LIKE $1)"
             ).bind(p).fetch_one(&self.pg_pool).await?
         } else {
-            sqlx::query_as("SELECT COUNT(*) FROM users")
+            sqlx::query_as("SELECT COUNT(*) FROM users WHERE is_guest = false")
                 .fetch_one(&self.pg_pool)
                 .await?
         };
@@ -5133,45 +5563,439 @@ impl Repository {
 
     // === NEWSLETTER ("visitor book") ===
 
-    /// Sign the book. Idempotent: a repeat sign-up of the same email updates the
-    /// row in place and clears any prior unsubscribe (so the unique email index
-    /// can't be violated by a race). Returns the row and whether the address was
-    /// already an active subscriber — used only to vary the visitor's wording.
-    pub async fn subscribe(
+    /// Sign the book — but only as a request: the address becomes an active
+    /// subscriber when its owner follows the link from the letter
+    /// (`confirm_subscription`). Signing a stranger's address therefore costs
+    /// the stranger at most one letter an hour, not a stream of mail.
+    ///
+    /// `confirm_hash` is the fingerprint of the key that goes into the letter.
+    /// Already an active subscriber → nothing is touched (a signature must not
+    /// let anyone rewrite a subscriber's name or language, or re-arm a letter).
+    pub async fn request_subscription(
         &self,
         req: &crate::models::CreateSubscriptionRequest,
         ip: Option<&str>,
-    ) -> Result<(crate::models::Subscriber, bool)> {
-        // Cosmetic "already in the book" flag; the unique index is what actually
-        // guarantees no duplicates, so a race here is harmless.
-        let (existed,): (bool,) = sqlx::query_as(
-            "SELECT EXISTS(SELECT 1 FROM newsletter_subscribers WHERE lower(email) = lower($1) AND unsubscribed_at IS NULL)",
+        confirm_hash: &str,
+    ) -> Result<SubscribeOutcome> {
+        let mut tx = self.pg_pool.begin().await?;
+        // Одна подпись одного адреса за раз: иначе два запроса, пришедшие
+        // разом, оба увидели бы «письма не было» и оба послали бы своё.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(lower($1), 7))")
+            .bind(&req.email)
+            .execute(&mut *tx)
+            .await?;
+
+        let existing = sqlx::query_as::<_, crate::models::Subscriber>(
+            "SELECT * FROM newsletter_subscribers WHERE lower(email) = lower($1) FOR UPDATE",
         )
         .bind(&req.email)
-        .fetch_one(&self.pg_pool)
+        .fetch_optional(&mut *tx)
         .await?;
 
-        let token = Self::generate_cancel_token();
         let source = req.source.as_deref().unwrap_or("home");
-        let lang = req.lang.as_deref().unwrap_or("en");
-        let sub = sqlx::query_as::<_, crate::models::Subscriber>(
-            "INSERT INTO newsletter_subscribers (email, name, source, lang, unsubscribe_token, ip)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (lower(email)) DO UPDATE SET
-               name = COALESCE(EXCLUDED.name, newsletter_subscribers.name),
-               lang = EXCLUDED.lang,
-               unsubscribed_at = NULL
-             RETURNING *",
+        let lang = req
+            .lang
+            .as_deref()
+            .and_then(crate::lang::Lang::parse)
+            .unwrap_or_default()
+            .code();
+
+        let outcome = match existing {
+            None => {
+                let token = Self::generate_cancel_token();
+                let sub = sqlx::query_as::<_, crate::models::Subscriber>(
+                    "INSERT INTO newsletter_subscribers
+                        (email, name, source, lang, unsubscribe_token, ip, confirm_hash, confirm_sent_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                     RETURNING *",
+                )
+                .bind(&req.email)
+                .bind(&req.name)
+                .bind(source)
+                .bind(lang)
+                .bind(&token)
+                .bind(ip)
+                .bind(confirm_hash)
+                .fetch_one(&mut *tx)
+                .await?;
+                SubscribeOutcome::Created(sub)
+            }
+            Some(sub) if sub.confirmed_at.is_some() && sub.unsubscribed_at.is_none() => {
+                SubscribeOutcome::AlreadyActive(sub)
+            }
+            Some(sub)
+                if sub
+                    .confirm_sent_at
+                    .is_some_and(|t| t > Utc::now() - chrono::Duration::hours(1)) =>
+            {
+                SubscribeOutcome::Throttled(sub)
+            }
+            Some(sub) => {
+                // Не подтверждён или когда-то вышел: письмо уходит снова, а
+                // право получать — только после перехода по ссылке.
+                let sub = sqlx::query_as::<_, crate::models::Subscriber>(
+                    "UPDATE newsletter_subscribers SET
+                        name = COALESCE($2, name), lang = $3, source = $4,
+                        confirmed_at = NULL, confirm_hash = $5, confirm_sent_at = NOW()
+                     WHERE id = $1 RETURNING *",
+                )
+                .bind(sub.id)
+                .bind(&req.name)
+                .bind(lang)
+                .bind(source)
+                .bind(confirm_hash)
+                .fetch_one(&mut *tx)
+                .await?;
+                SubscribeOutcome::Sent(sub)
+            }
+        };
+        tx.commit().await?;
+        Ok(outcome)
+    }
+
+    /// Follow the link from the letter. The key lives a week; the first
+    /// follow makes the address active (and lifts an old unsubscribe), a
+    /// repeat reports `AlreadyActive` and changes nothing.
+    pub async fn confirm_subscription(&self, confirm_hash: &str) -> Result<ConfirmOutcome> {
+        // Одним запросом, и только пока адрес ещё не подтверждён: ссылка
+        // подтверждает один раз. Иначе человек, подтвердивший адрес и затем
+        // вышедший из книги, возвращался бы в неё старым письмом (а их открывают
+        // и почтовые сканеры, и сам человек, разбирая ящик).
+        if let Some(sub) = sqlx::query_as::<_, crate::models::Subscriber>(
+            "UPDATE newsletter_subscribers
+                SET confirmed_at = NOW(), unsubscribed_at = NULL
+              WHERE confirm_hash = $1 AND confirmed_at IS NULL
+                AND confirm_sent_at > NOW() - INTERVAL '7 days'
+          RETURNING *",
         )
-        .bind(&req.email)
-        .bind(&req.name)
-        .bind(source)
+        .bind(confirm_hash)
+        .fetch_optional(&self.pg_pool)
+        .await?
+        {
+            return Ok(ConfirmOutcome::Confirmed(sub));
+        }
+        // Не подтвердилось: либо ссылка остыла или неизвестна, либо адрес уже
+        // действует. Второе — не ошибка (повторное нажатие), но и ничего не
+        // меняет; вышедшему из книги ссылка не говорит «подтверждено».
+        let active: Option<crate::models::Subscriber> = sqlx::query_as(
+            "SELECT * FROM newsletter_subscribers
+              WHERE confirm_hash = $1 AND confirmed_at IS NOT NULL AND unsubscribed_at IS NULL",
+        )
+        .bind(confirm_hash)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(match active {
+            Some(sub) => ConfirmOutcome::AlreadyActive(sub),
+            None => ConfirmOutcome::Unknown,
+        })
+    }
+
+    // === КНИГА ДОМА В TELEGRAM ===
+
+    /// Завести ожидающую строку: подписка начнётся, когда человек нажмёт
+    /// «Запустить» в боте со своим кодом (`activate_telegram_subscriber`).
+    /// Заодно убирает ожидающие строки старше суток: их коды давно остыли.
+    pub async fn create_pending_telegram_subscriber(
+        &self,
+        code_hash: &str,
+        lang: &str,
+        source: &str,
+        user_id: Option<Uuid>,
+        ip: Option<&str>,
+    ) -> Result<crate::models::TelegramSubscriber> {
+        sqlx::query(
+            "DELETE FROM telegram_subscribers
+              WHERE chat_id IS NULL AND created_at < NOW() - INTERVAL '1 day'",
+        )
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(sqlx::query_as::<_, crate::models::TelegramSubscriber>(
+            "INSERT INTO telegram_subscribers
+                (lang, source, unsubscribe_token, confirm_hash, confirm_sent_at, user_id, ip)
+             VALUES ($1, $2, $3, $4, NOW(), $5, $6)
+             RETURNING id, chat_id, username, lang, source, unsubscribe_token,
+                       confirm_sent_at, created_at, confirmed_at, unsubscribed_at",
+        )
         .bind(lang)
-        .bind(&token)
+        .bind(source)
+        .bind(Self::generate_cancel_token())
+        .bind(code_hash)
+        .bind(user_id)
         .bind(ip)
         .fetch_one(&self.pg_pool)
+        .await?)
+    }
+
+    /// Человек нажал «Запустить» с кодом: чат берётся из самого сообщения
+    /// Telegram. Чат, уже стоящий в книге, не заводится вторым — старая строка
+    /// оживает (её ключ отказа остаётся прежним), ожидающая стирается.
+    pub async fn activate_telegram_subscriber(
+        &self,
+        code_hash: &str,
+        chat_id: i64,
+        username: Option<&str>,
+        lang: &str,
+    ) -> Result<TelegramJoin> {
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 11))")
+            .bind(chat_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let pending: Option<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM telegram_subscribers
+              WHERE confirm_hash = $1 AND chat_id IS NULL
+                AND confirm_sent_at > NOW() - INTERVAL '1 day'
+              FOR UPDATE",
+        )
+        .bind(code_hash)
+        .fetch_optional(&mut *tx)
         .await?;
-        Ok((sub, existed))
+        let Some((pending_id,)) = pending else {
+            tx.rollback().await?;
+            return Ok(TelegramJoin::Cold);
+        };
+
+        let cols = "id, chat_id, username, lang, source, unsubscribe_token,
+                    confirm_sent_at, created_at, confirmed_at, unsubscribed_at";
+        let existing = sqlx::query_as::<_, crate::models::TelegramSubscriber>(&format!(
+            "SELECT {cols} FROM telegram_subscribers WHERE chat_id = $1 FOR UPDATE"
+        ))
+        .bind(chat_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let outcome = if let Some(ex) = existing {
+            sqlx::query("DELETE FROM telegram_subscribers WHERE id = $1")
+                .bind(pending_id)
+                .execute(&mut *tx)
+                .await?;
+            if ex.confirmed_at.is_some() && ex.unsubscribed_at.is_none() {
+                TelegramJoin::Already(ex)
+            } else {
+                let sub = sqlx::query_as::<_, crate::models::TelegramSubscriber>(&format!(
+                    "UPDATE telegram_subscribers
+                        SET unsubscribed_at = NULL, confirmed_at = NOW(), lang = $2,
+                            username = COALESCE($3, username), last_error = NULL
+                      WHERE id = $1 RETURNING {cols}"
+                ))
+                .bind(ex.id)
+                .bind(lang)
+                .bind(username)
+                .fetch_one(&mut *tx)
+                .await?;
+                TelegramJoin::Joined(sub)
+            }
+        } else {
+            let sub = sqlx::query_as::<_, crate::models::TelegramSubscriber>(&format!(
+                "UPDATE telegram_subscribers
+                    SET chat_id = $2, username = $3, confirmed_at = NOW(),
+                        confirm_hash = NULL, lang = $4
+                  WHERE id = $1 RETURNING {cols}"
+            ))
+            .bind(pending_id)
+            .bind(chat_id)
+            .bind(username)
+            .bind(lang)
+            .fetch_one(&mut *tx)
+            .await?;
+            TelegramJoin::Joined(sub)
+        };
+        tx.commit().await?;
+        Ok(outcome)
+    }
+
+    /// Вошедший через Telegram: бот ему уже знаком, поэтому подписка
+    /// оформляется сразу, без кода. Возвращает строку и «уже была ли».
+    pub async fn subscribe_telegram_chat(
+        &self,
+        chat_id: i64,
+        username: Option<&str>,
+        lang: &str,
+        source: &str,
+        user_id: Option<Uuid>,
+        ip: Option<&str>,
+    ) -> Result<(crate::models::TelegramSubscriber, bool)> {
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 11))")
+            .bind(chat_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let cols = "id, chat_id, username, lang, source, unsubscribe_token,
+                    confirm_sent_at, created_at, confirmed_at, unsubscribed_at";
+        let existing = sqlx::query_as::<_, crate::models::TelegramSubscriber>(&format!(
+            "SELECT {cols} FROM telegram_subscribers WHERE chat_id = $1 FOR UPDATE"
+        ))
+        .bind(chat_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let out = match existing {
+            Some(ex) if ex.confirmed_at.is_some() && ex.unsubscribed_at.is_none() => (ex, true),
+            Some(ex) => {
+                let sub = sqlx::query_as::<_, crate::models::TelegramSubscriber>(&format!(
+                    "UPDATE telegram_subscribers
+                        SET unsubscribed_at = NULL, confirmed_at = NOW(), lang = $2,
+                            username = COALESCE($3, username), last_error = NULL
+                      WHERE id = $1 RETURNING {cols}"
+                ))
+                .bind(ex.id)
+                .bind(lang)
+                .bind(username)
+                .fetch_one(&mut *tx)
+                .await?;
+                (sub, false)
+            }
+            None => {
+                let sub = sqlx::query_as::<_, crate::models::TelegramSubscriber>(&format!(
+                    "INSERT INTO telegram_subscribers
+                        (chat_id, username, lang, source, unsubscribe_token, user_id, ip, confirmed_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+                     RETURNING {cols}"
+                ))
+                .bind(chat_id)
+                .bind(username)
+                .bind(lang)
+                .bind(source)
+                .bind(Self::generate_cancel_token())
+                .bind(user_id)
+                .bind(ip)
+                .fetch_one(&mut *tx)
+                .await?;
+                (sub, false)
+            }
+        };
+        tx.commit().await?;
+        Ok(out)
+    }
+
+    /// `/stop` в боте.
+    pub async fn unsubscribe_telegram_chat(&self, chat_id: i64) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE telegram_subscribers SET unsubscribed_at = NOW()
+              WHERE chat_id = $1 AND unsubscribed_at IS NULL",
+        )
+        .bind(chat_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn get_telegram_subscriber_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<crate::models::TelegramSubscriber>> {
+        Ok(sqlx::query_as::<_, crate::models::TelegramSubscriber>(
+            "SELECT id, chat_id, username, lang, source, unsubscribe_token,
+                    confirm_sent_at, created_at, confirmed_at, unsubscribed_at
+               FROM telegram_subscribers WHERE unsubscribe_token = $1 AND chat_id IS NOT NULL",
+        )
+        .bind(token)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn unsubscribe_telegram_by_token(&self, token: &str) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE telegram_subscribers SET unsubscribed_at = NOW()
+              WHERE unsubscribe_token = $1 AND unsubscribed_at IS NULL",
+        )
+        .bind(token)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Бот не может достичь подписчика (заблокировал, удалил чат): пишем причину
+    /// и снимаем подписку, чтобы не стучаться в закрытую дверь каждый раз.
+    pub async fn telegram_subscriber_unreachable(&self, id: Uuid, why: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE telegram_subscribers SET unsubscribed_at = NOW(), last_error = $2 WHERE id = $1",
+        )
+        .bind(id)
+        .bind(why)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn claim_book_notes(
+        &self,
+        limit: i64,
+        max_attempts: i32,
+        claim_secs: i64,
+    ) -> Result<Vec<crate::models::BookNoteRow>> {
+        Ok(sqlx::query_as::<_, crate::models::BookNoteRow>(
+            "WITH due AS (
+                 SELECT n.tale_id, n.subscriber_id
+                   FROM tale_book_notes n
+                   JOIN gazette_leaves l ON l.id = n.tale_id
+                   JOIN telegram_subscribers s ON s.id = n.subscriber_id
+                  WHERE n.sent_at IS NULL AND n.attempts < $2
+                    AND n.created_at > NOW() - INTERVAL '7 days'
+                    AND s.unsubscribed_at IS NULL
+                    AND (n.claimed_at IS NULL OR n.claimed_at <= NOW() - make_interval(secs => $3))
+                    AND (l.status = 'published'
+                         OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
+                  ORDER BY n.created_at
+                  LIMIT $1
+                  FOR UPDATE OF n SKIP LOCKED
+             ),
+             claimed AS (
+                 UPDATE tale_book_notes n SET claimed_at = NOW()
+                   FROM due
+                  WHERE n.tale_id = due.tale_id AND n.subscriber_id = due.subscriber_id
+                  RETURNING n.tale_id, n.subscriber_id, n.lang, n.created_at
+             )
+             SELECT c.tale_id, c.subscriber_id, s.chat_id, c.lang,
+                    l.slug, l.title_en, l.title_ru, l.title_uk, l.dek_en, l.dek_ru, l.dek_uk
+               FROM claimed c
+               JOIN gazette_leaves l ON l.id = c.tale_id
+               JOIN telegram_subscribers s ON s.id = c.subscriber_id
+              ORDER BY c.created_at",
+        )
+        .bind(limit)
+        .bind(max_attempts)
+        .bind(claim_secs as f64)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn book_note_sent(&self, tale_id: Uuid, subscriber_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE tale_book_notes SET sent_at = NOW(), last_error = NULL
+              WHERE tale_id = $1 AND subscriber_id = $2",
+        )
+        .bind(tale_id)
+        .bind(subscriber_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn book_note_failed(&self, tale_id: Uuid, subscriber_id: Uuid, why: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE tale_book_notes SET attempts = attempts + 1, last_error = $3, claimed_at = NULL
+              WHERE tale_id = $1 AND subscriber_id = $2",
+        )
+        .bind(tale_id)
+        .bind(subscriber_id)
+        .bind(why)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Is this address a confirmed, active subscriber? Letters about a tale go
+    /// only to addresses whose owner has proved the mailbox.
+    pub async fn is_confirmed_subscriber(&self, email: &str) -> Result<bool> {
+        let (yes,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM newsletter_subscribers
+                            WHERE lower(email) = lower($1)
+                              AND confirmed_at IS NOT NULL AND unsubscribed_at IS NULL)",
+        )
+        .bind(email)
+        .fetch_one(&self.pg_pool)
+        .await?;
+        Ok(yes)
     }
 
     /// Look up a subscriber by unsubscribe token (the unsubscribe page's receipt
@@ -5207,7 +6031,7 @@ impl Repository {
 
     pub async fn list_subscribers_admin(&self) -> Result<Vec<crate::models::Subscriber>> {
         Ok(sqlx::query_as::<_, crate::models::Subscriber>(
-            "SELECT * FROM newsletter_subscribers WHERE unsubscribed_at IS NULL ORDER BY created_at DESC",
+            "SELECT * FROM newsletter_subscribers WHERE unsubscribed_at IS NULL AND confirmed_at IS NOT NULL ORDER BY created_at DESC",
         )
         .fetch_all(&self.pg_pool)
         .await?)
@@ -5229,7 +6053,12 @@ impl Repository {
         ip: Option<&str>,
     ) -> Result<crate::models::ContactMessage> {
         let source = req.source.as_deref().unwrap_or("home");
-        let lang = req.lang.as_deref().unwrap_or("en");
+        let lang = req
+            .lang
+            .as_deref()
+            .and_then(crate::lang::Lang::parse)
+            .unwrap_or_default()
+            .code();
         Ok(sqlx::query_as::<_, crate::models::ContactMessage>(
             "INSERT INTO contact_messages (email, message, source, lang, ip)
              VALUES ($1, $2, $3, $4, $5)
@@ -5650,6 +6479,12 @@ impl Repository {
                     email_confirmed_at: None,
                     email_confirm_hash: None,
                     email_confirm_expires_at: None,
+                    google_sub: None,
+                    google_email: None,
+                    google_linked_at: None,
+                    apple_sub: None,
+                    apple_email: None,
+                    apple_linked_at: None,
                 };
                 let unread: i64 = r.get("unread");
                 let preview: Option<String> = r.get("preview");
@@ -5766,10 +6601,12 @@ impl Repository {
 
         let mut tx = self.pg_pool.begin().await?;
 
-        let lang = match req.lang.as_deref() {
-            Some("en") => "en",
-            _ => "ru",
-        };
+        let lang = req
+            .lang
+            .as_deref()
+            .and_then(crate::lang::Lang::parse)
+            .unwrap_or(crate::lang::Lang::Ru)
+            .code();
         let source_figurine_id = req
             .source_figurine_id
             .as_deref()
@@ -6089,7 +6926,8 @@ impl Repository {
 
     const GAZETTE_LEAF_SELECT: &'static str = r#"
         SELECT l.id, l.slug, l.kind, l.status,
-               l.title_en, l.title_ru, l.dek_en, l.dek_ru, l.body_en, l.body_ru,
+               l.title_en, l.title_ru, l.title_uk, l.dek_en, l.dek_ru, l.dek_uk,
+               l.body_en, l.body_ru, l.body_uk,
                l.figurine_id, l.href, l.source_name, l.source_url, l.author, l.image_url, l.image_urls,
                l.pinned, l.shelf_order, l.published_at, l.scheduled_at, l.expected_from, l.expected_to,
                l.created_at, l.updated_at,
@@ -6314,14 +7152,19 @@ impl Repository {
         scheduled_at: Option<DateTime<Utc>>,
         expected_from: Option<NaiveDate>,
         expected_to: Option<NaiveDate>,
+        title_uk: &str,
+        dek_uk: Option<&str>,
+        body_uk: Option<&str>,
     ) -> Result<crate::models::GazetteLeaf> {
         Ok(sqlx::query_as::<_, crate::models::GazetteLeaf>(
             r#"INSERT INTO gazette_leaves (
                     slug, kind, status, title_en, title_ru, dek_en, dek_ru, body_en, body_ru,
                     figurine_id, href, source_name, source_url, author, image_url, image_urls,
-                    pinned, published_at, scheduled_at, expected_from, expected_to
+                    pinned, published_at, scheduled_at, expected_from, expected_to,
+                    title_uk, dek_uk, body_uk
                ) VALUES (
-                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+                    $22,$23,$24
                ) RETURNING *"#,
         )
         .bind(slug)
@@ -6345,6 +7188,9 @@ impl Repository {
         .bind(scheduled_at)
         .bind(expected_from)
         .bind(expected_to)
+        .bind(title_uk)
+        .bind(dek_uk)
+        .bind(body_uk)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -6373,6 +7219,9 @@ impl Repository {
         scheduled_at: Option<DateTime<Utc>>,
         expected_from: Option<NaiveDate>,
         expected_to: Option<NaiveDate>,
+        title_uk: &str,
+        dek_uk: Option<&str>,
+        body_uk: Option<&str>,
     ) -> Result<crate::models::GazetteLeaf> {
         sqlx::query_as::<_, crate::models::GazetteLeaf>(
             r#"UPDATE gazette_leaves SET
@@ -6383,6 +7232,7 @@ impl Repository {
                     image_url = $16, image_urls = $17,
                     pinned = $18, published_at = $19, scheduled_at = $20,
                     expected_from = $21, expected_to = $22,
+                    title_uk = $23, dek_uk = $24, body_uk = $25,
                     updated_at = NOW()
                WHERE id = $1
                RETURNING *"#,
@@ -6409,6 +7259,9 @@ impl Repository {
         .bind(scheduled_at)
         .bind(expected_from)
         .bind(expected_to)
+        .bind(title_uk)
+        .bind(dek_uk)
+        .bind(body_uk)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {id} not found")))
@@ -6426,53 +7279,141 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn upsert_gazette_watch(
+    /// Завести слежение за эскизом. Письмо «работа готова» уходит позже и само,
+    /// поэтому слежение действует (`confirmed_at`), только когда адрес доказан:
+    ///
+    /// * `owner` — просит вошедший, чья подтверждённая почта и есть этот адрес;
+    /// * `address_proved` — адрес — подтверждённый подписчик книги дома (его
+    ///   хозяин уже согласился на письма дома);
+    /// * иначе строка ждёт, и ей уходит письмо с просьбой подтвердить.
+    ///
+    /// Чужую строку просящий не трогает и ключа от неё не получает: он мог
+    /// набрать чужой адрес.
+    pub async fn request_gazette_watch(
         &self,
         leaf_id: Uuid,
         email: &str,
         name: Option<&str>,
         lang: &str,
         user_id: Option<Uuid>,
-    ) -> Result<(crate::models::GazetteWatch, bool)> {
+        owner: bool,
+        address_proved: bool,
+        confirm_hash: &str,
+    ) -> Result<WatchOutcome> {
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1 || '|' || lower($2), 9))")
+            .bind(leaf_id.to_string())
+            .bind(email)
+            .execute(&mut *tx)
+            .await?;
         let existing = sqlx::query_as::<_, crate::models::GazetteWatch>(
-            "SELECT * FROM gazette_watches WHERE leaf_id = $1 AND lower(email) = lower($2) LIMIT 1",
+            "SELECT * FROM gazette_watches WHERE leaf_id = $1 AND lower(email) = lower($2) FOR UPDATE",
         )
         .bind(leaf_id)
         .bind(email)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let outcome = match existing {
+            None => {
+                let token = Self::generate_cancel_token();
+                let watch = sqlx::query_as::<_, crate::models::GazetteWatch>(
+                    "INSERT INTO gazette_watches
+                        (leaf_id, email, name, lang, cancel_token, user_id,
+                         confirmed_at, confirm_hash, confirm_sent_at)
+                     VALUES ($1, $2, $3, $4, $5, $6,
+                             CASE WHEN $7 THEN NOW() END,
+                             CASE WHEN $7 THEN NULL ELSE $8 END,
+                             CASE WHEN $7 THEN NULL ELSE NOW() END)
+                     RETURNING *",
+                )
+                .bind(leaf_id)
+                .bind(email)
+                .bind(name)
+                .bind(lang)
+                .bind(&token)
+                .bind(user_id)
+                .bind(owner || address_proved)
+                .bind(confirm_hash)
+                .fetch_one(&mut *tx)
+                .await?;
+                let send = watch.confirmed_at.is_none();
+                WatchOutcome { watch, own_key: true, existed: false, send_confirmation: send }
+            }
+            Some(ex) if owner => {
+                let watch = sqlx::query_as::<_, crate::models::GazetteWatch>(
+                    "UPDATE gazette_watches SET
+                            name = COALESCE($2, name), lang = $3,
+                            user_id = COALESCE($4, user_id),
+                            confirmed_at = COALESCE(confirmed_at, NOW())
+                     WHERE id = $1 RETURNING *",
+                )
+                .bind(ex.id)
+                .bind(name)
+                .bind(lang)
+                .bind(user_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                WatchOutcome { watch, own_key: true, existed: true, send_confirmation: false }
+            }
+            Some(ex) => {
+                // Чужая строка. Неподтверждённой — письмо ещё раз (не чаще раза
+                // в час); подтверждённая остаётся как есть.
+                let again = ex.confirmed_at.is_none()
+                    && !address_proved
+                    && ex
+                        .confirm_sent_at
+                        .is_none_or(|t| t < Utc::now() - chrono::Duration::hours(1));
+                let watch = if again {
+                    sqlx::query_as::<_, crate::models::GazetteWatch>(
+                        "UPDATE gazette_watches SET confirm_hash = $2, confirm_sent_at = NOW()
+                         WHERE id = $1 RETURNING *",
+                    )
+                    .bind(ex.id)
+                    .bind(confirm_hash)
+                    .fetch_one(&mut *tx)
+                    .await?
+                } else if ex.confirmed_at.is_none() && address_proved {
+                    // Адрес доказан книгой: слежение можно включить.
+                    sqlx::query_as::<_, crate::models::GazetteWatch>(
+                        "UPDATE gazette_watches SET confirmed_at = NOW() WHERE id = $1 RETURNING *",
+                    )
+                    .bind(ex.id)
+                    .fetch_one(&mut *tx)
+                    .await?
+                } else {
+                    ex
+                };
+                WatchOutcome { watch, own_key: false, existed: false, send_confirmation: again }
+            }
+        };
+        tx.commit().await?;
+        Ok(outcome)
+    }
+
+    /// Ссылка из письма слежения. Подтверждает один раз и в течение недели;
+    /// `true` и для уже подтверждённого (повторное нажатие не ошибка).
+    pub async fn confirm_gazette_watch(&self, confirm_hash: &str) -> Result<bool> {
+        let confirmed: Option<(Uuid,)> = sqlx::query_as(
+            "UPDATE gazette_watches SET confirmed_at = NOW()
+              WHERE confirm_hash = $1 AND confirmed_at IS NULL
+                AND confirm_sent_at > NOW() - INTERVAL '7 days'
+          RETURNING id",
+        )
+        .bind(confirm_hash)
         .fetch_optional(&self.pg_pool)
         .await?;
-        if let Some(ex) = existing {
-            let rec = sqlx::query_as::<_, crate::models::GazetteWatch>(
-                "UPDATE gazette_watches SET
-                        name = COALESCE($2, name),
-                        lang = $3,
-                        user_id = COALESCE($4, user_id)
-                 WHERE id = $1
-                 RETURNING *",
-            )
-            .bind(ex.id)
-            .bind(name)
-            .bind(lang)
-            .bind(user_id)
-            .fetch_one(&self.pg_pool)
-            .await?;
-            return Ok((rec, true));
+        if confirmed.is_some() {
+            return Ok(true);
         }
-        let token = Self::generate_cancel_token();
-        let rec = sqlx::query_as::<_, crate::models::GazetteWatch>(
-            "INSERT INTO gazette_watches (leaf_id, email, name, lang, cancel_token, user_id)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             RETURNING *",
+        let (already,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM gazette_watches
+                            WHERE confirm_hash = $1 AND confirmed_at IS NOT NULL)",
         )
-        .bind(leaf_id)
-        .bind(email)
-        .bind(name)
-        .bind(lang)
-        .bind(&token)
-        .bind(user_id)
+        .bind(confirm_hash)
         .fetch_one(&self.pg_pool)
         .await?;
-        Ok((rec, false))
+        Ok(already)
     }
 
     pub async fn get_gazette_watch_by_token(
@@ -6518,6 +7459,7 @@ impl Repository {
             "SELECT w.* FROM gazette_watches w
              JOIN gazette_leaves l ON l.id = w.leaf_id
              WHERE l.figurine_id = $1 AND w.notified_at IS NULL
+               AND w.confirmed_at IS NOT NULL
              ORDER BY w.created_at ASC",
         )
         .bind(figurine_id)
@@ -6554,7 +7496,7 @@ impl Repository {
         user_id: Uuid,
     ) -> Result<Vec<crate::models::GazetteWatchListed>> {
         Ok(sqlx::query_as::<_, crate::models::GazetteWatchListed>(
-            "SELECT w.id, w.leaf_id, l.slug AS leaf_slug, l.title_en, l.title_ru,
+            "SELECT w.id, w.leaf_id, l.slug AS leaf_slug, l.title_en, l.title_ru, l.title_uk,
                     w.cancel_token, w.notified_at, w.created_at
              FROM gazette_watches w
              JOIN gazette_leaves l ON l.id = w.leaf_id
@@ -6812,6 +7754,8 @@ impl Repository {
             older_slug: Option<String>,
             older_title_en: Option<String>,
             older_title_ru: Option<String>,
+            newer_title_uk: Option<String>,
+            older_title_uk: Option<String>,
         }
 
         let tale = kind == "tale";
@@ -6825,7 +7769,7 @@ impl Repository {
 
         let row = sqlx::query_as::<_, NeighborRow>(&format!(
             r#"WITH live AS (
-                 SELECT l.slug, l.title_en, l.title_ru, l.id, l.shelf_order,
+                 SELECT l.slug, l.title_en, l.title_ru, l.title_uk, l.id, l.shelf_order,
                         COALESCE(l.published_at, l.scheduled_at, l.created_at) AS at
                    FROM gazette_leaves l
                   WHERE (l.status = 'published'
@@ -6837,13 +7781,15 @@ impl Repository {
                         LAG(slug) OVER (ORDER BY {walk}) AS newer_slug,
                         LAG(title_en) OVER (ORDER BY {walk}) AS newer_title_en,
                         LAG(title_ru) OVER (ORDER BY {walk}) AS newer_title_ru,
+                        LAG(title_uk) OVER (ORDER BY {walk}) AS newer_title_uk,
                         LEAD(slug) OVER (ORDER BY {walk}) AS older_slug,
                         LEAD(title_en) OVER (ORDER BY {walk}) AS older_title_en,
-                        LEAD(title_ru) OVER (ORDER BY {walk}) AS older_title_ru
+                        LEAD(title_ru) OVER (ORDER BY {walk}) AS older_title_ru,
+                        LEAD(title_uk) OVER (ORDER BY {walk}) AS older_title_uk
                    FROM live
                )
-               SELECT newer_slug, newer_title_en, newer_title_ru,
-                      older_slug, older_title_en, older_title_ru
+               SELECT newer_slug, newer_title_en, newer_title_ru, newer_title_uk,
+                      older_slug, older_title_en, older_title_ru, older_title_uk
                  FROM ord
                 WHERE slug = $1"#,
         ))
@@ -6860,6 +7806,7 @@ impl Repository {
                     slug,
                     title_en,
                     title_ru,
+                    title_uk: row.newer_title_uk.unwrap_or_default(),
                 })
             }
             _ => None,
@@ -6870,6 +7817,7 @@ impl Repository {
                     slug,
                     title_en,
                     title_ru,
+                    title_uk: row.older_title_uk.unwrap_or_default(),
                 })
             }
             _ => None,
@@ -7059,7 +8007,7 @@ impl Repository {
         let (limit_n, offset_n) = if tale_filter.is_some() { (2, 3) } else { (1, 2) };
         let sql = format!(
             "SELECT c.id, c.tale_id,
-                    l.title_en AS tale_title_en, l.title_ru AS tale_title_ru, l.slug AS tale_slug,
+                    l.title_en AS tale_title_en, l.title_ru AS tale_title_ru, l.title_uk AS tale_title_uk, l.slug AS tale_slug,
                     c.author_name, c.author_email, c.body, c.is_approved, c.admin_reply,
                     c.created_at, c.user_id
              FROM tale_comments c
@@ -7264,8 +8212,8 @@ impl Repository {
         Option<crate::models::GazetteNeighborDto>,
         Option<Option<(bool, bool)>>,
     )> {
-        let sequel: Option<(String, String, String)> = sqlx::query_as(
-            "SELECT slug, title_en, title_ru FROM gazette_leaves
+        let sequel: Option<(String, String, String, String)> = sqlx::query_as(
+            "SELECT slug, title_en, title_ru, title_uk FROM gazette_leaves
               WHERE sequel_of = $1 AND kind = 'tale'
                 AND (status = 'published'
                      OR (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()))
@@ -7275,8 +8223,8 @@ impl Repository {
         .bind(tale_id)
         .fetch_optional(&self.pg_pool)
         .await?;
-        let original: Option<(String, String, String)> = sqlx::query_as(
-            "SELECT o.slug, o.title_en, o.title_ru
+        let original: Option<(String, String, String, String)> = sqlx::query_as(
+            "SELECT o.slug, o.title_en, o.title_ru, o.title_uk
                FROM gazette_leaves l
                JOIN gazette_leaves o ON o.id = l.sequel_of
               WHERE l.id = $1 AND o.kind = 'tale'
@@ -7299,11 +8247,12 @@ impl Repository {
                 .await?,
             ),
         };
-        let neighbor = |(slug, title_en, title_ru): (String, String, String)| {
+        let neighbor = |(slug, title_en, title_ru, title_uk): (String, String, String, String)| {
             crate::models::GazetteNeighborDto {
                 slug,
                 title_en,
                 title_ru,
+                title_uk,
             }
         };
         Ok((sequel.map(neighbor), original.map(neighbor), wants))
@@ -7647,11 +8596,12 @@ impl Repository {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
         )>,
     > {
         Ok(sqlx::query_as(
             "SELECT p.id, p.state, p.opened_at, p.closed_at, p.winner_figurine_id,
-                    l.slug, l.title_en, l.title_ru
+                    l.slug, l.title_en, l.title_ru, l.title_uk
                FROM tale_polls p
                LEFT JOIN gazette_leaves l ON l.id = p.fulfilled_leaf_id
               ORDER BY p.opened_at DESC
@@ -7770,11 +8720,23 @@ impl Repository {
             "INSERT INTO tale_letters (tale_id, email, lang, reason)
              SELECT $1, s.email, CASE WHEN s.lang = 'ru' THEN 'ru' ELSE 'en' END, $2
                FROM newsletter_subscribers s
-              WHERE s.unsubscribed_at IS NULL
+              WHERE s.unsubscribed_at IS NULL AND s.confirmed_at IS NOT NULL
              ON CONFLICT (tale_id, lower(email)) DO NOTHING",
         )
         .bind(tale_id)
         .bind(crate::tales::LetterReason::New.as_str())
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        // Подписчики книги в Telegram получают ту же весть запиской в бота.
+        laid += sqlx::query(
+            "INSERT INTO tale_book_notes (tale_id, subscriber_id, lang)
+             SELECT $1, s.id, s.lang FROM telegram_subscribers s
+              WHERE s.chat_id IS NOT NULL AND s.confirmed_at IS NOT NULL
+                AND s.unsubscribed_at IS NULL
+             ON CONFLICT (tale_id, subscriber_id) DO NOTHING",
+        )
+        .bind(tale_id)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -7898,13 +8860,16 @@ impl Repository {
                     AND p.fulfilled_leaf_id IS NULL AND v.email IS NOT NULL
                  UNION
                  SELECT lower(s.email) FROM newsletter_subscribers s
-                  WHERE s.unsubscribed_at IS NULL
+                  WHERE s.unsubscribed_at IS NULL AND s.confirmed_at IS NOT NULL
              )
              SELECT t.laid,
                     (SELECT COUNT(*) FROM mail)::bigint,
-                    (SELECT COUNT(DISTINCT w.user_id) FROM tale_sequel_wishes w
-                      WHERE w.tale_id = t.sequel_of AND w.by_telegram
-                        AND w.user_id IS NOT NULL)::bigint
+                    ((SELECT COUNT(DISTINCT w.user_id) FROM tale_sequel_wishes w
+                       WHERE w.tale_id = t.sequel_of AND w.by_telegram
+                         AND w.user_id IS NOT NULL)
+                     + (SELECT COUNT(*) FROM telegram_subscribers s
+                         WHERE s.chat_id IS NOT NULL AND s.confirmed_at IS NOT NULL
+                           AND s.unsubscribed_at IS NULL))::bigint
                FROM t",
         )
         .bind(tale_id)
@@ -7999,7 +8964,8 @@ impl Repository {
                          OR (l.status = 'scheduled' AND l.scheduled_at IS NOT NULL AND l.scheduled_at <= NOW()))
                     AND (t.reason <> $4
                          OR EXISTS (SELECT 1 FROM newsletter_subscribers s
-                                     WHERE lower(s.email) = lower(t.email) AND s.unsubscribed_at IS NULL))
+                                     WHERE lower(s.email) = lower(t.email)
+                                       AND s.unsubscribed_at IS NULL AND s.confirmed_at IS NOT NULL))
                   ORDER BY t.created_at, t.email
                   LIMIT $1
                   FOR UPDATE OF t SKIP LOCKED
@@ -8011,15 +8977,17 @@ impl Repository {
                   RETURNING t.tale_id, t.email, t.lang, t.reason, t.created_at
              )
              SELECT c.tale_id, c.email, c.lang, c.reason, s.unsubscribe_token,
-                    l.slug, l.title_en, l.title_ru, l.dek_en, l.dek_ru,
+                    l.slug, l.title_en, l.title_ru, l.title_uk, l.dek_en, l.dek_ru, l.dek_uk,
                     o.title_en AS original_title_en, o.title_ru AS original_title_ru,
+                    o.title_uk AS original_title_uk,
                     f.name AS figurine_name
                FROM claimed c
                JOIN gazette_leaves l ON l.id = c.tale_id
                LEFT JOIN gazette_leaves o ON o.id = l.sequel_of
                LEFT JOIN figurines f ON f.id = l.figurine_id
                LEFT JOIN newsletter_subscribers s
-                      ON lower(s.email) = lower(c.email) AND s.unsubscribed_at IS NULL
+                      ON lower(s.email) = lower(c.email)
+                     AND s.unsubscribed_at IS NULL AND s.confirmed_at IS NOT NULL
               ORDER BY c.created_at, c.email",
         )
         .bind(limit)
@@ -8087,8 +9055,9 @@ impl Repository {
                   RETURNING n.tale_id, n.user_id, n.lang, n.created_at
              )
              SELECT c.tale_id, c.user_id, u.telegram_id, c.lang,
-                    l.slug, l.title_en, l.title_ru,
-                    o.title_en AS original_title_en, o.title_ru AS original_title_ru
+                    l.slug, l.title_en, l.title_ru, l.title_uk,
+                    o.title_en AS original_title_en, o.title_ru AS original_title_ru,
+                    o.title_uk AS original_title_uk
                FROM claimed c
                JOIN gazette_leaves l ON l.id = c.tale_id
                LEFT JOIN gazette_leaves o ON o.id = l.sequel_of
@@ -8204,20 +9173,23 @@ impl Repository {
     /// thumb goes soft, the same reason the detail page reaches for it.
     const BATTLE_CARD_SELECT: &'static str = r#"
         SELECT c.id, c.slug, c.figurine_id, c.race_id, c.status, c.tier,
-               c.type_en, c.type_ru,
-               c.title_en, c.title_ru, c.effect_en, c.effect_ru, c.lore_en, c.lore_ru,
+               c.type_en, c.type_ru, c.type_uk,
+               c.title_en, c.title_ru, c.title_uk, c.effect_en, c.effect_ru, c.effect_uk,
+               c.lore_en, c.lore_ru, c.lore_uk,
                c.cost, c.power, c.health, c.mana, c.traits,
                c.kind, c.armor, c.ward, c.attack_channel, c.reach, c.step, c.speed, c.mend,
                c.abilities, c.budget_points, c.balance_index, c.rules_version,
                c.price_dust, c.price_feed, c.level_price_dust,
                c.art_url, c.art_focal, c.frame_override, c.motion_wear,
-               c.shelf_order, c.lendable, c.credit_name, c.edition_size, c.minted,
+               c.shelf_order, c.lendable, c.shoots, c.credit_name, c.edition_size, c.minted,
                c.created_at, c.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
                fi.file_path AS figurine_face_path, fi.id AS figurine_face_id,
-               r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.icon_url AS race_icon_url,
+               r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.name_uk AS race_name_uk,
+               r.icon_url AS race_icon_url,
                r.level_frames AS race_level_frames,
-               r.motion_wear AS race_motion_wear
+               r.motion_wear AS race_motion_wear,
+               r.race_damage AS race_damage
         FROM battle_cards c
         LEFT JOIN figurines f ON f.id = c.figurine_id
         LEFT JOIN battle_races r ON r.id = c.race_id
@@ -8238,6 +9210,45 @@ impl Repository {
         Ok(
             sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
                 "{} WHERE c.status = 'published'
+             ORDER BY c.shelf_order NULLS LAST, c.tier DESC, c.created_at DESC, c.id DESC
+             LIMIT $1",
+                Self::BATTLE_CARD_SELECT
+            ))
+            .bind(limit)
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
+    }
+
+    /// Карты, которые может назвать расстановка этюда: опубликованные и
+    /// «только для этюдов» (`battles::CARD_ETUDE_ONLY`). Полка их не видит —
+    /// она читает `list_battle_cards_public`.
+    pub async fn list_battle_cards_for_etudes(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<crate::models::BattleCardListed>> {
+        Ok(
+            sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+                "{} WHERE c.status IN ('published', 'etude')
+             ORDER BY c.shelf_order NULLS LAST, c.tier DESC, c.created_at DESC, c.id DESC
+             LIMIT $1",
+                Self::BATTLE_CARD_SELECT
+            ))
+            .bind(limit)
+            .fetch_all(&self.pg_pool)
+            .await?,
+        )
+    }
+
+    /// Только карты «только для этюдов»: их картинки нужны сцене этюда, а
+    /// полке — нет.
+    pub async fn list_battle_cards_etude_only(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<crate::models::BattleCardListed>> {
+        Ok(
+            sqlx::query_as::<_, crate::models::BattleCardListed>(&format!(
+                "{} WHERE c.status = 'etude'
              ORDER BY c.shelf_order NULLS LAST, c.tier DESC, c.created_at DESC, c.id DESC
              LIMIT $1",
                 Self::BATTLE_CARD_SELECT
@@ -8331,9 +9342,11 @@ impl Repository {
                     abilities, budget_points, balance_index,
                     price_dust, price_feed, level_price_dust,
                     art_url, art_focal, frame_override, motion_wear, lendable,
-                    edition_size, credit_name
+                    edition_size, credit_name, shoots,
+                    type_uk, title_uk, effect_uk, lore_uk
                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
+                         $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,
+                         $41,$42,$43,$44)
                RETURNING *"#,
         )
         .bind(&w.slug)
@@ -8375,6 +9388,11 @@ impl Repository {
         .bind(w.lendable)
         .bind(w.edition_size)
         .bind(w.credit_name.as_deref())
+        .bind(w.shoots)
+        .bind(w.type_uk.as_deref())
+        .bind(&w.title_uk)
+        .bind(w.effect_uk.as_deref())
+        .bind(w.lore_uk.as_deref())
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -8400,6 +9418,8 @@ impl Repository {
                     price_dust = $31, price_feed = $32, level_price_dust = $33,
                     art_url = $34, art_focal = $35, frame_override = $36,
                     motion_wear = $37, lendable = $38, edition_size = $39,
+                    shoots = $41,
+                    type_uk = $42, title_uk = $43, effect_uk = $44, lore_uk = $45,
                     rules_version = rules_version + 1,
                     updated_at = NOW()
                WHERE id = $1
@@ -8445,6 +9465,11 @@ impl Repository {
         .bind(w.lendable)
         .bind(w.edition_size)
         .bind(w.credit_name.as_deref())
+        .bind(w.shoots)
+        .bind(w.type_uk.as_deref())
+        .bind(&w.title_uk)
+        .bind(w.effect_uk.as_deref())
+        .bind(w.lore_uk.as_deref())
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle card {id} not found")))
@@ -8499,10 +9524,11 @@ impl Repository {
     /// what tells the keeper whether a rename is a small act or a large one.
     pub async fn list_battle_races(&self) -> Result<Vec<crate::models::BattleRaceListed>> {
         Ok(sqlx::query_as::<_, crate::models::BattleRaceListed>(
-            "SELECT r.id, r.slug, r.name_en, r.name_ru, r.note_en, r.note_ru, r.icon_url,
-                    r.level_frames, r.motion_wear, r.sort_order,
+            "SELECT r.id, r.slug, r.name_en, r.name_ru, r.name_uk, r.note_en, r.note_ru, r.note_uk,
+                    r.icon_url, r.level_frames, r.motion_wear, r.sort_order,
                     (SELECT COUNT(*) FROM battle_cards c WHERE c.race_id = r.id)::bigint
-                        AS card_count
+                        AS card_count,
+                    r.race_damage
                FROM battle_races r
               ORDER BY r.sort_order NULLS LAST, r.name_ru, r.id",
         )
@@ -8534,11 +9560,14 @@ impl Repository {
         icon_url: Option<&str>,
         level_frames: Option<&str>,
         motion_wear: Option<&str>,
+        name_uk: &str,
+        note_uk: Option<&str>,
+        race_damage: Option<&str>,
     ) -> Result<crate::models::BattleRace> {
         Ok(sqlx::query_as::<_, crate::models::BattleRace>(
             "INSERT INTO battle_races (slug, name_en, name_ru, note_en, note_ru, icon_url,
-                                       level_frames, motion_wear)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
+                                       level_frames, motion_wear, name_uk, note_uk, race_damage)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
         )
         .bind(slug)
         .bind(name_en)
@@ -8548,6 +9577,9 @@ impl Repository {
         .bind(icon_url)
         .bind(level_frames)
         .bind(motion_wear)
+        .bind(name_uk)
+        .bind(note_uk)
+        .bind(race_damage)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -8563,11 +9595,17 @@ impl Repository {
         icon_url: Option<&str>,
         level_frames: Option<&str>,
         motion_wear: Option<&str>,
+        name_uk: &str,
+        note_uk: Option<&str>,
+        // `None` — не трогать таблицу урона; `Some(None)` — очистить.
+        race_damage: Option<Option<&str>>,
     ) -> Result<crate::models::BattleRace> {
         sqlx::query_as::<_, crate::models::BattleRace>(
             "UPDATE battle_races SET slug = $2, name_en = $3, name_ru = $4,
                     note_en = $5, note_ru = $6, icon_url = $7, level_frames = $8,
-                    motion_wear = $9, updated_at = NOW()
+                    motion_wear = $9, name_uk = $10, note_uk = $11,
+                    race_damage = CASE WHEN $12 THEN $13 ELSE race_damage END,
+                    updated_at = NOW()
               WHERE id = $1 RETURNING *",
         )
         .bind(id)
@@ -8579,6 +9617,10 @@ impl Repository {
         .bind(icon_url)
         .bind(level_frames)
         .bind(motion_wear)
+        .bind(name_uk)
+        .bind(note_uk)
+        .bind(race_damage.is_some())
+        .bind(race_damage.flatten())
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle race {id} not found")))
@@ -8586,15 +9628,27 @@ impl Repository {
 
     /// Removing a race leaves its cards standing, without one — the foreign key
     /// is ON DELETE SET NULL. A dictionary entry is not the cards under it.
-    pub async fn delete_battle_race(&self, id: Uuid) -> Result<()> {
+    ///
+    /// `unlink` — новые таблицы урона тех рас, что ссылались на удаляемую;
+    /// пишутся той же транзакцией.
+    pub async fn delete_battle_race(&self, id: Uuid, unlink: &[(Uuid, Option<String>)]) -> Result<()> {
+        let mut tx = self.pg_pool.begin().await?;
         let affected = sqlx::query("DELETE FROM battle_races WHERE id = $1")
             .bind(id)
-            .execute(&self.pg_pool)
+            .execute(&mut *tx)
             .await?
             .rows_affected();
         if affected == 0 {
             return Err(AppError::NotFound(format!("Battle race {id} not found")));
         }
+        for (other, damage) in unlink {
+            sqlx::query("UPDATE battle_races SET race_damage = $2, updated_at = NOW() WHERE id = $1")
+                .bind(other)
+                .bind(damage)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -8737,14 +9791,16 @@ impl Repository {
                  slug = $2, title_en = $3, title_ru = $4, note_en = $5, note_ru = $6,
                  rule = $7, threshold = $8, currency = $9, amount = $10,
                  period = $11, starts_at = $12, ends_at = $13, status = $14,
-                 sort_order = $15, by_hand = $16, updated_at = NOW()
+                 sort_order = $15, by_hand = $16, title_uk = $17, note_uk = $18,
+                 updated_at = NOW()
               WHERE id = $1
               RETURNING *"
         } else {
             "INSERT INTO battle_errands
                  (id, slug, title_en, title_ru, note_en, note_ru, rule, threshold,
-                  currency, amount, period, starts_at, ends_at, status, sort_order, by_hand)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+                  currency, amount, period, starts_at, ends_at, status, sort_order, by_hand,
+                  title_uk, note_uk)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
              RETURNING *"
         };
         let row = sqlx::query_as::<_, crate::models::BattleErrand>(sql)
@@ -8764,6 +9820,8 @@ impl Repository {
             .bind(&w.status)
             .bind(w.sort_order)
             .bind(w.by_hand)
+            .bind(&w.title_uk)
+            .bind(w.note_uk.as_deref())
             .fetch_optional(&self.pg_pool)
             .await?;
         row.ok_or_else(|| AppError::NotFound("Battle errand not found".into()))
@@ -8841,7 +9899,12 @@ impl Repository {
         .await?;
 
         let deck: (bool,) =
-            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM battle_decks WHERE user_id = $1)")
+            // Карты расставляют перед боем на поле встречи (`battle_lineups`);
+            // прежний стол (`battle_decks`) засчитывается тоже.
+            sqlx::query_as(
+                "SELECT EXISTS(SELECT 1 FROM battle_decks WHERE user_id = $1)
+                     OR EXISTS(SELECT 1 FROM battle_lineups WHERE user_id = $1)",
+            )
                 .bind(user_id)
                 .fetch_one(&self.pg_pool)
                 .await?;
@@ -8951,23 +10014,89 @@ impl Repository {
         Ok(res.rows_affected() > 0)
     }
 
-    /// Проявка: засчитать разом работы, которые гость смотрел до того, как
-    /// комната для него открылась.
-    ///
-    /// Одним запросом, а не циклом: проверка существования, проверка открытости
-    /// и защита от повтора — всё это уже умеет база, и шестьдесят обращений
-    /// подряд за тем же самым были бы разве что медленнее.
-    ///
-    /// Возвращает, сколько строк ЛЕГЛО, а не сколько прислали: работа, за
-    /// которую уже платили, и работа, которой нет, отсюда неотличимы — и
-    /// человеку в обоих случаях нечего сказать.
+    /// Платит за внимание, не выходя за суточный потолок имени. Проверка суммы
+    /// за день и запись идут под одной блокировкой кошелька (той же, что у
+    /// покупки): два маячка, пришедшие разом, иначе оба увидели бы «ещё есть
+    /// место» и оба прошли.
+    pub async fn credit_attention_capped(
+        &self,
+        user_id: Uuid,
+        amount: i32,
+        reason: &str,
+        ref_id: Uuid,
+        idem_key: &str,
+        daily_cap: i32,
+    ) -> Result<AttentionCredit> {
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let paid_today = Self::attention_paid_today(&mut tx, user_id).await?;
+        if paid_today + i64::from(amount) > i64::from(daily_cap) {
+            tx.rollback().await?;
+            return Ok(AttentionCredit::CapReached);
+        }
+        let res = sqlx::query(
+            "INSERT INTO battle_wallet_entries (user_id, currency, amount, reason, ref_id, idem_key)
+             VALUES ($1, 'dust', $2, $3, $4, $5)
+             ON CONFLICT (user_id, idem_key) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(amount)
+        .bind(reason)
+        .bind(ref_id)
+        .bind(idem_key)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(if res.rows_affected() > 0 {
+            AttentionCredit::Paid
+        } else {
+            AttentionCredit::Repeat
+        })
+    }
+
+    /// Сколько пыли за внимание это имя получило с начала суток (UTC).
+    async fn attention_paid_today(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        user_id: Uuid,
+    ) -> Result<i64> {
+        let (sum,): (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount)::bigint FROM battle_wallet_entries
+              WHERE user_id = $1 AND currency = 'dust'
+                AND reason IN ('seen', 'liked', 'read')
+                AND created_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+        )
+        .bind(user_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        Ok(sum.unwrap_or(0))
+    }
+
+    /// Проявка: пыль за работы, которые страница называет просмотренными. Под
+    /// тот же суточный потолок, что и маячок: список приходит от браузера, и
+    /// без потолка один вход выплачивал бы всё сразу. Что не влезло сегодня,
+    /// доплатится на следующих входах — страница присылает список каждый раз.
     pub async fn credit_battle_seen_bulk(
         &self,
         user_id: Uuid,
         ids: &[Uuid],
         amount: i32,
+        daily_cap: i32,
     ) -> Result<i64> {
         if ids.is_empty() || amount <= 0 {
+            return Ok(0);
+        }
+        let mut tx = self.pg_pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+            .bind(user_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let paid_today = Self::attention_paid_today(&mut tx, user_id).await?;
+        let room = (i64::from(daily_cap) - paid_today).max(0) / i64::from(amount);
+        if room == 0 {
+            tx.rollback().await?;
             return Ok(0);
         }
         let res = sqlx::query(
@@ -8976,14 +10105,79 @@ impl Repository {
              SELECT $1, 'dust', $2, 'seen', f.id, 'seen:' || f.id
                FROM figurines f
               WHERE f.id = ANY($3) AND f.is_visible
+                AND NOT EXISTS (SELECT 1 FROM battle_wallet_entries w
+                                 WHERE w.user_id = $1 AND w.idem_key = 'seen:' || f.id)
+              ORDER BY f.id
+              LIMIT $4
              ON CONFLICT (user_id, idem_key) DO NOTHING",
         )
         .bind(user_id)
         .bind(amount)
         .bind(ids)
-        .execute(&self.pg_pool)
+        .bind(room)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(res.rows_affected() as i64)
+    }
+
+    /// Видел ли сервер этого посетителя там, куда просят пыль за внимание.
+    ///
+    /// `seen` и `liked` — просмотр страницы работы за последний час. `read` —
+    /// просмотр страницы байки и присутствие на ней не меньше `min_ms`.
+    /// Подтверждение берётся из потока замера (`figurine_analytics_events`), а не
+    /// со слов страницы: маячок страница шлёт сама, и один её запрос с выдуманным
+    /// id оплачивал бы любую работу.
+    pub async fn battle_attention_witnessed(
+        &self,
+        kind: &str,
+        id: Uuid,
+        visitor_hashes: &[String],
+        within_minutes: i64,
+        min_ms: i32,
+    ) -> Result<bool> {
+        if visitor_hashes.is_empty() {
+            return Ok(false);
+        }
+        let sql = match kind {
+            "seen" | "liked" => {
+                "SELECT EXISTS(
+                    SELECT 1 FROM figurine_analytics_events e
+                     WHERE e.event_type = 'figurine_view'
+                       AND e.figurine_id = $1
+                       AND e.visitor_hash = ANY($2)
+                       AND e.occurred_at > NOW() - make_interval(mins => $3::int))"
+            }
+            "read" => {
+                "SELECT EXISTS(
+                    SELECT 1 FROM gazette_leaves l
+                     WHERE l.id = $1
+                       AND EXISTS (
+                            SELECT 1 FROM figurine_analytics_events v
+                             WHERE v.event_type = 'page_view'
+                               AND v.visitor_hash = ANY($2)
+                               AND v.occurred_at > NOW() - make_interval(mins => $3::int)
+                               AND rtrim(v.path, '/') =
+                                   CASE WHEN l.kind = 'tale' THEN '/tales/' ELSE '/gazette/' END || l.slug)
+                       AND EXISTS (
+                            SELECT 1 FROM figurine_analytics_events g
+                             WHERE g.event_type = 'page_engaged'
+                               AND g.visitor_hash = ANY($2)
+                               AND g.occurred_at > NOW() - make_interval(mins => $3::int)
+                               AND COALESCE(g.duration_ms, 0) >= $4
+                               AND rtrim(g.path, '/') =
+                                   CASE WHEN l.kind = 'tale' THEN '/tales/' ELSE '/gazette/' END || l.slug))"
+            }
+            _ => return Ok(false),
+        };
+        let mut q = sqlx::query_scalar::<_, bool>(sql)
+            .bind(id)
+            .bind(visitor_hashes)
+            .bind(within_minutes as i32);
+        if kind == "read" {
+            q = q.bind(min_ms);
+        }
+        Ok(q.fetch_one(&self.pg_pool).await?)
     }
 
     /// Что дому дали не за внимание — последние записки, новыми вперёд.
@@ -9108,6 +10302,42 @@ impl Repository {
              ON CONFLICT (user_id) DO UPDATE SET layout = EXCLUDED.layout, updated_at = NOW()",
         )
         .bind(user_id)
+        .bind(layout)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Расстановка гостя на поле одной встречи, как она лежит.
+    pub async fn get_battle_lineup(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+    ) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT layout FROM battle_lineups WHERE user_id = $1 AND challenge_id = $2",
+        )
+        .bind(user_id)
+        .bind(challenge_id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Расстановка переписывается целиком, как и стол.
+    pub async fn upsert_battle_lineup(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+        layout: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO battle_lineups (user_id, challenge_id, layout) VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, challenge_id)
+             DO UPDATE SET layout = EXCLUDED.layout, updated_at = NOW()",
+        )
+        .bind(user_id)
+        .bind(challenge_id)
         .bind(layout)
         .execute(&self.pg_pool)
         .await?;
@@ -9498,7 +10728,7 @@ impl Repository {
     ) -> Result<Vec<crate::models::BattleMatchRow>> {
         Ok(sqlx::query_as::<_, crate::models::BattleMatchRow>(
             "SELECT m.id, u.display_name AS guest, m.challenge_id,
-                    c.title_ru, c.title_en, m.outcome, m.rounds,
+                    c.title_ru, c.title_uk, c.title_en, m.outcome, m.rounds,
                     m.setup, m.actions, m.created_at, m.finished_at
                FROM battle_matches m
                JOIN users u ON u.id = m.user_id
@@ -9529,8 +10759,9 @@ impl Repository {
             None => Ok(sqlx::query_as::<_, crate::models::BattleChallenge>(
                 "INSERT INTO battle_challenges
                      (slug, title_en, title_ru, note_en, note_ru, setup, bot_depth,
-                      reward_dust, player_side, status, reward_finish_dust)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
+                      reward_dust, player_side, status, reward_finish_dust,
+                      title_uk, note_uk)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *",
             )
             .bind(w.slug)
             .bind(w.title_en)
@@ -9543,13 +10774,16 @@ impl Repository {
             .bind(w.player_side)
             .bind(w.status)
             .bind(w.reward_finish_dust)
+            .bind(w.title_uk)
+            .bind(w.note_uk)
             .fetch_one(&self.pg_pool)
             .await?),
             Some(id) => sqlx::query_as::<_, crate::models::BattleChallenge>(
                 "UPDATE battle_challenges SET slug=$2, title_en=$3, title_ru=$4,
                         note_en=$5, note_ru=$6, setup=$7, bot_depth=$8,
                         reward_dust=$9, player_side=$10, status=$11,
-                        reward_finish_dust=$12, updated_at = NOW()
+                        reward_finish_dust=$12, title_uk=$13, note_uk=$14,
+                        updated_at = NOW()
                   WHERE id=$1 RETURNING *",
             )
             .bind(id)
@@ -9564,6 +10798,8 @@ impl Repository {
             .bind(w.player_side)
             .bind(w.status)
             .bind(w.reward_finish_dust)
+            .bind(w.title_uk)
+            .bind(w.note_uk)
             .fetch_optional(&self.pg_pool)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Battle challenge {id} not found"))),
@@ -9879,10 +11115,13 @@ impl Repository {
         rules_ru: Option<&str>,
         icon_url: Option<&str>,
         point_value: Option<f64>,
+        name_uk: &str,
+        rules_uk: Option<&str>,
     ) -> Result<crate::models::BattleKeyword> {
         Ok(sqlx::query_as::<_, crate::models::BattleKeyword>(
-            "INSERT INTO battle_keywords (slug, name_en, name_ru, rules_en, rules_ru, icon_url, point_value)
-             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+            "INSERT INTO battle_keywords (slug, name_en, name_ru, rules_en, rules_ru, icon_url, point_value,
+                                          name_uk, rules_uk)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
         )
         .bind(slug)
         .bind(name_en)
@@ -9891,6 +11130,8 @@ impl Repository {
         .bind(rules_ru)
         .bind(icon_url)
         .bind(point_value)
+        .bind(name_uk)
+        .bind(rules_uk)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -9905,10 +11146,13 @@ impl Repository {
         rules_ru: Option<&str>,
         icon_url: Option<&str>,
         point_value: Option<f64>,
+        name_uk: &str,
+        rules_uk: Option<&str>,
     ) -> Result<crate::models::BattleKeyword> {
         sqlx::query_as::<_, crate::models::BattleKeyword>(
             "UPDATE battle_keywords SET slug = $2, name_en = $3, name_ru = $4,
                     rules_en = $5, rules_ru = $6, icon_url = $7, point_value = $8,
+                    name_uk = $9, rules_uk = $10,
                     updated_at = NOW()
               WHERE id = $1 RETURNING *",
         )
@@ -9920,6 +11164,8 @@ impl Repository {
         .bind(rules_ru)
         .bind(icon_url)
         .bind(point_value)
+        .bind(name_uk)
+        .bind(rules_uk)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle keyword {id} not found")))
@@ -11154,7 +12400,7 @@ impl Repository {
     pub async fn list_market_copies(&self) -> Result<Vec<crate::models::CopyListingDto>> {
         Ok(sqlx::query_as::<_, crate::models::CopyListingDto>(
             "SELECT m.id, c.id AS copy_id, m.price, m.currency, c.serial, c.level,
-                    c.card_id, k.title_en, k.title_ru, k.credit_name,
+                    c.card_id, k.title_en, k.title_ru, k.title_uk, k.credit_name,
                     u.display_name AS seller, m.created_at
                FROM market_listings m
                JOIN card_copies c ON c.id = m.subject_id
@@ -11173,7 +12419,7 @@ impl Repository {
     pub async fn list_my_copies(&self, owner: Uuid) -> Result<Vec<crate::models::MyCopyDto>> {
         Ok(sqlx::query_as::<_, crate::models::MyCopyDto>(
             "SELECT c.id, c.card_id, c.serial, c.level, c.locked_by IS NOT NULL AS locked,
-                    k.title_en, k.title_ru
+                    k.title_en, k.title_ru, k.title_uk
                FROM card_copies c
                JOIN battle_cards k ON k.id = c.card_id
               WHERE c.owner_id = $1
@@ -11493,7 +12739,7 @@ impl Repository {
     // ── Свои роды ───────────────────────────────────────────────────────────
 
     const STUDIO_RACE_SELECT: &'static str =
-        "id, name_en, name_ru, note_en, note_ru, icon_url, status, keeper_word,
+        "id, name_en, name_ru, name_uk, note_en, note_ru, note_uk, icon_url, status, keeper_word,
          approved_at, race_id, created_at, updated_at";
 
     pub async fn list_studio_races(
@@ -11525,8 +12771,9 @@ impl Repository {
         req: &crate::models::SaveStudioRaceRequest,
     ) -> Result<crate::models::StudioRaceDto> {
         Ok(sqlx::query_as::<_, crate::models::StudioRaceDto>(&format!(
-            "INSERT INTO studio_races (owner_id, name_en, name_ru, note_en, note_ru, icon_url, lang)
-             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING {}",
+            "INSERT INTO studio_races (owner_id, name_en, name_ru, note_en, note_ru, icon_url, lang,
+                                       name_uk, note_uk)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING {}",
             Self::STUDIO_RACE_SELECT
         ))
         .bind(owner)
@@ -11536,6 +12783,8 @@ impl Repository {
         .bind(req.note_ru.as_deref())
         .bind(req.icon_url.as_deref())
         .bind(&req.lang)
+        .bind(&req.name_uk)
+        .bind(req.note_uk.as_deref())
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -11551,6 +12800,7 @@ impl Repository {
         Ok(sqlx::query_as::<_, crate::models::StudioRaceDto>(&format!(
             "UPDATE studio_races
                 SET name_en = $3, name_ru = $4, note_en = $5, note_ru = $6, icon_url = $7,
+                    name_uk = $8, note_uk = $9,
                     updated_at = NOW()
               WHERE id = $1 AND owner_id = $2 AND status IN ('draft', 'withdrawn')
              RETURNING {}",
@@ -11563,6 +12813,8 @@ impl Repository {
         .bind(req.note_en.as_deref())
         .bind(req.note_ru.as_deref())
         .bind(req.icon_url.as_deref())
+        .bind(&req.name_uk)
+        .bind(req.note_uk.as_deref())
         .fetch_optional(&self.pg_pool)
         .await?)
     }
@@ -11603,8 +12855,8 @@ impl Repository {
 
     pub async fn studio_race_queue(&self) -> Result<Vec<crate::models::StudioRaceQueueDto>> {
         Ok(sqlx::query_as::<_, crate::models::StudioRaceQueueDto>(
-            "SELECT r.id, r.name_en, r.name_ru, r.note_en, r.note_ru, r.icon_url,
-                    u.display_name AS author, r.updated_at
+            "SELECT r.id, r.name_en, r.name_ru, r.name_uk, r.note_en, r.note_ru, r.note_uk,
+                    r.icon_url, u.display_name AS author, r.updated_at
                FROM studio_races r
                JOIN users u ON u.id = r.owner_id
               WHERE r.status = 'shown'
@@ -12653,6 +13905,24 @@ impl Repository {
         )
         .bind(ids)
         .bind(&orders)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+
+    /// Ставит расу названным картам (`None` — снимает). Возвращает, сколько
+    /// карт действительно поменялось: карта, уже стоящая под этой расой, в
+    /// счёт не идёт, и `updated_at` у неё не трогается.
+    pub async fn set_battle_cards_race(&self, ids: &[Uuid], race_id: Option<Uuid>) -> Result<u64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let res = sqlx::query(
+            "UPDATE battle_cards SET race_id = $2, updated_at = NOW()
+              WHERE id = ANY($1) AND race_id IS DISTINCT FROM $2",
+        )
+        .bind(ids)
+        .bind(race_id)
         .execute(&self.pg_pool)
         .await?;
         Ok(res.rows_affected())

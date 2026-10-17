@@ -12,7 +12,7 @@
   //
   // Числа справа считает СЕРВЕР той же формулой, что и при сохранении:
   // браузер не знает ни одного курса. Сюда они приходят готовыми — `pointsOf`.
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized, type Lang } from '$lib/i18n';
   import BattleIcon from '$lib/components/BattleIcon.svelte';
   import SheetField from '$lib/components/sheet/SheetField.svelte';
   import Medallion from '$lib/components/sheet/Medallion.svelte';
@@ -49,7 +49,7 @@
     pointsOf?: (id: string) => number | null;
     /** На каком языке подписывать ленту. Пусто — язык страницы: у стола
      *  хозяина свой переключатель RU/EN, у человека его нет. */
-    editLang?: 'ru' | 'en' | null;
+    editLang?: Lang | null;
   } = $props();
 
   let shownLang = $derived(editLang ?? $lang);
@@ -63,6 +63,7 @@
         id: `a${Date.now().toString(36)}`,
         nameEn: '',
         nameRu: '',
+        nameUk: '',
         verb: 'damage',
         channel: 'physical',
         amount: 1,
@@ -103,7 +104,7 @@
    *  Безымянных умений на карте много, и «без названия» пять раз подряд не
    *  говорит ничего, а глагол говорит всё. */
   function abilityName(ability: CardAbility): string {
-    const own = (shownLang === 'en' ? ability.nameEn : ability.nameRu)?.trim();
+    const own = localized(ability, 'name', shownLang);
     return own || $t(VERB_LABELS[ability.verb]);
   }
 
@@ -375,7 +376,7 @@
                 <option value="">{$t("cardAbilSummonNone")}</option>
                 {#each shelf as card (card.slug)}
                   <option value={card.slug}
-                    >{(shownLang === "en" ? card.titleEn : card.titleRu) ||
+                    >{localized(card, "title", shownLang) ||
                       card.slug}</option
                   >
                 {/each}
@@ -425,6 +426,14 @@
         >
           <input
             bind:value={abilities[i].nameEn}
+            maxlength="60"
+          />
+        </SheetField>
+        <SheetField
+          label={`${$t("cardAbilName")} · UK`}
+        >
+          <input
+            bind:value={abilities[i].nameUk}
             maxlength="60"
           />
         </SheetField>

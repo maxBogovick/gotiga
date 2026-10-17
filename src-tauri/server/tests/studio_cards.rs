@@ -44,6 +44,12 @@ fn config() -> Config {
         admin_log_db_path: format!("/tmp/gotiga-cards-logs-{}.sqlite", Uuid::new_v4()),
         analytics_hash_secret: "test-analytics-secret-0123456789".into(),
         auth_pepper: "pepper-for-tests-0123456789".into(),
+        google_client_id: None,
+        google_client_secret: None,
+        apple_client_id: None,
+        apple_team_id: None,
+        apple_key_id: None,
+        apple_private_key: None,
         auth_pepper_old: None,
     }
 }
@@ -440,8 +446,10 @@ fn a_race(name: &str) -> gotiga_server::models::SaveStudioRaceRequest {
     gotiga_server::models::SaveStudioRaceRequest {
         name_en: name.into(),
         name_ru: name.into(),
+        name_uk: String::new(),
         note_en: Some("Made by a person.".into()),
         note_ru: Some("Придумано человеком.".into()),
+        note_uk: None,
         icon_url: None,
         lang: "ru".into(),
     }
@@ -680,4 +688,211 @@ async fn a_person_cannot_sign_a_motion_with_another_name(pool: PgPool) {
         mine[0].body.get("credit").is_none(),
         "подпись из тела не сохраняется"
     );
+}
+
+// ── Раса на многих картах разом (вкладка «Расы») ──────────────────────────────────
+
+async fn bare_card(pool: &PgPool, slug: &str) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO battle_cards (slug, title_en, title_ru, price_dust) VALUES ($1, $1, $1, 5) RETURNING id",
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await
+    .expect("завести карту")
+}
+
+async fn race_of(pool: &PgPool, card: Uuid) -> Option<Uuid> {
+    sqlx::query_scalar("SELECT race_id FROM battle_cards WHERE id = $1")
+        .bind(card)
+        .fetch_one(pool)
+        .await
+        .expect("прочитать расу")
+}
+
+/// Раса ставится нескольким картам одним запросом и так же снимается.
+/// Карта, уже стоящая под расой, в счёт не идёт; несуществующая раса — отказ.
+#[sqlx::test]
+async fn a_race_is_set_on_many_cards_at_once(pool: PgPool) {
+    let svc = service(&pool).await;
+    let race = svc
+        .admin_create_battle_race(gotiga_server::models::SaveBattleRaceRequest {
+            slug: Some("gnomes".into()),
+            name_en: "Gnomes".into(),
+            name_ru: "Гномы".into(),
+            name_uk: String::new(),
+            note_en: None,
+            note_ru: None,
+            note_uk: None,
+            icon_url: None,
+            level_frames: None,
+            motion_wear: None,
+            race_damage: None,
+        })
+        .await
+        .expect("завести расу");
+    let race_id = Uuid::parse_str(&race.id).unwrap();
+    let a = bare_card(&pool, "gnome-axe").await;
+    let b = bare_card(&pool, "gnome-books").await;
+    let c = bare_card(&pool, "granny").await;
+
+    let changed = svc
+        .admin_set_battle_cards_race(vec![a, b], Some(race_id))
+        .await
+        .expect("назначить");
+    assert_eq!(changed, 2);
+    assert_eq!(race_of(&pool, a).await, Some(race_id));
+    assert_eq!(race_of(&pool, c).await, None, "чужую карту не трогает");
+
+    let again = svc
+        .admin_set_battle_cards_race(vec![a, b], Some(race_id))
+        .await
+        .expect("повтор");
+    assert_eq!(again, 0, "уже стоящие под расой не считаются");
+
+    let count = svc.list_battle_races().await.expect("словарь")[0].card_count;
+    assert_eq!(count, 2);
+
+    svc.admin_set_battle_cards_race(vec![b], None)
+        .await
+        .expect("снять");
+    assert_eq!(race_of(&pool, b).await, None);
+
+    assert!(
+        svc.admin_set_battle_cards_race(vec![c], Some(Uuid::new_v4()))
+            .await
+            .is_err(),
+        "раса, которой нет, — отказ"
+    );
+    assert_eq!(race_of(&pool, c).await, None);
+}
+
+fn race_named(slug: &str, ru: &str) -> gotiga_server::models::SaveBattleRaceRequest {
+    gotiga_server::models::SaveBattleRaceRequest {
+        slug: Some(slug.into()),
+        name_en: slug.into(),
+        name_ru: ru.into(),
+        name_uk: String::new(),
+        note_en: None,
+        note_ru: None,
+        note_uk: None,
+        icon_url: None,
+        level_frames: None,
+        motion_wear: None,
+        race_damage: None,
+    }
+}
+
+/// Таблица урона по расам: сервер держит числа в пределах и ссылки только на
+/// настоящие расы, а карта уносит таблицу своей расы в снимок для боя.
+#[sqlx::test]
+async fn race_damage_is_cleaned_and_reaches_the_card_snapshot(pool: PgPool) {
+    let svc = service(&pool).await;
+    let people = svc
+        .admin_create_battle_race(race_named("people", "Люди"))
+        .await
+        .expect("люди");
+    let witches = svc
+        .admin_create_battle_race(race_named("witches", "Ведьмы"))
+        .await
+        .expect("ведьмы");
+
+    let mut req = race_named("witches", "Ведьмы");
+    req.race_damage = Some(battle_core::RaceDamage {
+        attack: 9,
+        against: vec![people.id.clone(), people.id.clone(), Uuid::new_v4().to_string()],
+        defence: 2,
+        from: vec![],
+    });
+    let saved = svc
+        .admin_update_battle_race(Uuid::parse_str(&witches.id).unwrap(), req)
+        .await
+        .expect("сохранить таблицу");
+    assert_eq!(saved.race_damage.attack, gotiga_server::battles::RACE_DAMAGE_MAX);
+    assert_eq!(saved.race_damage.against, vec![people.id.clone()], "повтор и чужая раса выброшены");
+    assert_eq!(saved.race_damage.defence, 0, "защита ни от кого — не настройка");
+
+    // Сохранение без таблицы (так пишет студия) её не стирает.
+    let kept = svc
+        .admin_update_battle_race(Uuid::parse_str(&witches.id).unwrap(), race_named("witches", "Ведьмы"))
+        .await
+        .expect("сохранить без таблицы");
+    assert_eq!(kept.race_damage.against, vec![people.id.clone()]);
+
+    let card = bare_card(&pool, "witch-card").await;
+    svc.admin_set_battle_cards_race(vec![card], Some(Uuid::parse_str(&witches.id).unwrap()))
+        .await
+        .expect("поставить расу");
+    let dto = svc
+        .admin_list_battle_cards()
+        .await
+        .expect("карты")
+        .into_iter()
+        .find(|c| c.id == card.to_string())
+        .expect("карта");
+    let snap = gotiga_server::battles::to_snapshot(&dto);
+    assert_eq!(snap.race.as_deref(), Some(witches.id.as_str()));
+    assert_eq!(snap.race_damage.attack_on(Some(people.id.as_str())), gotiga_server::battles::RACE_DAMAGE_MAX);
+}
+
+/// Своя раса в таблице не держится: «сильнее против себя» в цикле рас не
+/// значит ничего. Удалённая раса вычёркивается из таблиц остальных сразу.
+#[sqlx::test]
+async fn race_damage_drops_itself_and_forgets_a_removed_race(pool: PgPool) {
+    let svc = service(&pool).await;
+    let people = svc.admin_create_battle_race(race_named("people", "Люди")).await.unwrap();
+    let undead = svc.admin_create_battle_race(race_named("undead", "Нежить")).await.unwrap();
+    let gnomes = svc.admin_create_battle_race(race_named("gnomes", "Гномы")).await.unwrap();
+    let id = |r: &gotiga_server::models::BattleRaceDto| Uuid::parse_str(&r.id).unwrap();
+
+    let mut req = race_named("people", "Люди");
+    req.race_damage = Some(battle_core::RaceDamage {
+        attack: 1,
+        against: vec![people.id.clone(), undead.id.clone()],
+        defence: 1,
+        from: vec![gnomes.id.clone()],
+    });
+    let saved = svc.admin_update_battle_race(id(&people), req).await.unwrap();
+    assert_eq!(saved.race_damage.against, vec![undead.id.clone()], "себя не держит");
+    assert_eq!(saved.race_damage_step, gotiga_server::battles::RACE_DAMAGE_MAX);
+
+    svc.admin_delete_battle_race(id(&gnomes)).await.unwrap();
+    let after = svc
+        .list_battle_races()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == people.id)
+        .unwrap();
+    assert!(after.race_damage.from.is_empty(), "удалённой расы в таблице нет");
+    assert_eq!(after.race_damage.defence, 0);
+    assert_eq!(after.race_damage.against, vec![undead.id.clone()], "остальное цело");
+}
+
+/// Таблица, записанная до снижения предела, играет по нынешнему пределу.
+#[sqlx::test]
+async fn an_old_race_damage_plays_at_the_current_limit(pool: PgPool) {
+    let svc = service(&pool).await;
+    let people = svc.admin_create_battle_race(race_named("people", "Люди")).await.unwrap();
+    let witches = svc.admin_create_battle_race(race_named("witches", "Ведьмы")).await.unwrap();
+    let old = format!(r#"{{"attack":3,"against":["{}"],"defence":0,"from":[]}}"#, people.id);
+    sqlx::query("UPDATE battle_races SET race_damage = $2 WHERE id = $1")
+        .bind(Uuid::parse_str(&witches.id).unwrap())
+        .bind(old)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let card = bare_card(&pool, "old-witch").await;
+    svc.admin_set_battle_cards_race(vec![card], Some(Uuid::parse_str(&witches.id).unwrap()))
+        .await
+        .unwrap();
+    let dto = svc
+        .admin_list_battle_cards()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == card.to_string())
+        .unwrap();
+    let snap = gotiga_server::battles::to_snapshot(&dto);
+    assert_eq!(snap.race_damage.attack_on(Some(people.id.as_str())), 1);
 }

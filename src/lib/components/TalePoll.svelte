@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { api } from '$lib/api';
+  import { api, ApiError } from '$lib/api';
   import { t, lang } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { visitorBook } from '$lib/stores/visitor-book.svelte';
@@ -36,6 +36,8 @@
   let busy = $state(false);
   let error = $state('');
   let slipOpen = $state(false);
+  // Голосуют под именем: гостю вместо голоса предлагается войти.
+  let needLogin = $state(false);
 
   let known = $derived(knownReaderEmail());
   let winner = $derived(poll?.winner ?? null);
@@ -52,6 +54,11 @@
    */
   async function choose(figurineId: string) {
     if (!poll || busy || poll.state !== 'open') return;
+    if (!authStore.isLoggedIn) {
+      needLogin = true;
+      return;
+    }
+    needLogin = false;
     const was = poll.myChoice;
     poll.myChoice = figurineId;
     busy = true;
@@ -98,8 +105,11 @@
       );
       poll.myLetter = out.myLetter;
       slipOpen = false;
-    } catch {
-      error = $t('talesLetterError');
+    } catch (e) {
+      error =
+        e instanceof ApiError && e.message.includes('letter_address_unconfirmed')
+          ? $t('talesLetterUnconfirmed')
+          : $t('talesLetterError');
     } finally {
       busy = false;
     }
@@ -160,6 +170,12 @@
           </li>
         {/each}
       </ul>
+      {#if needLogin}
+        <p class="thanks" role="status">
+          {$t('talesVoteNeedLogin')}
+          <a class="login" href="/login">{$t('talesVoteLogin')}</a>
+        </p>
+      {/if}
       {#if poll.myChoice}
         <p class="thanks">{$t('talesPollThanks')}</p>
         {@render letterAsk()}
@@ -340,5 +356,10 @@
   @media (prefers-reduced-motion: reduce) {
     .arch { transition: none; }
     .choice:hover .arch { transform: none; }
+  }
+  .login {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 </style>

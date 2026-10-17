@@ -9,15 +9,19 @@
   // список законных действий, страница показывает первое и отправляет обратно
   // одно из вторых.
   import { onMount, onDestroy } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
-  import { t, lang, brandName } from '$lib/i18n';
-  import { api } from '$lib/api';
-  import { HOUSE_RULES, deckFaultLine, rulesApart, terrainLines } from '$lib/battles';
+  import { t, lang, brandName, localized } from '$lib/i18n';
+  import { api, ApiError } from '$lib/api';
+  import { HOUSE_RULES, deckFaultLine, rulesApart, siegeLines, terrainLines } from '$lib/battles';
   import { authStore } from '$lib/stores/auth.svelte';
+  import { interact } from '$lib/analytics';
   import BattleScene from '$lib/components/BattleScene.svelte';
   import BattleDoor from '$lib/components/BattleDoor.svelte';
+  import BattleLineup from '$lib/components/BattleLineup.svelte';
+  import EtudeMap, { type EtudeKind } from '$lib/components/EtudeMap.svelte';
+  import EtudeRoad from '$lib/components/EtudeRoad.svelte';
   import { matchChrome } from '$lib/stores/match-chrome.svelte';
   import type {
     BattleAction,
@@ -32,6 +36,21 @@
   } from '$lib/types/api';
 
   let challenges = $state<BattleChallenge[]>([]);
+  // Два режима одной карты: обучение — этюды с заданной расстановкой, прохождение
+  // — встречи, где гость приводит свои карты. Режим в адресе (`?mode=`), а не в
+  // хранилище браузера: ссылку на прохождение можно отправить.
+  //
+  // Адрес вида `?play=<бой>` режима не называет (ссылка из входа несёт один бой),
+  // и тогда режим берётся у этого боя: иначе, выйдя из встречи, человек
+  // оказывался бы на карте обучения.
+  let mode = $derived.by<'training' | 'campaign'>(() => {
+    const named = page.url.searchParams.get('mode');
+    if (named === 'campaign' || named === 'training') return named;
+    const id = page.url.searchParams.get('play');
+    const found = id ? challenges.find((c) => c.id === id) : null;
+    return found?.playerSide === 'deck' ? 'campaign' : 'training';
+  });
+  let shown = $derived(challenges.filter((c) => (c.playerSide === 'deck') === (mode === 'campaign')));
   let cards = $state<BattleCard[]>([]);
   let frames = $state<BattleFrame[]>([]);
   /** Свод движений. Пустой — комната играет умолчания дома. */
@@ -39,18 +58,31 @@
   let match = $state<BattleMatch | null>(null);
   let busy = $state(false);
   let complaint = $state<string | null>(null);
-  /** Виноват ли стол, а не ход: только тогда у жалобы есть дверь, куда идти. */
+  /** Виноват ли состав карт, а не ход: только тогда у жалобы есть дверь —
+   *  вернуться к расстановке. */
   let deckAtFault = $state(false);
+  /** Фон поля партии: его задал этюд, а партия о нём не знает. */
+  const backdropOf = (m: BattleMatch) =>
+    challenges.find((c) => c.id === m.challengeId)?.setup.background ?? null;
+
   /** Какой этюд играется — чтобы «начать этот заново» знал, какой «этот». */
   let taken = $state<BattleChallenge | null>(null);
   /**
-   * Разложен ли стол гостя. Нужно только ради одного: встреча, на которую
-   * человек идёт с неразложенным столом, ведёт НА СТОЛ, а не в партию и не в
-   * ошибку — он должен увидеть, что он приводит. Дальше «Взяться» ведёт прямо
-   * в партию.
+   * Встреча, для которой открыто окно расстановки. Во встрече гость приводит
+   * свои карты, и ставит он их перед каждым новым боем на поле этой встречи,
+   * а не на отдельной странице: поля у встреч разные.
    */
-  let laid = $state(false);
-  /** onMount finished — `?play=` must not fire while `laid` is still the default. */
+  //
+  // Окно — запись истории без перехода (`pushState`): «назад» в браузере и
+  // жест «назад» на телефоне закрывают его, а не уводят с этюдов целиком.
+  const arranging = $derived(
+    page.state.arrange ? (challenges.find((c) => c.id === page.state.arrange) ?? null) : null,
+  );
+  /** Начать бой заново, а не продолжить открытый: окно открыто из «ещё раз». */
+  const arrangingAgain = $derived(!!page.state.arrangeFresh);
+  /** Отказ начала партии — его показывает окно расстановки. */
+  let arrangeFault = $state<string | null>(null);
+  /** onMount finished — `?play=` must not fire before the challenges are read. */
   let ready = $state(false);
   let openedPlay = false;
   /** `?chamber=1` already dressed a preview — leaving must not dress it again. */
@@ -60,14 +92,147 @@
 
   let signedIn = $derived(authStore.isLoggedIn);
 
-  const titleOf = (c: BattleChallenge) => ($lang === 'ru' ? c.titleRu : c.titleEn);
-  const noteOf = (c: BattleChallenge) => ($lang === 'ru' ? c.noteRu : c.noteEn);
+  // Гость боя: без входа играются бои обучения (расстановка задана заранее).
+  // Имя заводит сервер нажатием «Начать бой», ключ лежит в браузере — встреча со
+  // своей колодой и награда остаются за вошедшими.
+  const GUEST_KEY = 'gotiga_battle_guest';
+  let guestToken = $state<string | null>(null);
+  /** Чем играет эта вкладка: именем или, если его нет, гостевым ключом. */
+  const playToken = $derived(authStore.token ?? guestToken);
+  const canPlay = (c: BattleChallenge) => signedIn || c.playerSide !== 'deck';
+
+  function readGuest(): string | null {
+    try {
+      return localStorage.getItem(GUEST_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Ключ для партии: имя, а если его нет и бой гостю открыт — гостевой.
+   *  Нет ни того ни другого — `null`, и страница ведёт ко входу. */
+  async function tokenFor(c: BattleChallenge): Promise<string | null> {
+    if (authStore.token) return authStore.token;
+    if (c.playerSide === 'deck') return null;
+    if (guestToken) return guestToken;
+    let made: string;
+    try {
+      made = await api.startBattleGuest();
+    } catch {
+      complaint = $t('battleGuestUnavailable');
+      return null;
+    }
+    guestToken = made;
+    try {
+      localStorage.setItem(GUEST_KEY, made);
+    } catch {
+      // Хранилище закрыто — гость живёт до закрытия вкладки.
+    }
+    interact('etude_guest', c.slug);
+    // Метки и порядок карты считаются по этому имени. Не перечиталось — бой всё
+    // равно начинается, список обновится со следующим заходом.
+    const again = await api.getBattleChallenges(made);
+    if (again.length) challenges = again;
+    return made;
+  }
+
+  // Вошёл по-настоящему — гостевой ключ больше не нужен.
+  $effect(() => {
+    if (!authStore.token) return;
+    guestToken = null;
+    try {
+      localStorage.removeItem(GUEST_KEY);
+    } catch {
+      // ничего
+    }
+  });
+
+  /** Сколько разных карт у человека: «Прохождение» играется своей колодой, и
+   *  без этого числа непонятно, что делать на первой встрече. */
+  let owned = $state<number | null>(null);
+  $effect(() => {
+    const token = authStore.token;
+    if (!token) {
+      owned = null;
+      return;
+    }
+    let live = true;
+    api
+      .getBattleMe(token)
+      .then((me) => live && (owned = new Set(me.owned.map((o) => o.cardId)).size))
+      .catch(() => live && (owned = null));
+    return () => (live = false);
+  });
+
+  /** Все бои открытого режима выиграны — прохождению пора сказать, что дальше. */
+  const allWon = $derived(shown.length > 0 && shown.every((c) => c.marks?.won));
+
+  /** Предыдущий бой того же режима, если он ещё не выигран. Совет, а не замок:
+   *  порядок держит карта (`current`), правила сервер не меняет. */
+  function unwonBefore(c: BattleChallenge): BattleChallenge | null {
+    const at = shown.findIndex((x) => x.id === c.id);
+    const prev = at > 0 ? shown[at - 1] : null;
+    return signedIn && prev && !prev.marks?.won ? prev : null;
+  }
+
+
+  /** Уже 760 px вместо карты стоит дорога (`EtudeRoad`): карта там видна на
+   *  треть, а сжатая — печатает подписи в шесть точек. Карту на телефоне не
+   *  монтируют вовсе: её картинку незачем считать. */
+  let narrow = $state(false);
+  $effect(() => {
+    const query = window.matchMedia('(max-width: 760px)');
+    narrow = query.matches;
+    const follow = (e: MediaQueryListEvent) => (narrow = e.matches);
+    query.addEventListener('change', follow);
+    return () => query.removeEventListener('change', follow);
+  });
+
+  const titleOf = (c: BattleChallenge) => localized(c, 'title', $lang);
+  const noteOf = (c: BattleChallenge) => localized(c, 'note', $lang);
   /** Чем правила этого боя отличаются от домашних. Пусто — обычный бой, и
    *  говорить нечего. */
   const apart = (c: BattleChallenge) => [
     ...rulesApart(c.setup.rules),
     ...terrainLines(c.setup.terrain),
+    ...siegeLines(
+      [...c.setup.keeperBoard, ...c.setup.playerBoard].some(
+        (p) => cards.find((card) => card.slug === p.card)?.kind === 'structure',
+      ),
+    ),
   ];
+
+  /** Что стоит против гостя во встрече: сколько карт и каких рас. Читателю
+   *  нужно это решить ДО входа в расстановку — кого приводить. */
+  function foeLine(c: BattleChallenge): string {
+    const bySlug = new Map(cards.map((card) => [card.slug, card]));
+    const races = [
+      ...new Set(
+        [...c.setup.keeperBoard.map((p) => p.card), ...c.setup.keeperHand]
+          .map((slug) => bySlug.get(slug))
+          .filter((card): card is BattleCard => !!card?.raceId)
+          .map((card) => localized(card, 'raceName', $lang)),
+      ),
+    ];
+    return $t('battleFoeLine')
+      .replace('{n}', String(c.setup.keeperBoard.length))
+      .replace('{h}', String(c.setup.keeperHand.length))
+      .replace('{races}', races.length ? races.join(', ') : $t('battleFoeNoRace'));
+  }
+
+  function fieldLine(c: BattleChallenge): string {
+    const f = c.setup.field ?? { width: 3, depth: 3 };
+    return $t('battleFieldLine').replace('{w}', String(f.width)).replace('{d}', String(f.depth));
+  }
+
+  /** Род знака на карте: город — там, где на поле стоят строения. */
+  function kindOf(c: BattleChallenge): EtudeKind {
+    const built = [...c.setup.keeperBoard, ...c.setup.playerBoard].some(
+      (p) => cards.find((card) => card.slug === p.card)?.kind === 'structure',
+    );
+    if (built) return 'city';
+    return c.playerSide === 'deck' ? 'meeting' : 'study';
+  }
 
   function loginFrom(challenge?: BattleChallenge) {
     const dest = challenge ? `/battles/etude?play=${challenge.id}` : '/battles/etude';
@@ -75,26 +240,20 @@
   }
 
   onMount(async () => {
-    const [got, deck, dressing, moving] = await Promise.all([
-      api.getBattleChallenges(authStore.token),
+    guestToken = authStore.token ? null : readGuest();
+    const [got, deck, gear, dressing, moving] = await Promise.all([
+      api.getBattleChallenges(authStore.token ?? guestToken),
       api.getBattleCards(),
+      api.getBattleEtudeCards(),
       api.getBattleFrames(),
       api.getBattleMotions(),
     ]);
     challenges = got;
-    cards = deck;
+    // Полка и снаряжение этюдов — один словарь для сцены: стена, которой нет
+    // на полке, всё равно стоит в городе со своей картинкой.
+    cards = [...deck, ...gear];
     frames = dressing.frames;
     motions = moving.motions;
-    const token = authStore.token;
-    if (token) {
-      // Стол читается отдельно и необязательно: полка этюдов не должна пропасть
-      // оттого, что стол не ответил.
-      try {
-        laid = (await api.getBattleDeck(token)).laid;
-      } catch {
-        laid = false;
-      }
-    }
     ready = true;
   });
 
@@ -107,7 +266,7 @@
 
   $effect(() => {
     const id = page.url.searchParams.get('play');
-    if (!ready || openedPlay || !id || !signedIn || busy || match) return;
+    if (!ready || openedPlay || !id || !signedIn || busy || match || arranging) return;
     const found = challenges.find((c) => c.id === id);
     if (!found) return;
     openedPlay = true;
@@ -269,12 +428,12 @@
     };
   }
 
-  /** Встреча, на которую идут с неразложенным столом. */
-  const needsTable = (c: BattleChallenge) => c.playerSide === 'deck' && !laid;
+  /** Встреча, перед которой карты расставляют: открытой партии на ней нет. */
+  const needsLineup = (c: BattleChallenge) => c.playerSide === 'deck' && !c.openMatchId;
 
   function playWord(challenge: BattleChallenge) {
     if (challenge.openMatchId) return $t('battleStudyContinue');
-    if (needsTable(challenge)) return $t('battleLayYourTable');
+    if (needsLineup(challenge)) return $t('battleLineupOpen');
     return $t('battleStudyPlay');
   }
 
@@ -290,11 +449,21 @@
     return $t('battleActionLost');
   }
 
+  /** Гостевой ключ мог остыть (имя убрано через месяц): тогда он забывается и
+   *  заводится новый, один раз. */
+  function forgetGuest() {
+    guestToken = null;
+    try {
+      localStorage.removeItem(GUEST_KEY);
+    } catch {
+      // ничего
+    }
+  }
+
   async function takeUp(challenge: BattleChallenge) {
-    const token = authStore.token;
-    if (!token) return;
-    if (needsTable(challenge)) {
-      void goto('/battles/table');
+    if (needsLineup(challenge)) {
+      if (!authStore.token) return;
+      arrange(challenge, false);
       return;
     }
     busy = true;
@@ -302,7 +471,19 @@
     deckAtFault = false;
     taken = challenge;
     try {
-      match = await api.beginBattleMatch(token, challenge.id);
+      let token = await tokenFor(challenge);
+      if (!token) return;
+      try {
+        match = await api.beginBattleMatch(token, challenge.id);
+      } catch (e) {
+        // Не вошедший и не принятый: ключ гостя остыл.
+        if (authStore.token || !guestToken || !(e instanceof ApiError && e.status === 401)) throw e;
+        forgetGuest();
+        token = await tokenFor(challenge);
+        if (!token) throw e;
+        match = await api.beginBattleMatch(token, challenge.id);
+      }
+      noteStart(challenge, !!challenge.openMatchId);
     } catch (e) {
       complaint = takeUpComplaint(e);
     } finally {
@@ -310,16 +491,65 @@
     }
   }
 
-  /** Тот же этюд с начала. Открытая партия сбрасывается, не считается проигрышем. */
-  async function again() {
+  /** Открыть окно расстановки перед встречей. */
+  function arrange(challenge: BattleChallenge, fresh: boolean) {
+    complaint = null;
+    deckAtFault = false;
+    arrangeFault = null;
+    leaving = false;
+    match = null;
+    taken = challenge;
+    pushState('', { arrange: challenge.id, arrangeFresh: fresh });
+  }
+
+  /** Расстановка сохранена — начать бой: новый, продолженный или заново. */
+  async function startArranged() {
     const token = authStore.token;
+    const challenge = arranging;
+    if (!token || !challenge) return;
+    busy = true;
+    arrangeFault = null;
+    try {
+      const next = arrangingAgain
+        ? await api.restartBattleMatch(token, challenge.id)
+        : await api.beginBattleMatch(token, challenge.id);
+      taken = challenge;
+      match = next;
+      noteStart(challenge, !arrangingAgain && !!challenge.openMatchId);
+      // Бой начался: запись окна заменяется, и «назад» из боя не открывает
+      // расстановку уже начатой партии.
+      replaceState('', {});
+      challenges = await api.getBattleChallenges(token);
+    } catch (e) {
+      arrangeFault = takeUpComplaint(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function closeArranging() {
+    arrangeFault = null;
+    taken = null;
+    history.back();
+  }
+
+  /** Тот же этюд с начала. Открытая партия сбрасывается, не считается проигрышем.
+   *  Во встрече перед новым боем снова открывается расстановка — с прежней
+   *  расстановкой этой встречи. */
+  async function again() {
+    const token = playToken;
     if (!token || !taken) return;
+    if (taken.playerSide === 'deck') {
+      arrange(taken, true);
+      return;
+    }
     busy = true;
     complaint = null;
     deckAtFault = false;
     leaving = false;
     try {
       match = await api.restartBattleMatch(token, taken.id);
+      noteStart(taken, false);
       challenges = await api.getBattleChallenges(token);
     } catch (e) {
       complaint = takeUpComplaint(e);
@@ -390,7 +620,7 @@
   }
 
   async function play(action: BattleAction) {
-    const token = authStore.token;
+    const token = playToken;
     if (!match) return;
     if (match.id === 'chamber-preview') {
       previewAct(action);
@@ -410,7 +640,10 @@
       // кнопки «обновить» здесь нет: она уже обновлена.
       if (next.seq === sent && !next.outcome) complaint = $t('battleMovedOn');
       match = next;
-      if (next.outcome) challenges = await api.getBattleChallenges(token);
+      if (next.outcome) {
+        noteFinish(next);
+        challenges = await api.getBattleChallenges(token);
+      }
     } catch {
       // Позиция не меняется, выбор не снимается: повторить можно тем же
       // касанием — `seq` делает повтор безвредным.
@@ -430,13 +663,51 @@
    */
   async function foresee(action: BattleAction): Promise<Foresight | null> {
     if (match?.id === 'chamber-preview') return null;
-    const token = authStore.token;
+    const token = playToken;
     if (!token || !match) return null;
     try {
       return await api.foreseeBattleMatch(token, match.id, match.seq, action);
     } catch {
       return null;
     }
+  }
+
+  // ── Замер: где люди останавливаются ──────────────────────────────────────
+  // Имя события и его слаг — слова, а не текст пользователя. `once = false`:
+  // повторный бой того же этюда — новое событие, иначе «ещё раз» не считалось
+  // бы вовсе. Что человек выбрал в расстановке, в замер не уходит.
+  const modeOf = (c: BattleChallenge) => (c.playerSide === 'deck' ? 'campaign' : 'training');
+
+  function noteStart(c: BattleChallenge, resumed: boolean) {
+    interact(resumed ? 'etude_resume' : 'etude_start', `${modeOf(c)}:${c.slug}`, null, false);
+  }
+
+  function noteFinish(m: BattleMatch) {
+    const c = taken ?? challenges.find((x) => x.id === m.challengeId);
+    if (!c || !m.outcome) return;
+    interact('etude_finish', `${modeOf(c)}:${c.slug}:${m.outcome}`, m.marks?.acts ?? null, false);
+  }
+
+  /** `keep` — оставил открытую партию на потом, `yield` — отдал поле. */
+  function noteLeave(how: 'keep' | 'yield', open: BattleMatch | null = match) {
+    if (!open || open.outcome || !taken) return;
+    interact('etude_leave', `${modeOf(taken)}:${taken.slug}:${how}`, open.state.round, false);
+  }
+
+  /** Следующий бой в том же режиме, в порядке карты. Последний — без следующего. */
+  const nextChallenge = $derived.by(() => {
+    if (!taken) return null;
+    const deck = taken.playerSide === 'deck';
+    const same = challenges.filter((c) => (c.playerSide === 'deck') === deck);
+    const at = same.findIndex((c) => c.id === taken?.id);
+    return at >= 0 ? (same[at + 1] ?? null) : null;
+  });
+
+  function goNext() {
+    const next = nextChallenge;
+    if (!next) return;
+    putBack();
+    void takeUp(next);
   }
 
   function askLeave() {
@@ -449,18 +720,21 @@
 
   function keepMatch() {
     leaving = false;
+    noteLeave('keep');
     putBack();
   }
 
   async function giveField() {
-    const token = authStore.token;
+    const token = playToken;
     if (!token || !match) return;
     busy = true;
     leaving = false;
     complaint = null;
     deckAtFault = false;
     try {
+      const left = match;
       match = await api.yieldBattleMatch(token, match.id);
+      noteLeave('yield', left);
       challenges = await api.getBattleChallenges(token);
     } catch {
       complaint = $t('battleActionLost');
@@ -494,15 +768,40 @@
 
 <div class="root" class:root--match={!!match}>
   <div class="grain" aria-hidden="true"></div>
-  <div class="page" class:page--match={!!match}>
-    {#if !match}
-      <BattleDoor />
+  <div class="page" class:page--match={!!match} class:page--map={!match && !arranging}>
+    {#if !match && !arranging}
+      <!-- Режимы — второй уровень той же навигации, поэтому стоят в строке
+           двери, а не отдельной полосой: всё, что над картой, отнимает у неё
+           высоту первого экрана. -->
+      <BattleDoor>
+        {#if ready && challenges.length}
+          <nav class="modes" aria-label={$t('battleModesLabel')}>
+            <a
+              href="?mode=training"
+              class:on={mode === 'training'}
+              aria-current={mode === 'training' ? 'page' : undefined}
+              data-sveltekit-noscroll
+              data-sveltekit-replacestate>{$t('battleModeTraining')}</a
+            >
+            <a
+              href="?mode=campaign"
+              class:on={mode === 'campaign'}
+              aria-current={mode === 'campaign' ? 'page' : undefined}
+              data-sveltekit-noscroll
+              data-sveltekit-replacestate>{$t('battleModeCampaign')}</a
+            >
+          </nav>
+        {/if}
+        {#if !signedIn}
+          <a class="sign" href={loginFrom()}
+            >{mode === 'training' ? $t('battleStudySignInKeep') : $t('battleStudySignIn')}</a
+          >
+        {/if}
+      </BattleDoor>
 
-      <header class="masthead">
-        <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('battlesPageKicker')}</p>
-        <h1 class="page-title">{$t('battleStudies')}</h1>
-        <p class="page-rule">{$t('battleStudiesRule')}</p>
-      </header>
+      <!-- Заглавие напечатано на самой карте, в картуше; здесь оно для чтения
+           экрана и для заголовка вкладки. -->
+      <h1 class="quiet">{$t('battleStudies')}</h1>
     {/if}
 
     {#if complaint}
@@ -510,15 +809,28 @@
         {complaint}
         <!-- Жалоба на стол без двери к столу — это тупик: гость узнаёт, что
              колода не годится, ровно там, где её нельзя поправить. -->
-        {#if deckAtFault}
-          <a class="fault-door" href="/battles/table">{$t('battlesTableTitle')}</a>
+        {#if deckAtFault && taken?.playerSide === 'deck'}
+          <button type="button" class="fault-door" onclick={() => taken && arrange(taken, true)}
+            >{$t('battleLineupRearrange')}</button
+          >
         {/if}
       </p>
     {/if}
 
-    {#if match}
+    {#if arranging}
+      <BattleLineup
+        challenge={arranging}
+        {cards}
+        {frames}
+        starting={busy}
+        fault={arrangeFault}
+        onstart={startArranged}
+        onback={closeArranging}
+      />
+    {:else if match}
       <BattleScene
         {match}
+        backdrop={backdropOf(match)}
         {cards}
         {frames}
         {motions}
@@ -529,23 +841,23 @@
         onleave={putBack}
         onexit={askLeave}
         onreplay={taken ? again : undefined}
+        onnext={nextChallenge ? goNext : undefined}
+        guestLoginHref={!signedIn ? loginFrom() : undefined}
       />
 
     {:else}
-      {#if !signedIn}
-        <p class="sign">
-          <a href={loginFrom()}>{$t('battleStudySignIn')}</a>
-        </p>
-      {/if}
-
-      {#if !challenges.length}
+      {#if ready && !challenges.length}
         <p class="empty">{$t('battleStudiesEmpty')}</p>
-      {:else}
-        <ul class="list">
-          {#each challenges as challenge (challenge.id)}
-            <li class="row">
+      {/if}
+      {#if ready && challenges.length && !shown.length}
+        <p class="empty">{mode === 'campaign' ? $t('battleCampaignEmpty') : $t('battleStudiesEmpty')}</p>
+      {/if}
+      {#if ready && shown.length}
+        {#snippet sheet(challenge: BattleChallenge, inRow = false)}
+            <div class="row">
               <div class="copy">
-                <span class="name">{titleOf(challenge)}</span>
+                <!-- В строке дороги название уже стоит над листом. -->
+                {#if !inRow}<span class="name">{titleOf(challenge)}</span>{/if}
                 {#if noteOf(challenge)}
                   <span class="note">{noteOf(challenge)}</span>
                 {/if}
@@ -554,6 +866,14 @@
                 <span class="kind">
                   {challenge.playerSide === 'deck' ? $t('battleMeetingNote') : $t('battleStudyNote')}
                 </span>
+                {#if challenge.playerSide === 'deck'}
+                  <span class="foe">{foeLine(challenge)} {fieldLine(challenge)}</span>
+                  {#if unwonBefore(challenge)}
+                    <span class="foe"
+                      >{$t('battleAdvisePrev').replace('{title}', titleOf(unwonBefore(challenge)!))}</span
+                    >
+                  {/if}
+                {/if}
                 <!-- Чем этот бой отличается от соседнего. Названо только
                      отличие: свод, в котором перечислены все десять правил,
                      не сообщает ничего — читатель обязан помнить наизусть,
@@ -598,7 +918,9 @@
                   </span>
                 {/if}
               </div>
-              {#if challenge.rewardDust > 0 || challenge.rewardFinishDust > 0}
+              {#if !signedIn && challenge.playerSide !== 'deck'}
+                <span class="reward">{$t('battleGuestNoReward')}</span>
+              {:else if challenge.rewardDust > 0 || challenge.rewardFinishDust > 0}
                 <span class="reward">
                   {#if challenge.alreadyPaid}
                     {$t('battleStudyPaid')}
@@ -618,7 +940,7 @@
                   {/if}
                 </span>
               {/if}
-              {#if signedIn}
+              {#if canPlay(challenge)}
                 <button
                   type="button"
                   class="play"
@@ -626,11 +948,40 @@
                   onclick={() => takeUp(challenge)}
                 >{playWord(challenge)}</button>
               {:else}
-                <a class="play play--door" href={loginFrom(challenge)}>{$t('battleStudySignInStart')}</a>
+                <a
+                  class="play play--door"
+                  href={loginFrom(challenge)}
+                  onclick={() => interact('etude_login_wall', `${modeOf(challenge)}:${challenge.slug}`)}
+                  >{$t('battleStudySignInStart')}</a
+                >
               {/if}
-            </li>
-          {/each}
-        </ul>
+            </div>
+        {/snippet}
+        {#if narrow}
+          <EtudeRoad challenges={shown} {kindOf} {titleOf} {sheet} />
+        {:else}
+          <EtudeMap challenges={shown} {kindOf} {titleOf} {sheet} />
+        {/if}
+        <!-- Под картой, а не над ней: прочесть это можно и после того, как
+             карту увидели. Общее правило (`battleStudiesRule`) повторяло
+             подсказку обоих режимов — осталась подсказка открытого. -->
+        <p class="page-rule">
+          {mode === 'campaign' ? $t('battleModeCampaignHint') : $t('battleModeTrainingHint')}
+        </p>
+        {#if mode === 'campaign' && owned !== null}
+          <p class="page-rule">
+            {owned === 0
+              ? $t('battleCampaignNoCards')
+              : $t('battleCampaignOwned').replace('{n}', String(owned))}
+            <a class="shelf-link" href="/battles">{$t('battleCampaignShelf')}</a>
+          </p>
+        {/if}
+        {#if mode === 'campaign' && allWon}
+          <p class="page-rule">
+            {$t('battleCampaignDone')}
+            <a class="shelf-link" href="/battles">{$t('battleCampaignShelf')}</a>
+          </p>
+        {/if}
       {/if}
     {/if}
   </div>
@@ -694,7 +1045,7 @@
 
   .page {
     position: relative;
-    max-width: 1180px;
+    max-width: 1560px;
     margin: 0 auto;
     padding: 3rem 1.5rem 6rem;
   }
@@ -716,38 +1067,26 @@
     min-height: 0;
   }
 
-  .eyebrow {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-    margin: 0 0 1rem;
-    font-size: 0.68rem;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    color: #6f3b24;
-  }
-
-  .eyebrow-rule {
-    width: 3.5rem;
-    height: 1px;
-    background: #d8c6b1;
-  }
-
-  .page-title {
-    margin: 0;
-    font-family: Georgia, 'Fraunces', serif;
-    font-size: clamp(2rem, 5vw, 3.2rem);
-    font-weight: 400;
-    line-height: 1.1;
-  }
-
   .page-rule {
     max-width: 56ch;
-    margin: 1rem 0 0;
+    margin: 0.5rem auto 0;
+    text-align: center;
     font-family: Georgia, 'Fraunces', serif;
     font-size: 1rem;
     line-height: 1.6;
     opacity: 0.74;
+  }
+
+  .shelf-link {
+    color: #6f3b24;
+    border-bottom: 1px solid rgba(111, 59, 36, 0.45);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .shelf-link:hover {
+    color: #c65f3c;
+    border-bottom-color: #c65f3c;
   }
 
   .fault {
@@ -768,7 +1107,6 @@
     border-bottom-color: #c65f3c;
   }
 
-  .sign,
   .empty {
     margin: 1.5rem 0 0;
     font-family: Georgia, 'Fraunces', serif;
@@ -777,44 +1115,122 @@
     color: #5f4636;
   }
 
-  .sign a {
-    color: inherit;
+  /* Первый экран отдан карте: страница не держит над ней ни отступа, ни
+     полос. Сколько остаётся над картой, знает `--map-above`; по нему карта
+     вписывает свою высоту в окно (EtudeMap). */
+  .page--map {
+    --map-above: 9.5rem;
+    padding-top: 0.75rem;
+  }
+
+  .page--map :global(.door) {
+    margin-bottom: 0.5rem;
+  }
+
+  /* У вошедшего в строке ещё кошелёк и три кнопки: на планшете ей
+     тесно, и она переносится, а не уезжает за край. */
+  .page--map :global(.door .row) {
+    flex-wrap: wrap;
+    row-gap: 0.4rem;
+  }
+
+  .page--map :global(.door-mark) {
+    margin-top: -0.5rem;
+  }
+
+  /* Вход для гостя — в правом конце строки, там, где у вошедшего кошелёк. */
+  .sign {
+    margin-left: auto;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.9rem;
+    font-style: italic;
+    color: #5f4636;
     text-decoration: underline;
     text-underline-offset: 0.18em;
   }
 
-  .sign a:hover {
+  .sign:hover {
     color: #c65f3c;
   }
 
-  .list {
-    margin: 2rem 0 0;
-    padding: 0;
-    list-style: none;
-    border-top: 1px solid #d8c6b1;
+  /* Режимы — переключатель из двух половин в строке двери, после комнат:
+     это второй уровень той же навигации. Обычные ссылки: у каждого режима
+     свой адрес. */
+  .modes {
+    display: inline-flex;
+    margin-left: 0.4rem;
+    border: 1px solid #d8c6b1;
   }
 
+  .modes a {
+    padding: 0.32rem 0.85rem;
+    color: #6f3b24;
+    font-family: Georgia, 'Fraunces', serif;
+    font-size: 0.74rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-decoration: none;
+  }
+
+  .modes a + a {
+    border-left: 1px solid #d8c6b1;
+  }
+
+  .modes a:hover:not(.on) {
+    color: #c65f3c;
+  }
+
+  .modes a.on {
+    background: #6f3b24;
+    color: #f8f1e7;
+  }
+
+  /* На телефоне строка двери переносится (BattleDoor: комнаты и кошелёк,
+     разрыв, кнопки). Режимы встают отдельной строкой во всю ширину после
+     разрыва: рядом с кошельком им места нет, и кошелёк рвался пополам. */
+  @media (max-width: 40rem) {
+    .modes {
+      order: 2;
+      flex-basis: 100%;
+      margin-left: 0;
+    }
+
+    .modes a {
+      flex: 1;
+      text-align: center;
+    }
+  }
+
+  .quiet {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Листок этюда на карте: строка стала столбцом. */
   .row {
     display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.7rem 1.1rem;
-    padding: 0.9rem 0;
-    border-bottom: 1px solid #d8c6b1;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.8rem;
   }
 
   .copy {
-    flex: 1 1 14rem;
     min-width: 0;
   }
 
   .name {
     font-family: Georgia, 'Fraunces', serif;
-    font-size: 1.15rem;
+    font-size: 1.35rem;
+    line-height: 1.25;
   }
 
   .note,
-  .kind {
+  .kind,
+  .foe {
     display: block;
     margin-top: 0.2rem;
     font-size: 0.78rem;
@@ -885,7 +1301,6 @@
     font-size: 0.72rem;
     font-variant-numeric: tabular-nums;
     color: #8a6a55;
-    white-space: nowrap;
   }
 
   .play {

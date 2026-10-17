@@ -13,7 +13,7 @@
   import { api } from '$lib/api';
   import type { ShowingRoom } from '$lib/types/api';
   import { fade } from 'svelte/transition';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, LANG_META } from '$lib/i18n';
   import { isShowingOpen, roomToWindow, minutesToClock, clockToMinutes } from '$lib/showing-window';
 
   let {
@@ -32,7 +32,7 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
-  let roomLocale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+  let roomLocale = $derived(LANG_META[$lang].locale);
   // Mon..Sun short labels (2024-01-01 was a Monday).
   let weekdayLabels = $derived(
     Array.from({ length: 7 }, (_, i) =>

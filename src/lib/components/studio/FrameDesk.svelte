@@ -2290,6 +2290,16 @@
                   <label class="block">
                     <span
                       class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesFrameName")} · UK</span
+                    >
+                    <input
+                      bind:value={frames[frameIndex].nameUk}
+                      class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                    />
+                  </label>
+                  <label class="block">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
                       >{$t("adminBattlesFrameLayout")}</span
                     >
                     <select

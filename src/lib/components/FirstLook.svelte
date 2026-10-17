@@ -13,7 +13,7 @@
    * piece from the public archive until its hour) is the planned v2 — at which
    * point this same band becomes a genuine temporal preview.
    */
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, LANG_META } from '$lib/i18n';
   import type { FigurineListItem } from '$lib/types/api';
   import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
 
@@ -29,7 +29,7 @@
     source?: string;
   } = $props();
 
-  let locale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+  let locale = $derived(LANG_META[$lang].locale);
   function opensLabel(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '';

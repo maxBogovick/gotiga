@@ -9,7 +9,7 @@
   import { downloadKeyCard } from '$lib/utils/keyCard';
   import AuthFrame from '$lib/components/auth/AuthFrame.svelte';
   import ReminderCard from '$lib/components/auth/ReminderCard.svelte';
-  import TelegramDoor from '$lib/components/auth/TelegramDoor.svelte';
+  import AuthDoors from '$lib/components/auth/AuthDoors.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { interact } from '$lib/analytics';
   import type { UserDto } from '$lib/types/api';
@@ -204,7 +204,8 @@
       <input id="auth-age" name="age-confirm" type="checkbox" bind:checked={ageConfirmed} />
       <span>{$t('formAgeConfirm')}</span>
     </label>
-    <TelegramDoor ondone={(token, user) => { void throughTelegram(token, user); }} />
+    <p class="auth-hint">{$t('authTermsBefore')} <a href="/terms" target="_blank" rel="noopener">{$t('authTermsLink')}</a>.</p>
+    <AuthDoors needsAge ageConfirmed={ageConfirmed} ondone={(token, user) => { void throughTelegram(token, user); }} />
   {/if}
 
   {#if step >= 2 && step <= 5}

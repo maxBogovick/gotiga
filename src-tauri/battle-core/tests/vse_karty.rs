@@ -60,6 +60,10 @@ fn shelf() -> Vec<CardSnapshot> {
             mend: i(c, "mend") as i32,
             channel: channel_of(s(c, "attackChannel")),
             strikes: s(c, "attackChannel") != "none",
+            structure: s(c, "kind") == "structure",
+            shoots: c["shoots"].as_bool().unwrap_or(false),
+            race: None,
+            race_damage: Default::default(),
             abilities: c["abilities"]
                 .as_array()
                 .unwrap()
@@ -125,14 +129,20 @@ fn offers(st: &MatchState, a: &Action) -> bool {
 }
 
 /// Ни одной карты под одной крышей с одной землёй: все земли, на которых можно
-/// СТОЯТЬ. Стена и овраг — отдельный разговор (`walls_and_ravines_*`).
-const STANDABLE: [Option<Ground>; 6] = [
+/// СТОЯТЬ и которые не правят числа тела. Стена и овраг — отдельный разговор
+/// (`walls_and_ravines_*`); гроза, могила и хрусталь дышат на стоящего, как
+/// аура, поэтому проверены в `mestnost.rs`, а не здесь: эталон этого перебора
+/// считает урон на ровной земле.
+const STANDABLE: [Option<Ground>; 9] = [
     None,
     Some(Ground::Hill),
     Some(Ground::Cover),
     Some(Ground::Spring),
     Some(Ground::Mire),
     Some(Ground::Pit),
+    Some(Ground::Embers),
+    Some(Ground::Altar),
+    Some(Ground::Ice),
 ];
 
 fn name_of(g: Option<Ground>) -> String {

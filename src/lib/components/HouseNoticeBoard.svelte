@@ -30,7 +30,7 @@
   import { turnSound } from '$lib/stores/page-turn-sound.svelte';
   import { playTurnSound } from '$lib/audio/page-turn-sounds';
 
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, LANG_META, localized } from '$lib/i18n';
   import { figurineHref } from '$lib/figurineHref';
   import type { FigurineListItem, ProgrammeSettings } from '$lib/types/api';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -125,19 +125,15 @@
   const curatorNote = $derived.by(() => {
     const s = programmeSettings;
     if (!s) return null;
-    return $lang === 'ru'
-      ? (s.curatorNoteRu?.trim() || s.curatorNoteEn?.trim() || null)
-      : (s.curatorNoteEn?.trim() || null);
+    return localized(s, 'curatorNote', $lang) || null;
   });
   const curatorSign = $derived.by(() => {
     const s = programmeSettings;
     if (!s) return null;
-    return $lang === 'ru'
-      ? (s.curatorSignRu?.trim() || s.curatorSignEn?.trim() || null)
-      : (s.curatorSignEn?.trim() || null);
+    return localized(s, 'curatorSign', $lang) || null;
   });
 
-  let locale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+  let locale = $derived(LANG_META[$lang].locale);
 
   onMount(() => {
     houseClock.start();

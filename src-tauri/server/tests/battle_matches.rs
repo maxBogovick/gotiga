@@ -11,7 +11,7 @@
 use gotiga_server::config::Config;
 use gotiga_server::db::Repository;
 use gotiga_server::models::{
-    BattleActRequest, ChallengePlacement, ChallengeSetup, DeckPlacement, GiveBattleCardsRequest,
+    BattleActRequest, ChallengePlacement, ChallengeSetup, DeckCell, DeckPlacement, GiveBattleCardsRequest,
     GrantBattleCoinRequest, RevokeBattleCardsRequest, SaveBattleCardRequest,
     SaveBattleChallengeRequest, SaveBattleDeckRequest,
 };
@@ -46,6 +46,12 @@ fn config() -> Config {
         admin_log_db_path: format!("/tmp/gotiga-battle-logs-{}.sqlite", Uuid::new_v4()),
         analytics_hash_secret: "test-analytics-secret-0123456789".into(),
         auth_pepper: "pepper-for-tests-0123456789".into(),
+        google_client_id: None,
+        google_client_secret: None,
+        apple_client_id: None,
+        apple_team_id: None,
+        apple_key_id: None,
+        apple_private_key: None,
         auth_pepper_old: None,
     }
 }
@@ -133,14 +139,18 @@ fn card(slug: &str, health: i16, power: i16, reach: i16) -> SaveBattleCardReques
         race_id: None,
         type_en: None,
         type_ru: None,
+        type_uk: None,
         title_en: slug.into(),
         title_ru: slug.into(),
+        title_uk: String::new(),
         // Опубликованной карте нужен эффект (`card_readiness` → `noEffect`), и
         // без него весь этот файл падал на создании первой же карты.
         effect_en: Some("A test card.".into()),
         effect_ru: Some("Испытательная карта.".into()),
+        effect_uk: None,
         lore_en: None,
         lore_ru: None,
+        lore_uk: None,
         cost: 1,
         power,
         health,
@@ -162,6 +172,7 @@ fn card(slug: &str, health: i16, power: i16, reach: i16) -> SaveBattleCardReques
         art_focal: None,
         frame_override: None,
         lendable: false,
+        shoots: false,
         edition_size: None,
         figurine_id: None,
     }
@@ -195,8 +206,10 @@ async fn prepare(pool: &PgPool) -> (AppService, Uuid, Uuid) {
                 slug: Some("etude".into()),
                 title_en: "A study".into(),
                 title_ru: "Этюд".into(),
+                title_uk: String::new(),
                 note_en: None,
                 note_ru: None,
+                note_uk: None,
                 setup: ChallengeSetup {
                     player_board: vec![placement("boec", 1, 4)],
                     player_hand: vec!["voron".into()],
@@ -208,6 +221,7 @@ async fn prepare(pool: &PgPool) -> (AppService, Uuid, Uuid) {
                     rules: None,
                     terrain: vec![],
                     field: Default::default(),
+                    background: None,
                 },
                 bot_depth: 1,
                 reward_dust: 25,
@@ -616,8 +630,10 @@ async fn a_challenge_naming_an_unknown_card_is_refused_when_it_is_written(pool: 
                 slug: None,
                 title_en: "Broken".into(),
                 title_ru: "Сломанный".into(),
+                title_uk: String::new(),
                 note_en: None,
                 note_ru: None,
+                note_uk: None,
                 setup: ChallengeSetup {
                     player_board: vec![placement("нет-такой", 1, 4)],
                     player_hand: vec![],
@@ -629,6 +645,7 @@ async fn a_challenge_naming_an_unknown_card_is_refused_when_it_is_written(pool: 
                     rules: None,
                     terrain: vec![],
                     field: Default::default(),
+                    background: None,
                 },
                 bot_depth: 1,
                 reward_dust: 0,
@@ -656,8 +673,10 @@ async fn meeting(service: &AppService, slug: &str) -> Uuid {
                 slug: Some(slug.into()),
                 title_en: "A meeting".into(),
                 title_ru: "Встреча".into(),
+                title_uk: String::new(),
                 note_en: None,
                 note_ru: None,
+                note_uk: None,
                 // Половины гостя здесь НЕТ и быть не должно: её приносит стол.
                 setup: ChallengeSetup {
                     player_board: vec![],
@@ -670,6 +689,7 @@ async fn meeting(service: &AppService, slug: &str) -> Uuid {
                     rules: None,
                     terrain: vec![],
                     field: Default::default(),
+                    background: None,
                 },
                 bot_depth: 1,
                 reward_dust: 0,
@@ -800,6 +820,7 @@ async fn your_own_card_stands_where_you_put_it(pool: PgPool) {
                     y: 5,
                 }],
                 hand: vec![],
+                lent: vec![],
             },
         )
         .await
@@ -849,6 +870,7 @@ async fn a_card_that_is_not_yours_does_not_lie_on_your_table(pool: PgPool) {
                     y: 4,
                 }],
                 hand: vec![],
+                lent: vec![],
             },
         )
         .await;
@@ -887,6 +909,7 @@ async fn the_keepers_half_is_refused_at_the_table(pool: PgPool) {
                     y: 1,
                 }],
                 hand: vec![],
+                lent: vec![],
             },
         )
         .await;
@@ -931,6 +954,7 @@ async fn a_card_taken_off_the_shelf_keeps_its_place_and_is_stood_in_for(pool: Pg
                     y: 4,
                 }],
                 hand: vec![],
+                lent: vec![],
             },
         )
         .await
@@ -1547,6 +1571,7 @@ async fn a_deck_of_hand_only_still_plays(pool: PgPool) {
             &SaveBattleDeckRequest {
                 board: vec![],
                 hand: vec![mine],
+                lent: vec![],
             },
         )
         .await
@@ -1740,4 +1765,623 @@ async fn the_desk_refuses_a_card_without_its_required_words(pool: PgPool) {
         .await
         .expect_err("опубликованной карте нужны оба названия");
     assert!(refused.to_string().contains("card:missing:titleRu"));
+}
+
+// ── Штурм города: снаряжение этюда, строения, стрелки ───────────────────────
+
+/// Город целиком через настоящую базу и настоящий сервис: карты «только для
+/// этюдов» сохраняются без цены и не попадают на полку, этюд на них
+/// собирается, отметки `structure` и `shoots` доезжают из колонок до снимка
+/// партии — и движок играет по ним. Каждое звено проверено тем, что без него
+/// ломается видимое: стену купили бы, город не собрался бы, башня не стреляла
+/// бы через стену, подкрепление вышло бы в ров.
+#[sqlx::test]
+async fn a_city_stands_on_etude_only_cards_and_plays_by_siege_rules(pool: PgPool) {
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let user = seed_user(&pool).await;
+
+    let gear = |slug: &str, health: i16, power: i16, reach: i16| SaveBattleCardRequest {
+        status: "etude".into(),
+        price_dust: None,
+        step: 0,
+        ..card(slug, health, power, reach)
+    };
+    let wall = SaveBattleCardRequest {
+        kind: "structure".into(),
+        attack_channel: "none".into(),
+        armor: 3,
+        ..gear("stena", 10, 0, 1)
+    };
+    let tower = SaveBattleCardRequest { kind: "structure".into(), shoots: true, ..gear("bashnia", 8, 2, 3) };
+    let ram = SaveBattleCardRequest { attack_channel: "pure".into(), step: 1, ..gear("taran", 9, 4, 1) };
+
+    // Без цены «только для этюдов» сохраняется; та же карта на полку — нет.
+    let unpriced_for_sale = SaveBattleCardRequest { status: "published".into(), ..ram.clone() };
+    assert!(service.admin_create_battle_card(unpriced_for_sale).await.is_err());
+    service.admin_create_battle_card(wall).await.expect("стена");
+    service.admin_create_battle_card(tower).await.expect("башня");
+    let ram_id = service.admin_create_battle_card(ram).await.expect("таран").id;
+    // Защитник с дальностью 2 — длинное оружие, без отметки «стреляет».
+    service.admin_create_battle_card(card("zashitnik", 6, 3, 2)).await.expect("защитник");
+
+    // Полка снаряжения не видит; сцене его отдаёт своя ручка.
+    let shelf: Vec<String> = service
+        .list_battle_cards_public()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.slug)
+        .collect();
+    assert!(shelf.contains(&"zashitnik".to_string()));
+    for slug in ["stena", "bashnia", "taran"] {
+        assert!(!shelf.contains(&slug.to_string()), "{slug} не продаётся");
+    }
+    let gear_list = service.list_battle_cards_etude_only().await.unwrap();
+    let bashnia = gear_list.iter().find(|c| c.slug == "bashnia").expect("башня в снаряжении");
+    assert!(bashnia.shoots && bashnia.kind == "structure", "колонки прочитаны");
+
+    // Купить снаряжение нельзя — именно потому, что его нет на полке.
+    let bought = service
+        .buy_battle_card(
+            user,
+            &gotiga_server::models::BuyBattleCardRequest {
+                card_id: Uuid::parse_str(&ram_id).unwrap(),
+                currency: "dust".into(),
+                expected_price: 0,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(bought.to_string().contains("not on the shelf"), "{bought}");
+
+    // Город на поле 3 × 3: стены во всю ширину на ряду 2, башня и защитник за
+    // ними, подкрепление в руке. Таран у стены.
+    let challenge = service
+        .admin_save_battle_challenge(
+            None,
+            SaveBattleChallengeRequest {
+                slug: Some("gorod".into()),
+                title_en: "A city".into(),
+                title_ru: "Город".into(),
+                title_uk: String::new(),
+                note_en: None,
+                note_ru: None,
+                note_uk: None,
+                setup: ChallengeSetup {
+                    player_board: vec![placement("taran", 1, 3)],
+                    player_hand: vec![],
+                    keeper_board: vec![
+                        placement("stena", 0, 2),
+                        placement("stena", 1, 2),
+                        placement("stena", 2, 2),
+                        placement("bashnia", 0, 0),
+                        placement("zashitnik", 1, 1),
+                    ],
+                    keeper_hand: vec!["zashitnik".into()],
+                    rules: Some(battle_core::Rules {
+                        idle_toll: 0,
+                        keeper_holds_on_time: true,
+                        ..battle_core::Rules::default()
+                    }),
+                    terrain: vec![],
+                    field: Default::default(),
+                    background: None,
+                },
+                bot_depth: 1,
+                reward_dust: 0,
+                reward_finish_dust: 0,
+                player_side: "scripted".into(),
+                status: "published".into(),
+            },
+        )
+        .await
+        .expect("город собирается из снаряжения");
+    let challenge_id = Uuid::parse_str(&challenge.id).unwrap();
+
+    let begun = service.begin_battle_match(user, challenge_id).await.expect("бой");
+    let id_of = |state: &battle_core::MatchState, slug: &str| {
+        state.units.iter().find(|u| u.card.name == slug).unwrap().id
+    };
+    let st = &begun.state;
+    assert!(st.unit(id_of(st, "stena")).unwrap().card.structure, "строение доехало до снимка");
+    assert!(st.unit(id_of(st, "bashnia")).unwrap().card.shoots, "стрелок доехал до снимка");
+    let (ram_unit, defender, tower) = (id_of(st, "taran"), id_of(st, "zashitnik"), id_of(st, "bashnia"));
+
+    // Ход города: башня стреляет через стену, защитник с копьём — нет,
+    // подкрепление встаёт внутри стен, а не в ряду перед ними.
+    let after = service
+        .act_in_battle_match(
+            user,
+            Uuid::parse_str(&begun.id).unwrap(),
+            BattleActRequest { seq: begun.seq, action: battle_core::Action::EndTurn },
+        )
+        .await
+        .expect("конец хода");
+    let hit_by = |by: u32| {
+        after.events.iter().any(|e| {
+            matches!(e, battle_core::Event::Damaged { target, by: Some(b), .. }
+                if *target == ram_unit && *b == by)
+        })
+    };
+    assert!(hit_by(tower), "башня стреляет через стену: {:?}", after.events);
+    assert!(!hit_by(defender), "копьё через стену не бьёт");
+    for e in &after.events {
+        if let battle_core::Event::Played { side: battle_core::Side::Keeper, cell, .. } = e {
+            assert!(cell.y < 2, "подкрепление вышло перед стеной: {cell:?}");
+        }
+    }
+    assert!(
+        after.events.iter().any(|e| matches!(e, battle_core::Event::Played { side: battle_core::Side::Keeper, .. })),
+        "подкрепление выставлено вообще — иначе проверка выше пуста"
+    );
+}
+
+/// Снаряжение штурма приезжает на любой сервер само: миграция заводит стену,
+/// башню и таран, а их картинки — ровно те файлы, что сервер кладёт на склад
+/// при запуске. Разошлись имена — на рабочем сервере карты стояли бы без
+/// картинок, и узнали бы об этом по пустому пергаменту в бою.
+#[sqlx::test]
+async fn siege_gear_arrives_with_the_migrations_and_its_pictures(pool: PgPool) {
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let gear = service.admin_list_battle_cards().await.unwrap();
+    let laid: Vec<&str> = gotiga_server::siege::GEAR_ART.iter().map(|(name, _)| *name).collect();
+    for (slug, kind, shoots) in [
+        ("fortress-wall", "structure", false),
+        ("watchtower", "structure", true),
+        ("siege-ram", "unit", false),
+    ] {
+        let card = gear.iter().find(|c| c.slug == slug).unwrap_or_else(|| panic!("{slug} заведена"));
+        assert_eq!(card.status, "etude", "{slug} не продаётся");
+        assert_eq!((card.kind.as_str(), card.shoots), (kind, shoots), "{slug}");
+        let art = card.art_url_override.as_deref().expect("своя картинка");
+        let file = art.strip_prefix("/static/frames/").expect("картинка на складе рамок");
+        assert!(laid.contains(&file), "{slug}: {file} сервер не кладёт; кладёт {laid:?}");
+    }
+    // И город на них собирается: снаряжение годится в расстановку этюда.
+    assert!(service.list_battle_cards_etude_only().await.unwrap().len() >= 3);
+}
+
+// ── Расстановка перед встречей ───────────────────────────────────────────────
+//
+// Карты расставляют на поле самой встречи: с его величиной и местностью. Ровно
+// то, что ломал прежний стол 3 × 3: подогнанная к полю 4 × 5 карта вставала
+// не там, где её видели, а стена под ней молча пропадала.
+
+/// Встреча на поле 4 × 5 со стеной на половине гостя.
+async fn wide_meeting(service: &AppService, slug: &str) -> Uuid {
+    let saved = service
+        .admin_save_battle_challenge(
+            None,
+            SaveBattleChallengeRequest {
+                slug: Some(slug.into()),
+                title_en: "A wide meeting".into(),
+                title_ru: "Широкая встреча".into(),
+                title_uk: String::new(),
+                note_en: None,
+                note_ru: None,
+                note_uk: None,
+                setup: ChallengeSetup {
+                    player_board: vec![],
+                    player_hand: vec![],
+                    keeper_board: vec![placement("voron", 1, 1)],
+                    keeper_hand: vec![],
+                    rules: None,
+                    terrain: vec![battle_core::Tile {
+                        cell: battle_core::Cell::new(3, 6).unwrap(),
+                        ground: battle_core::Ground::Wall,
+                    }],
+                    field: battle_core::Field { width: 4, depth: 5 },
+                    background: None,
+                },
+                bot_depth: 1,
+                reward_dust: 0,
+                reward_finish_dust: 0,
+                player_side: "deck".into(),
+                status: "published".into(),
+            },
+        )
+        .await
+        .expect("широкая встреча");
+    Uuid::parse_str(&saved.id).unwrap()
+}
+
+#[sqlx::test]
+async fn a_lineup_stands_where_it_was_laid_on_a_wide_field(pool: PgPool) {
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let user = seed_user(&pool).await;
+    let boec = service
+        .admin_create_battle_card(card("boec", 6, 3, 1))
+        .await
+        .expect("боец");
+    service
+        .admin_create_battle_card(card("voron", 4, 2, 1))
+        .await
+        .expect("ворон");
+    let mine = Uuid::parse_str(&boec.id).unwrap();
+    sqlx::query("INSERT INTO card_copies (owner_id, card_id, origin) VALUES ($1, $2, 'gift')")
+        .bind(user)
+        .bind(mine)
+        .execute(&pool)
+        .await
+        .expect("своя карта");
+    let challenge = wide_meeting(&service, "shirokaya").await;
+
+    let fresh = service
+        .read_battle_lineup(user, challenge)
+        .await
+        .expect("расстановка");
+    assert!(!fresh.laid);
+    assert_eq!(fresh.cells.len(), 19, "двадцать клеток половины без стены");
+    assert!(!fresh.cells.iter().any(|c| c.x == 3 && c.y == 6));
+
+    // Четвёртая колонка и задний ряд — клетки, которых у стола 3 × 3 не было.
+    let laid = service
+        .save_battle_lineup(
+            user,
+            challenge,
+            &SaveBattleDeckRequest {
+                board: vec![DeckPlacement { card: mine, x: 3, y: 9 }],
+                hand: vec![],
+                lent: vec![],
+            },
+        )
+        .await
+        .expect("расстановка законна");
+    assert!(laid.laid);
+
+    let on_wall = service
+        .save_battle_lineup(
+            user,
+            challenge,
+            &SaveBattleDeckRequest {
+                board: vec![DeckPlacement { card: mine, x: 3, y: 6 }],
+                hand: vec![],
+                lent: vec![],
+            },
+        )
+        .await;
+    assert!(
+        matches!(&on_wall, Err(e) if e.to_string().contains("cellBlocked")),
+        "на стену не ставят: {on_wall:?}",
+    );
+    let other_half = service
+        .save_battle_lineup(
+            user,
+            challenge,
+            &SaveBattleDeckRequest {
+                board: vec![DeckPlacement { card: mine, x: 0, y: 4 }],
+                hand: vec![],
+                lent: vec![],
+            },
+        )
+        .await;
+    assert!(matches!(&other_half, Err(e) if e.to_string().contains("notYourHalf")));
+
+    let mat = service
+        .begin_battle_match(user, challenge)
+        .await
+        .expect("бой");
+    let mine_stands = mat.state.board.occupied().any(|(cell, id)| {
+        cell.x == 3 && cell.y == 9 && mat.state.units[id as usize].owner == battle_core::Side::Player
+    });
+    assert!(mine_stands, "карта стоит там, где её поставили");
+    assert!(
+        mat.state
+            .terrain
+            .iter()
+            .any(|t| t.cell == battle_core::Cell::new(3, 6).unwrap()),
+        "стена этюда на месте",
+    );
+}
+
+#[sqlx::test]
+async fn an_old_table_is_carried_onto_the_meeting_field(pool: PgPool) {
+    // Кто собирал стол до расстановки перед боем, приходит на встречу с ним
+    // же: карта встаёт туда, куда её прежде ставил сервер.
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let user = seed_user(&pool).await;
+    let boec = service
+        .admin_create_battle_card(card("boec", 6, 3, 1))
+        .await
+        .expect("боец");
+    service
+        .admin_create_battle_card(card("voron", 4, 2, 1))
+        .await
+        .expect("ворон");
+    let mine = Uuid::parse_str(&boec.id).unwrap();
+    sqlx::query("INSERT INTO card_copies (owner_id, card_id, origin) VALUES ($1, $2, 'gift')")
+        .bind(user)
+        .bind(mine)
+        .execute(&pool)
+        .await
+        .expect("своя карта");
+    service
+        .save_battle_deck(
+            user,
+            &SaveBattleDeckRequest {
+                board: vec![DeckPlacement { card: mine, x: 2, y: 5 }],
+                hand: vec![],
+                lent: vec![],
+            },
+        )
+        .await
+        .expect("стол");
+    let challenge = wide_meeting(&service, "shirokaya").await;
+    let lineup = service
+        .read_battle_lineup(user, challenge)
+        .await
+        .expect("расстановка");
+    assert!(!lineup.laid, "для этой встречи ещё не сохраняли");
+    let slot = lineup
+        .board
+        .iter()
+        .find(|s| s.card_id.as_deref() == Some(mine.to_string().as_str()))
+        .expect("карта со стола на поле");
+    assert_eq!((slot.x, slot.y), (Some(2), Some(7)), "задний ряд стола — третий ряд половины");
+}
+
+#[sqlx::test]
+async fn a_newcomer_chooses_where_the_house_cards_stand(pool: PgPool) {
+    // У новичка все карты временные. Сами карты выбирает дом, но где им стоять
+    // — гость: иначе в окне расстановки ему нечего было бы делать.
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let user = seed_user(&pool).await;
+    let mut lent = card("posoh", 5, 2, 1);
+    lent.lendable = true;
+    service.admin_create_battle_card(lent).await.expect("заёмная");
+    service
+        .admin_create_battle_card(card("voron", 4, 2, 1))
+        .await
+        .expect("ворон");
+    let challenge = wide_meeting(&service, "shirokaya").await;
+
+    let chosen = vec![
+        DeckCell { x: 0, y: 9 },
+        DeckCell { x: 3, y: 9 },
+        DeckCell { x: 2, y: 5 },
+    ];
+    let laid = service
+        .save_battle_lineup(
+            user,
+            challenge,
+            &SaveBattleDeckRequest { board: vec![], hand: vec![], lent: chosen.clone() },
+        )
+        .await
+        .expect("клетки заёма законны");
+    let cells: Vec<(u8, u8)> = laid
+        .board
+        .iter()
+        .filter(|s| s.lent_card_id.is_some())
+        .filter_map(|s| s.x.zip(s.y))
+        .collect();
+    assert_eq!(cells, vec![(0, 9), (3, 9), (2, 5)], "временные карты стоят там, где их поставили");
+
+    let on_wall = service
+        .save_battle_lineup(
+            user,
+            challenge,
+            &SaveBattleDeckRequest {
+                board: vec![],
+                hand: vec![],
+                lent: vec![DeckCell { x: 3, y: 6 }],
+            },
+        )
+        .await;
+    assert!(matches!(&on_wall, Err(e) if e.to_string().contains("cellBlocked")));
+    let twice = service
+        .save_battle_lineup(
+            user,
+            challenge,
+            &SaveBattleDeckRequest {
+                board: vec![],
+                hand: vec![],
+                lent: vec![DeckCell { x: 0, y: 9 }, DeckCell { x: 0, y: 9 }],
+            },
+        )
+        .await;
+    assert!(matches!(&twice, Err(e) if e.to_string().contains("cellTaken")));
+
+    let mat = service.begin_battle_match(user, challenge).await.expect("бой");
+    for (x, y) in [(0, 9), (3, 9), (2, 5)] {
+        assert!(
+            mat.state
+                .board
+                .occupied()
+                .any(|(c, _)| c == battle_core::Cell::new(x, y).unwrap()),
+            "в бою временная карта на ({x},{y})",
+        );
+    }
+}
+
+#[sqlx::test]
+async fn the_lineup_names_limits_and_where_the_opponent_strikes(pool: PgPool) {
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let user = seed_user(&pool).await;
+    service
+        .admin_create_battle_card(card("voron", 4, 2, 1))
+        .await
+        .expect("ворон");
+    let challenge = wide_meeting(&service, "shirokaya").await;
+    let lineup = service
+        .read_battle_lineup(user, challenge)
+        .await
+        .expect("расстановка");
+    assert_eq!(
+        (lineup.limits.board, lineup.limits.hand, lineup.limits.rank_five, lineup.limits.rank_four),
+        (3, 3, 1, 2),
+    );
+    // Ворон стоит в (1,1) на поле глубиной 5: до половины гостя (ряды 5–9) за
+    // один шаг и удар в упор он не достаёт, и это тоже ответ.
+    assert!(lineup.threats.is_empty(), "с (1,1) на поле глубиной 5 ворон до гостя не достаёт");
+
+    // На поле 3 × 3 тот же ворон шагает к шву и бьёт через него: ряд 3.
+    let near = meeting(&service, "vstrecha").await;
+    let lineup = service.read_battle_lineup(user, near).await.expect("расстановка");
+    assert_eq!(lineup.threats.len(), 1);
+    let zone = &lineup.threats[0];
+    assert_eq!((zone.cell.x, zone.cell.y), (1, 1));
+    assert!(!zone.cells.is_empty());
+    assert!(zone.cells.iter().all(|c| c.y == 3), "достаёт только передний ряд: {:?}", zone.cells);
+}
+
+#[sqlx::test]
+async fn saving_the_lineup_in_a_loop_is_stopped(pool: PgPool) {
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let user = seed_user(&pool).await;
+    service
+        .admin_create_battle_card(card("voron", 4, 2, 1))
+        .await
+        .expect("ворон");
+    let challenge = wide_meeting(&service, "shirokaya").await;
+    let empty = SaveBattleDeckRequest { board: vec![], hand: vec![], lent: vec![] };
+    for _ in 0..gotiga_server::battles::LINEUP_SAVES_PER_MINUTE {
+        service
+            .save_battle_lineup(user, challenge, &empty)
+            .await
+            .expect("в пределах");
+    }
+    assert!(service.save_battle_lineup(user, challenge, &empty).await.is_err());
+}
+
+// ── Гость боя ───────────────────────────────────────────────────────────────
+//
+// Имя без почты и дверей, чтобы первый бой обучения шёл без формы входа. Здесь
+// проверяются замки: чем гость НЕ владеет, а не то, что он играет.
+
+/// Сессия гостя годится ручкам боя и больше никому: всё прочее спрашивает
+/// `get_user_from_session`.
+#[sqlx::test]
+async fn a_guest_session_opens_the_battle_only(pool: PgPool) {
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    let token = service
+        .begin_guest_player(Some("203.0.113.7".into()), None)
+        .await
+        .expect("гость");
+
+    assert!(
+        matches!(
+            service.get_user_from_session(&token).await,
+            Err(gotiga_server::error::AppError::Unauthorized)
+        ),
+        "прочие ручки гостя не принимают"
+    );
+    let player = service.get_player_from_session(&token).await.expect("игрок боя");
+    let guest: bool = sqlx::query_scalar("SELECT is_guest FROM users WHERE id = $1")
+        .bind(player.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(guest);
+    assert!(player.email.is_none() && player.visual_password_hash.is_none());
+}
+
+/// Гость играет бой с заданной расстановкой, а встречу со своей колодой не
+/// начинает: колода — это имя с собранием карт.
+#[sqlx::test]
+async fn a_guest_plays_a_study_but_not_a_meeting(pool: PgPool) {
+    let (service, _user, study) = prepare(&pool).await;
+    let token = service.begin_guest_player(Some("203.0.113.8".into()), None).await.unwrap();
+    let guest = service.get_player_from_session(&token).await.unwrap().id;
+
+    let opened = service.begin_battle_match(guest, study).await.expect("этюд гостю");
+    assert!(opened.outcome.is_none());
+
+    let meeting = service
+        .admin_save_battle_challenge(
+            None,
+            SaveBattleChallengeRequest {
+                slug: Some("meeting".into()),
+                title_en: "A meeting".into(),
+                title_ru: "Встреча".into(),
+                title_uk: String::new(),
+                note_en: None,
+                note_ru: None,
+                note_uk: None,
+                setup: ChallengeSetup {
+                    player_board: vec![],
+                    player_hand: vec![],
+                    keeper_board: vec![placement("voron", 1, 1)],
+                    keeper_hand: vec![],
+                    rules: None,
+                    terrain: vec![],
+                    field: Default::default(),
+                    background: None,
+                },
+                bot_depth: 1,
+                reward_dust: 25,
+                reward_finish_dust: 5,
+                player_side: "deck".into(),
+                status: "published".into(),
+            },
+        )
+        .await
+        .expect("встреча");
+    let refused = service
+        .begin_battle_match(guest, Uuid::parse_str(&meeting.id).unwrap())
+        .await;
+    assert!(
+        matches!(refused, Err(gotiga_server::error::AppError::Unauthorized)),
+        "встреча гостю закрыта"
+    );
+}
+
+/// Гостевых имён нельзя заводить без счёта: двадцать в час с одного адреса.
+#[sqlx::test]
+async fn guest_names_are_limited_per_address(pool: PgPool) {
+    let service = AppService::new(Repository::new(pool.clone()), config());
+    for _ in 0..20 {
+        service.begin_guest_player(Some("203.0.113.9".into()), None).await.expect("в пределе");
+    }
+    assert!(service.begin_guest_player(Some("203.0.113.9".into()), None).await.is_err());
+    // Другой адрес не пострадал.
+    assert!(service.begin_guest_player(Some("203.0.113.10".into()), None).await.is_ok());
+}
+
+/// Гость старше срока уходит вместе с партиями; свежий остаётся.
+#[sqlx::test]
+async fn stale_guests_are_swept_with_their_matches(pool: PgPool) {
+    let (service, _user, study) = prepare(&pool).await;
+    let old = service.begin_guest_player(Some("203.0.113.11".into()), None).await.unwrap();
+    let fresh = service.begin_guest_player(Some("203.0.113.12".into()), None).await.unwrap();
+    let old_id = service.get_player_from_session(&old).await.unwrap().id;
+    let fresh_id = service.get_player_from_session(&fresh).await.unwrap().id;
+    service.begin_battle_match(old_id, study).await.unwrap();
+    sqlx::query("UPDATE users SET created_at = NOW() - INTERVAL '40 days' WHERE id = $1")
+        .bind(old_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(service.prune_stale_guests().await.unwrap(), 1);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM battle_matches WHERE user_id = $1")
+        .bind(old_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+    assert!(service.get_player_from_session(&fresh).await.is_ok());
+    let _ = fresh_id;
+}
+
+/// Гость доигрывает бой до конца и не получает ничего: ни пыли, ни поручений.
+/// Иначе «однажды на этюд» стало бы «однажды на каждое гостевое имя».
+#[sqlx::test]
+async fn a_guest_finishing_a_study_is_paid_nothing(pool: PgPool) {
+    let (service, _user, study) = prepare(&pool).await;
+    let token = service.begin_guest_player(Some("203.0.113.13".into()), None).await.unwrap();
+    let guest = service.get_player_from_session(&token).await.unwrap().id;
+
+    let mut m = service.begin_battle_match(guest, study).await.expect("начать");
+    let mut turns = 0;
+    while m.outcome.is_none() {
+        let action = m.legal_actions.first().cloned().expect("законное действие");
+        m = service
+            .act_in_battle_match(guest, Uuid::parse_str(&m.id).unwrap(), BattleActRequest { seq: m.seq, action })
+            .await
+            .expect("ход");
+        assert_eq!(m.reward_dust, 0, "гостю не платят");
+        turns += 1;
+        assert!(turns < 500, "партия не кончилась");
+    }
+    assert_eq!(service.battle_dust_balance(guest).await.unwrap(), 0);
 }

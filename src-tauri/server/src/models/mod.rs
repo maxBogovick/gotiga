@@ -1749,6 +1749,19 @@ pub struct User {
     /// SHA-256 от письма-приглашения. Тот же закон, что у ключа сброса.
     pub email_confirm_hash: Option<String>,
     pub email_confirm_expires_at: Option<DateTime<Utc>>,
+    /// Постоянный номер человека у Google / Apple (`sub`) — по нему и только по
+    /// нему узнаётся вернувшийся, тот же закон, что у `telegram_id`. Наружу не
+    /// отдаётся.
+    #[serde(skip_serializing, default)]
+    pub google_sub: Option<String>,
+    /// Адрес, который назвал Google при последнем входе. Строка в профиле, не
+    /// ключ: он может быть и не тем, что в `email`.
+    pub google_email: Option<String>,
+    pub google_linked_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing, default)]
+    pub apple_sub: Option<String>,
+    pub apple_email: Option<String>,
+    pub apple_linked_at: Option<DateTime<Utc>>,
 }
 
 impl User {
@@ -1757,6 +1770,46 @@ impl User {
     pub fn email_confirmed(&self) -> bool {
         self.email.is_some() && self.email_confirmed_at.is_some()
     }
+
+    /// Привязан ли этот провайдер.
+    pub fn has_oauth(&self, p: crate::oauth::Provider) -> bool {
+        match p {
+            crate::oauth::Provider::Google => self.google_sub.is_some(),
+            crate::oauth::Provider::Apple => self.apple_sub.is_some(),
+        }
+    }
+
+    /// Первая дверь — подтверждённая почта вместе со знаками: вход по знакам
+    /// начинается с почты, а по названному, но не открытому адресу знаки не
+    /// восстанавливают.
+    pub fn has_mail_door(&self) -> bool {
+        self.email_confirmed() && self.visual_password_hash.is_some()
+    }
+
+    /// Сколько дверей у имени помимо `except`. Отвязать можно только то, что не
+    /// последнее: человек, снявший единственную дверь, запер бы себя снаружи.
+    pub fn doors_besides(&self, except: Door) -> usize {
+        [
+            (Door::Mail, self.has_mail_door()),
+            (Door::Telegram, self.telegram_id.is_some()),
+            (Door::Google, self.google_sub.is_some()),
+            (Door::Apple, self.apple_sub.is_some()),
+        ]
+        .into_iter()
+        .filter(|(door, present)| *present && *door != except)
+        .count()
+    }
+}
+
+/// Двери в имя. Нужны в одном месте — при отвязке, — но считать их надо одним
+/// списком: пока Telegram проверял «есть ли почта со знаками», а Google
+/// появился рядом, две проверки разошлись бы на первой же привязке.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Door {
+    Mail,
+    Telegram,
+    Google,
+    Apple,
 }
 
 /// Originating request metadata captured for login attempts and sessions.
@@ -1851,6 +1904,13 @@ pub struct UserDto {
     /// дверью не является, и считать его дверью значило бы запереть человека
     /// снаружи по опечатке.
     pub email_confirmed: bool,
+    /// Google / Apple: привязан ли вход и какой адрес назвал провайдер.
+    /// Адрес — для подписи в профиле («Google · маша@…»); у скрытого адреса
+    /// Apple это прокси, и профиль печатает его как есть.
+    pub google_linked: bool,
+    pub google_email: Option<String>,
+    pub apple_linked: bool,
+    pub apple_email: Option<String>,
 }
 
 impl From<&User> for UserDto {
@@ -1865,6 +1925,10 @@ impl From<&User> for UserDto {
             telegram_linked: u.telegram_id.is_some(),
             has_signs: u.visual_password_hash.is_some(),
             email_confirmed: u.email_confirmed(),
+            google_linked: u.google_sub.is_some(),
+            google_email: u.google_email.clone(),
+            apple_linked: u.apple_sub.is_some(),
+            apple_email: u.apple_email.clone(),
         }
     }
 }
@@ -1950,6 +2014,9 @@ pub struct TelegramLoginCode {
     pub code: String,
     pub word: String,
     pub state: String,
+    /// Отметил ли человек «мне 16 или больше». Нужно, только если заводится
+    /// новое имя.
+    pub age_confirmed: bool,
     pub browser: Option<String>,
     pub country_code: Option<String>,
     pub city: Option<String>,
@@ -1965,6 +2032,15 @@ pub struct TelegramLoginCode {
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub taken_at: Option<DateTime<Utc>>,
+}
+
+/// Тело запроса слова для входа через Telegram. Тело необязательно: привязке из
+/// профиля возраст не нужен, а отсутствие поля значит «не отмечено».
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramStartRequest {
+    #[serde(default)]
+    pub age_confirmed: bool,
 }
 
 /// Что страница показывает, пока ждёт: слово для сверки и куда идти.
@@ -1998,6 +2074,95 @@ pub struct TelegramLoginConfig {
     /// знать, иначе она показывает кнопку в Telegram, за которой бот отвечает
     /// «слово остыло», — то есть ведёт в тупик и молчит об этом.
     pub local: bool,
+}
+
+/// Строка `oauth_logins`: одна попытка входа через Google или Apple.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OauthLogin {
+    pub id: Uuid,
+    pub state: String,
+    pub provider: String,
+    pub nonce: String,
+    pub pkce_verifier: String,
+    pub binder_hash: String,
+    pub return_origin: String,
+    /// Человек отметил «мне 16 или больше» там, где просил вход. Нужно, только
+    /// если заводится новое имя.
+    pub age_confirmed: bool,
+    /// Заполнено — привязка провайдера к этому аккаунту, а не вход.
+    pub bind_user_id: Option<Uuid>,
+    pub status: String,
+    pub user_id: Option<Uuid>,
+    pub is_new: bool,
+    pub failure: Option<String>,
+    pub browser: Option<String>,
+    pub ip: Option<String>,
+    pub country_code: Option<String>,
+    pub city: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub taken_at: Option<DateTime<Utc>>,
+}
+
+/// Какие провайдеры включены на этом сервере. Страница спрашивает, чтобы не
+/// рисовать кнопку, ведущую в никуда.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OauthConfig {
+    pub google: bool,
+    pub apple: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OauthStartRequest {
+    /// Откуда пришли (`window.location.origin`): сюда вернётся браузер.
+    /// Принимается только из списка своих адресов.
+    pub return_origin: Option<String>,
+    /// Галочка «мне 16 или больше». Без неё новое имя не заводится.
+    #[serde(default)]
+    pub age_confirmed: bool,
+}
+
+/// Ссылка для перехода и привязка, которую вкладка обязана сохранить у себя.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OauthStartResponse {
+    pub url: String,
+    pub state: String,
+    /// Секрет вкладки. Лежит в её `sessionStorage` и нужен, чтобы забрать
+    /// результат: без него чужая ссылка вернулась бы чужим входом.
+    pub binder: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OauthRedeemRequest {
+    pub state: String,
+    pub binder: String,
+    /// Одноразовый код провайдера. Его видит только браузер, вернувшийся от
+    /// провайдера, и вкладка шлёт его вместе с привязкой: код без привязки и
+    /// привязка без кода входа не дают.
+    #[serde(default)]
+    pub code: String,
+    /// Apple, только при первом согласии: JSON с именем, как пришёл.
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
+/// Результат входа. `state`: `ready` — вошёл (или привязал), `failed` — не
+/// вышло (причина в `failure`), `expired` — попытки нет или она остыла.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OauthRedeemResponse {
+    pub state: String,
+    pub provider: Option<String>,
+    /// Пусто при привязке: у вошедшего своя сессия, новой не заводят.
+    pub session_token: Option<String>,
+    pub user: Option<UserDto>,
+    pub is_new: bool,
+    pub failure: Option<String>,
 }
 
 /// One icon in a challenge grid step — token replaces real ID
@@ -2102,6 +2267,13 @@ pub struct AdminUserDetail {
     /// Какими дверями этот человек входит: `@имя` в Telegram, если привязан.
     pub telegram_username: Option<String>,
     pub telegram_linked: bool,
+    /// Google / Apple: привязан ли вход и какой адрес назвал провайдер. Админ
+    /// видит их рядом с Telegram — иначе имя без почты и без знаков, вошедшее
+    /// через Google, выглядело бы как имя без единой двери.
+    pub google_linked: bool,
+    pub google_email: Option<String>,
+    pub apple_linked: bool,
+    pub apple_email: Option<String>,
     pub admin_notes: Option<String>,
     pub created_at: String,
     pub signup_ip: Option<String>,
@@ -2150,6 +2322,17 @@ pub struct ApplyPasswordResetRequest {
     /// Fresh personal subset (one list per category) — reset regenerates the
     /// user's pool so the new selections are always replayable at login.
     pub pool: [Vec<String>; 4],
+}
+
+/// Ответ на назначение знаков по ключу. Сессия новая: старые погашены (сброс
+/// нужен и тем, кто подозревает чужой доступ), а человек только что доказал
+/// ящик и выбрал знаки — выкидывать его на страницу входа незачем. Той же
+/// логикой работает ссылка подтверждения почты. Пусто у заблокированного.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyPasswordResetResponse {
+    pub session_token: Option<String>,
+    pub user: Option<UserDto>,
 }
 
 /// Self-service "forgot password": email a reset link to the account owner.
@@ -2337,8 +2520,12 @@ pub struct ProgrammeSettings {
     pub case_bg: Option<String>,
     pub curator_note_en: Option<String>,
     pub curator_note_ru: Option<String>,
+    #[serde(default)]
+    pub curator_note_uk: Option<String>,
     pub curator_sign_en: Option<String>,
     pub curator_sign_ru: Option<String>,
+    #[serde(default)]
+    pub curator_sign_uk: Option<String>,
     /// Base bronze hex for the case's cast-metal molding (e.g. `#caa45f`).
     /// `None` falls back to the built-in bronze. Frontend derives the light→dark
     /// bevel gradient from this single colour.
@@ -2360,8 +2547,10 @@ impl Default for ProgrammeSettings {
             case_bg: None,
             curator_note_en: None,
             curator_note_ru: None,
+            curator_note_uk: None,
             curator_sign_en: None,
             curator_sign_ru: None,
+            curator_sign_uk: None,
             frame_tone: None,
             frame_thickness: None,
             frame_mode: None,
@@ -2468,6 +2657,8 @@ pub struct Subscriber {
     pub ip: Option<String>,
     pub created_at: DateTime<Utc>,
     pub unsubscribed_at: Option<DateTime<Utc>>,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub confirm_sent_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2490,6 +2681,56 @@ pub struct SubscriptionCreatedResponse {
     pub unsubscribe_token: String,
     /// True when this email was already an active subscriber (idempotent re-sign).
     pub already_subscribed: bool,
+}
+
+/// Подписчик книги дома в Telegram (отдельный канал, не почта).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TelegramSubscriber {
+    pub id: Uuid,
+    pub chat_id: Option<i64>,
+    pub username: Option<String>,
+    pub lang: String,
+    pub source: String,
+    pub unsubscribe_token: String,
+    pub confirm_sent_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub unsubscribed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramSubscribeRequest {
+    pub lang: Option<String>,
+    pub source: Option<String>,
+    /// Self-certified "I am 16 or older" — as on every form that collects contacts.
+    pub age_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramSubscribeResponse {
+    /// Ссылка на бота с кодом. Нет — подписка оформлена сразу (вошедшему через
+    /// Telegram бот уже знаком).
+    pub link: Option<String>,
+    pub confirmed: bool,
+    pub unsubscribe_token: String,
+}
+
+/// Созревшая записка о новой небылице подписчику-в-Telegram.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BookNoteRow {
+    pub tale_id: Uuid,
+    pub subscriber_id: Uuid,
+    pub chat_id: Option<i64>,
+    pub lang: String,
+    pub slug: String,
+    pub title_en: String,
+    pub title_ru: String,
+    pub title_uk: String,
+    pub dek_en: Option<String>,
+    pub dek_ru: Option<String>,
+    pub dek_uk: Option<String>,
 }
 
 /// Looked up by unsubscribe token so a visitor can confirm leaving the book.
@@ -3238,6 +3479,8 @@ pub struct CopyOverrides {
     pub en: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub ru: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub uk: std::collections::HashMap<String, String>,
 }
 
 // ============================================================
@@ -3252,10 +3495,13 @@ pub struct GazetteLeaf {
     pub status: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
+    pub dek_uk: Option<String>,
     pub body_en: Option<String>,
     pub body_ru: Option<String>,
+    pub body_uk: Option<String>,
     pub figurine_id: Option<Uuid>,
     pub href: Option<String>,
     pub source_name: Option<String>,
@@ -3280,10 +3526,13 @@ pub struct GazetteLeafListed {
     pub status: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
+    pub dek_uk: Option<String>,
     pub body_en: Option<String>,
     pub body_ru: Option<String>,
+    pub body_uk: Option<String>,
     pub figurine_id: Option<Uuid>,
     pub href: Option<String>,
     pub source_name: Option<String>,
@@ -3314,10 +3563,16 @@ pub struct GazetteLeafDto {
     pub status: String,
     pub title_en: String,
     pub title_ru: String,
+    #[serde(default)]
+    pub title_uk: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
+    #[serde(default)]
+    pub dek_uk: Option<String>,
     pub body_en: Option<String>,
     pub body_ru: Option<String>,
+    #[serde(default)]
+    pub body_uk: Option<String>,
     pub figurine_id: Option<String>,
     pub figurine_name: Option<String>,
     pub figurine_slug: Option<String>,
@@ -3353,6 +3608,8 @@ pub struct GazetteNeighborDto {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    #[serde(default)]
+    pub title_uk: String,
 }
 
 /// The shelf of tall tales, top to bottom. Position is the index in the list.
@@ -3370,10 +3627,16 @@ pub struct SaveGazetteLeafRequest {
     pub status: String,
     pub title_en: String,
     pub title_ru: String,
+    #[serde(default)]
+    pub title_uk: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
+    #[serde(default)]
+    pub dek_uk: Option<String>,
     pub body_en: Option<String>,
     pub body_ru: Option<String>,
+    #[serde(default)]
+    pub body_uk: Option<String>,
     pub figurine_id: Option<String>,
     pub href: Option<String>,
     pub source_name: Option<String>,
@@ -3411,6 +3674,8 @@ pub struct GazetteWatch {
     pub user_id: Option<Uuid>,
     pub notified_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    pub confirmed_at: Option<DateTime<Utc>>,
+    pub confirm_sent_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3427,6 +3692,9 @@ pub struct WatchGazetteLeafRequest {
 pub struct GazetteWatchCreatedResponse {
     pub cancel_token: String,
     pub already_watching: bool,
+    /// Адрес уже доказан, и слежение действует. Нет — на адрес ушло письмо с
+    /// просьбой подтвердить, и слежение начнёт действовать после перехода.
+    pub confirmed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -3435,7 +3703,10 @@ pub struct GazetteWatchInfo {
     pub leaf_slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub notified: bool,
+    /// Адрес подтверждён; нет — слежение ждёт перехода по ссылке из письма.
+    pub confirmed: bool,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -3445,6 +3716,7 @@ pub struct GazetteWatchListed {
     pub leaf_slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub cancel_token: String,
     pub notified_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -3458,6 +3730,7 @@ pub struct GazetteWatchDto {
     pub leaf_slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub cancel_token: String,
     pub notified_at: Option<String>,
     pub created_at: String,
@@ -3622,6 +3895,7 @@ pub struct AdminTaleCommentRow {
     pub tale_id: Uuid,
     pub tale_title_en: String,
     pub tale_title_ru: String,
+    pub tale_title_uk: String,
     pub tale_slug: String,
     pub author_name: String,
     pub author_email: Option<String>,
@@ -3639,6 +3913,8 @@ pub struct AdminTaleCommentDto {
     pub tale_id: String,
     pub tale_title_en: String,
     pub tale_title_ru: String,
+    #[serde(default)]
+    pub tale_title_uk: String,
     pub tale_slug: String,
     pub author_name: String,
     pub author_email: Option<String>,
@@ -3891,8 +4167,10 @@ pub struct TaleNoteRow {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub original_title_en: Option<String>,
     pub original_title_ru: Option<String>,
+    pub original_title_uk: Option<String>,
 }
 
 /// Созревшее письмо о байке со всем, что нужно для его текста.
@@ -3906,10 +4184,13 @@ pub struct TaleLetterRow {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
+    pub dek_uk: Option<String>,
     pub original_title_en: Option<String>,
     pub original_title_ru: Option<String>,
+    pub original_title_uk: Option<String>,
     pub figurine_name: Option<String>,
 }
 
@@ -3969,12 +4250,16 @@ pub struct BattleCard {
     pub tier: i16,
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
+    pub type_uk: Option<String>,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
+    pub effect_uk: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
+    pub lore_uk: Option<String>,
     pub cost: i16,
     pub power: i16,
     pub health: i16,
@@ -4040,12 +4325,16 @@ pub struct BattleCardListed {
     pub tier: i16,
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
+    pub type_uk: Option<String>,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
+    pub effect_uk: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
+    pub lore_uk: Option<String>,
     pub cost: i16,
     pub power: i16,
     pub health: i16,
@@ -4089,6 +4378,8 @@ pub struct BattleCardListed {
     pub motion_wear: Option<String>,
     pub shelf_order: Option<i32>,
     pub lendable: bool,
+    /// Стреляет: бьёт над строениями (стенами города).
+    pub shoots: bool,
     /// Автограф: чьё это придумано. `NULL` у карт дома.
     pub credit_name: Option<String>,
     /// Тираж карты. `None` — печатается сколько угодно.
@@ -4105,6 +4396,7 @@ pub struct BattleCardListed {
     pub figurine_face_id: Option<Uuid>,
     pub race_name_en: Option<String>,
     pub race_name_ru: Option<String>,
+    pub race_name_uk: Option<String>,
     /// The race's shared icon — already a public URL, joined in from the
     /// dictionary so the shelf never has to fetch the race list just to draw it.
     pub race_icon_url: Option<String>,
@@ -4115,6 +4407,8 @@ pub struct BattleCardListed {
     /// событии, а второй запрос за справочником рас ради этого — это запрос,
     /// который однажды не успеет.
     pub race_motion_wear: Option<String>,
+    /// Урон по расам этой расы, тем же швом — нужен снимку карты для боя.
+    pub race_damage: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4129,18 +4423,31 @@ pub struct BattleCardDto {
     pub race_id: Option<String>,
     pub race_name_en: Option<String>,
     pub race_name_ru: Option<String>,
+    #[serde(default)]
+    pub race_name_uk: Option<String>,
     pub race_icon_url: Option<String>,
     pub race_level_frames: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub race_motion_wear: Option<String>,
+    /// Урон по расам расы этой карты. Входит в снимок карты для боя.
+    #[serde(default, skip_serializing_if = "battle_core::RaceDamage::is_empty")]
+    pub race_damage: battle_core::RaceDamage,
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
+    #[serde(default)]
+    pub type_uk: Option<String>,
     pub title_en: String,
     pub title_ru: String,
+    #[serde(default)]
+    pub title_uk: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
+    #[serde(default)]
+    pub effect_uk: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
+    #[serde(default)]
+    pub lore_uk: Option<String>,
     pub cost: i16,
     /// Strength, in the properties band.
     pub power: i16,
@@ -4191,6 +4498,8 @@ pub struct BattleCardDto {
     /// Готов ли дом одолжить эту карту тому, у кого своего ещё нет.
     /// Отбирается ещё и по чину: одалживается только первый.
     pub lendable: bool,
+    /// Стреляет: лук, праща. Через стены бьют только стрелки и маги.
+    pub shoots: bool,
     /// Автограф автора — печатается строкой на листе взятия, не на самой
     /// карте: лицо карты это опись, в которую не втискивают шестнадцатую
     /// строку ради служебного факта.
@@ -4222,12 +4531,20 @@ pub struct SaveBattleCardRequest {
     pub race_id: Option<String>,
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
+    #[serde(default)]
+    pub type_uk: Option<String>,
     pub title_en: String,
     pub title_ru: String,
+    #[serde(default)]
+    pub title_uk: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
+    #[serde(default)]
+    pub effect_uk: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
+    #[serde(default)]
+    pub lore_uk: Option<String>,
     #[serde(default)]
     pub cost: i16,
     #[serde(default)]
@@ -4271,6 +4588,9 @@ pub struct SaveBattleCardRequest {
     /// которая про заём не знает.
     #[serde(default)]
     pub lendable: bool,
+    /// Стреляет: лук, праща. Не названо — «нет».
+    #[serde(default)]
+    pub shoots: bool,
     /// Тираж: сколько экземпляров этой карты дом отпечатает вообще. `None` —
     /// сколько угодно. Отсутствует в старом запросе — значит «не трогать»:
     /// форма, которая про тираж не знает, не должна его снимать.
@@ -4294,12 +4614,16 @@ pub struct BattleCardWrite {
     pub tier: i16,
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
+    pub type_uk: Option<String>,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
+    pub effect_uk: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
+    pub lore_uk: Option<String>,
     pub cost: i16,
     pub power: i16,
     pub health: i16,
@@ -4326,6 +4650,7 @@ pub struct BattleCardWrite {
     pub frame_override: Option<String>,
     pub motion_wear: Option<String>,
     pub lendable: bool,
+    pub shoots: bool,
     pub edition_size: Option<i32>,
     /// Автограф автора. Едет В ТОЙ ЖЕ записи, которой карта заводится: вторым
     /// запросом он оставлял бы на полке чужую работу без имени всякий раз,
@@ -4466,10 +4791,12 @@ pub struct BattleKeyword {
     pub slug: String,
     pub name_en: String,
     pub name_ru: String,
+    pub name_uk: String,
     /// The canonical wording, one per game. A card says "Шипы 3"; what Шипы
     /// means is said here, once.
     pub rules_en: Option<String>,
     pub rules_ru: Option<String>,
+    pub rules_uk: Option<String>,
     pub icon_url: Option<String>,
     /// Points per unit, from the exchange table. `None` — not priced yet.
     pub point_value: Option<f64>,
@@ -4485,8 +4812,12 @@ pub struct BattleKeywordDto {
     pub slug: String,
     pub name_en: String,
     pub name_ru: String,
+    #[serde(default)]
+    pub name_uk: String,
     pub rules_en: Option<String>,
     pub rules_ru: Option<String>,
+    #[serde(default)]
+    pub rules_uk: Option<String>,
     pub icon_url: Option<String>,
     pub point_value: Option<f64>,
     pub sort_order: Option<i32>,
@@ -4498,8 +4829,12 @@ pub struct SaveBattleKeywordRequest {
     pub slug: Option<String>,
     pub name_en: String,
     pub name_ru: String,
+    #[serde(default)]
+    pub name_uk: String,
     pub rules_en: Option<String>,
     pub rules_ru: Option<String>,
+    #[serde(default)]
+    pub rules_uk: Option<String>,
     pub icon_url: Option<String>,
     pub point_value: Option<f64>,
 }
@@ -4550,6 +4885,11 @@ pub struct ChallengeSetup {
     /// 3 × 3, и тогда не пишется вовсе.
     #[serde(default, skip_serializing_if = "battle_core::Field::is_default")]
     pub field: battle_core::Field,
+    /// Фон поля: путь `/static/…` к картинке, загруженной на столе поля.
+    /// Только оформление — движок о нём не знает и партию он не меняет, поэтому
+    /// в снимок тел и в свёртку журнала не входит.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -4558,8 +4898,10 @@ pub struct BattleChallenge {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    pub note_uk: Option<String>,
     /// JSON, see `ChallengeSetup`.
     pub setup: String,
     pub bot_depth: i16,
@@ -4582,8 +4924,12 @@ pub struct BattleChallengeDto {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    #[serde(default)]
+    pub title_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    #[serde(default)]
+    pub note_uk: Option<String>,
     pub setup: ChallengeSetup,
     pub bot_depth: i16,
     pub reward_dust: i32,
@@ -4630,14 +4976,35 @@ pub struct ChallengeMarks {
     pub best_known: Option<i32>,
 }
 
+/// Проверить проходимость расстановки, ещё не сохранённой: стол присылает
+/// то, что на нём сейчас (`siege::probe`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleProbeRequest {
+    pub setup: ChallengeSetup,
+    /// Рука города — та же, что у этюда.
+    #[serde(default = "one")]
+    pub bot_depth: i16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleProbeStarted {
+    pub id: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveBattleChallengeRequest {
     pub slug: Option<String>,
     pub title_en: String,
     pub title_ru: String,
+    #[serde(default)]
+    pub title_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    #[serde(default)]
+    pub note_uk: Option<String>,
     pub setup: ChallengeSetup,
     #[serde(default = "one")]
     pub bot_depth: i16,
@@ -4669,6 +5036,8 @@ pub struct BattleChallengeWrite<'a> {
     pub title_ru: &'a str,
     pub note_en: Option<&'a str>,
     pub note_ru: Option<&'a str>,
+    pub title_uk: &'a str,
+    pub note_uk: Option<&'a str>,
     pub setup: &'a str,
     pub bot_depth: i16,
     pub reward_dust: i32,
@@ -4724,6 +5093,7 @@ pub struct BattleMatchRow {
     pub guest: String,
     pub challenge_id: Option<Uuid>,
     pub title_ru: Option<String>,
+    pub title_uk: Option<String>,
     pub title_en: Option<String>,
     pub outcome: Option<String>,
     pub rounds: Option<i16>,
@@ -4740,6 +5110,7 @@ pub struct BattleMatchRowDto {
     pub guest: String,
     pub challenge_id: Option<String>,
     pub title_ru: Option<String>,
+    pub title_uk: Option<String>,
     pub title_en: Option<String>,
     /// `player` — победил гость, `keeper` — дом, `draw` — ничья, пусто — партия
     /// не доиграна.
@@ -4757,6 +5128,7 @@ pub struct BattleMatchRowDto {
 pub struct BattleChallengeTally {
     pub challenge_id: Option<String>,
     pub title_ru: Option<String>,
+    pub title_uk: Option<String>,
     pub title_en: Option<String>,
     pub played: i64,
     pub guest_won: i64,
@@ -4774,6 +5146,7 @@ pub struct BattleChallengeTally {
 pub struct BattleCardTally {
     pub slug: String,
     pub title_ru: Option<String>,
+    pub title_uk: Option<String>,
     pub title_en: Option<String>,
     /// В скольких доигранных партиях карта была на поле.
     pub played: i64,
@@ -5042,6 +5415,19 @@ pub struct DeckLayout {
     pub board: Vec<DeckPlacement>,
     #[serde(default)]
     pub hand: Vec<Uuid>,
+    /// Клетки, которые гость выбрал для временных карт дома, по порядку мест.
+    /// Сами карты выбирает дом (`loan_pool`), гость — только где им стоять:
+    /// у новичка все карты временные, и без этого в расстановке ему нечего
+    /// было бы делать.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lent: Vec<DeckCell>,
+}
+
+/// Клетка, названная гостем.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeckCell {
+    pub x: u8,
+    pub y: u8,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -5092,6 +5478,44 @@ pub struct BattleDeckDto {
     pub nothing_to_lend: bool,
 }
 
+/// Расстановка гостя на поле одной встречи: те же места, что у стола, и
+/// клетки, на которые можно поставить карту. Клетки называет сервер, чтобы
+/// страница не повторяла правило поля у себя.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleLineupDto {
+    pub board: Vec<BattleDeckSlotDto>,
+    pub hand: Vec<BattleDeckSlotDto>,
+    /// Сохранял ли гость расстановку для этой встречи.
+    pub laid: bool,
+    pub nothing_to_lend: bool,
+    /// Клетки своей половины, на которые можно поставить карту.
+    pub cells: Vec<battle_core::Cell>,
+    /// Сколько карт и каких рангов берёт колода: страница подсвечивает и
+    /// объясняет по этим числам, а не по своей копии правила.
+    pub limits: DeckLimits,
+    /// Куда карты противника достают ударом за свой ход
+    /// (`MatchState::strike_zones`), с учётом нынешней расстановки.
+    pub threats: Vec<StrikeZoneDto>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeckLimits {
+    pub board: usize,
+    pub hand: usize,
+    pub rank_five: usize,
+    pub rank_four: usize,
+}
+
+/// Одна карта противника и клетки, до которых она достаёт ударом.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrikeZoneDto {
+    pub cell: battle_core::Cell,
+    pub cells: Vec<battle_core::Cell>,
+}
+
 /// Что гость сохраняет. Заём сюда не приходит: его не выбирают.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -5100,6 +5524,9 @@ pub struct SaveBattleDeckRequest {
     pub board: Vec<DeckPlacement>,
     #[serde(default)]
     pub hand: Vec<Uuid>,
+    /// Только у расстановки перед встречей: клетки временных карт.
+    #[serde(default)]
+    pub lent: Vec<DeckCell>,
 }
 
 /// Taking a card off the shelf.
@@ -5210,8 +5637,10 @@ pub struct BattleErrand {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    pub note_uk: Option<String>,
     /// Слово из `battles::ERRAND_RULES`. Неизвестное ничего не платит.
     pub rule: String,
     pub threshold: i32,
@@ -5239,8 +5668,10 @@ pub struct BattleErrandDto {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    pub note_uk: Option<String>,
     pub rule: String,
     pub threshold: i32,
     pub currency: String,
@@ -5266,8 +5697,10 @@ pub struct AdminBattleErrandDto {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    pub note_uk: Option<String>,
     pub rule: String,
     pub threshold: i32,
     pub currency: String,
@@ -5295,8 +5728,12 @@ pub struct SaveBattleErrandRequest {
     pub slug: String,
     pub title_en: String,
     pub title_ru: String,
+    #[serde(default)]
+    pub title_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    #[serde(default)]
+    pub note_uk: Option<String>,
     pub rule: String,
     pub threshold: i32,
     pub currency: String,
@@ -5462,6 +5899,17 @@ pub struct ReorderBattleCardsRequest {
     pub ids: Vec<Uuid>,
 }
 
+/// Расу ставят сразу нескольким картам или снимают с них (`raceId: null`).
+/// Отдельной ручкой, а не сохранением каждой карты: сохранение карты несёт
+/// карту целиком, и стол, назначающий расу двадцати картам, отправил бы
+/// двадцать снимков, каждый из которых мог устареть.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetBattleCardsRaceRequest {
+    pub card_ids: Vec<Uuid>,
+    pub race_id: Option<Uuid>,
+}
+
 /// A race in the keeper's dictionary. Shared by many cards, so a table rather
 /// than a field: renaming one must rename it everywhere at once.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -5470,8 +5918,10 @@ pub struct BattleRace {
     pub slug: String,
     pub name_en: String,
     pub name_ru: String,
+    pub name_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    pub note_uk: Option<String>,
     /// Shown in the header band of every card of this race. Already a public
     /// URL — set once here, worn by every card, the same choice already made
     /// for frames.
@@ -5487,6 +5937,9 @@ pub struct BattleRace {
     pub sort_order: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Урон по расам — JSON, см. `battles::normalize_race_damage`.
+    #[sqlx(default)]
+    pub race_damage: Option<String>,
 }
 
 /// A race read for the desk, carrying how many cards stand under it. A separate
@@ -5498,13 +5951,16 @@ pub struct BattleRaceListed {
     pub slug: String,
     pub name_en: String,
     pub name_ru: String,
+    pub name_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    pub note_uk: Option<String>,
     pub icon_url: Option<String>,
     pub level_frames: Option<String>,
     pub motion_wear: Option<String>,
     pub sort_order: Option<i32>,
     pub card_count: i64,
+    pub race_damage: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -5514,8 +5970,12 @@ pub struct BattleRaceDto {
     pub slug: String,
     pub name_en: String,
     pub name_ru: String,
+    #[serde(default)]
+    pub name_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    #[serde(default)]
+    pub note_uk: Option<String>,
     pub icon_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub level_frames: Option<String>,
@@ -5529,6 +5989,15 @@ pub struct BattleRaceDto {
     /// How many cards stand under this race. The keeper sees what a rename or a
     /// removal would touch before doing it.
     pub card_count: i64,
+    /// Урон по расам. Отдаётся и публично: правило, которое меняет урон,
+    /// игрок должен видеть.
+    #[serde(default)]
+    pub race_damage: battle_core::RaceDamage,
+    /// Сколько даёт одна отметка в таблице урона (`battles::RACE_DAMAGE_MAX`).
+    /// Одно число на весь справочник, повторено в каждой строке, чтобы
+    /// страница не держала своё зеркало этого числа.
+    #[serde(default)]
+    pub race_damage_step: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -5537,12 +6006,20 @@ pub struct SaveBattleRaceRequest {
     pub slug: Option<String>,
     pub name_en: String,
     pub name_ru: String,
+    #[serde(default)]
+    pub name_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    #[serde(default)]
+    pub note_uk: Option<String>,
     pub icon_url: Option<String>,
     pub level_frames: Option<String>,
     #[serde(default)]
     pub motion_wear: Option<String>,
+    /// Урон по расам. Не прислано — прежнее значение не трогается: студия
+    /// утверждает расу без таблицы.
+    #[serde(default)]
+    pub race_damage: Option<battle_core::RaceDamage>,
 }
 
 // === BATTLE ASSETS ===
@@ -5734,10 +6211,12 @@ pub struct StudioRaceDto {
     pub id: Uuid,
     pub name_en: String,
     pub name_ru: String,
+    pub name_uk: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_en: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ru: Option<String>,
+    pub note_uk: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
     pub status: String,
@@ -5758,10 +6237,12 @@ pub struct StudioRaceQueueDto {
     pub id: Uuid,
     pub name_en: String,
     pub name_ru: String,
+    pub name_uk: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_en: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ru: Option<String>,
+    pub note_uk: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
     pub author: String,
@@ -5773,8 +6254,12 @@ pub struct StudioRaceQueueDto {
 pub struct SaveStudioRaceRequest {
     pub name_en: String,
     pub name_ru: String,
+    #[serde(default)]
+    pub name_uk: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
+    #[serde(default)]
+    pub note_uk: Option<String>,
     pub icon_url: Option<String>,
     #[serde(default = "crate::studio::default_lang")]
     pub lang: String,
@@ -5980,6 +6465,7 @@ pub struct CopyListingDto {
     pub card_id: Uuid,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
     /// Автограф придумавшего — третье обещанное место подписи: имя рядом с
     /// ценой, в тот самый миг, когда его запоминают.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -6078,6 +6564,7 @@ pub struct MyCopyDto {
     pub locked: bool,
     pub title_en: String,
     pub title_ru: String,
+    pub title_uk: String,
 }
 
 /// Лицензия — право носить раму. Экземпляр с номером: «№7 из 200».

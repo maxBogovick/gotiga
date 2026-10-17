@@ -8,7 +8,7 @@
   // в неё стоит на странице работы.
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import AppImage from '$lib/components/AppImage.svelte';
   import type { AdminTalePoll, FigurineListItem, GazetteLeaf } from '$lib/types/api';
 
@@ -313,7 +313,7 @@
                 <span class="text-[#8a6a55]">{when(poll.openedAt)}</span>
                 <span>{nameOf(poll, poll.winnerFigurineId) || '—'}</span>
                 {#if poll.fulfilled}
-                  <span class="text-[#5f4636]">{$t('adminTalesPollFulfilled')} «{poll.fulfilled.titleRu || poll.fulfilled.titleEn}»</span>
+                  <span class="text-[#5f4636]">{$t('adminTalesPollFulfilled')} «{localized(poll.fulfilled, 'title', $lang)}»</span>
                 {/if}
                 <span class="text-[#8a6a55]">
                   {$t('adminTalesPollVotes')}: {poll.candidates.reduce((n, c) => n + c.votes, 0)}

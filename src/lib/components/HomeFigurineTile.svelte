@@ -3,7 +3,7 @@
     import { goto } from '$app/navigation';
     import type { FigurineListItem } from '$lib/types/api';
     import { figurineHref } from '$lib/figurineHref';
-    import { t, lang } from '$lib/i18n';
+    import { t, lang, LANG_META } from '$lib/i18n';
     import AppImage from '$lib/components/AppImage.svelte';
     import SealedDoor from '$lib/components/SealedDoor.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
@@ -102,7 +102,7 @@
         showingRooms.list
     ));
     let doorClosed = $derived(isGated(win) && !isShowingOpen(win, houseClock.nowDate));
-    let doorLocale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+    let doorLocale = $derived(LANG_META[$lang].locale);
     let doorHeadline = $derived(doorClosed ? openingHeadline(win, $t, doorLocale, houseClock.nowDate) : '');
 
     // Recently catalogued — surfaced as a quiet wax mark, not a sales badge.

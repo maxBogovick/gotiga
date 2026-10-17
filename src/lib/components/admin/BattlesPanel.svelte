@@ -12,9 +12,18 @@
   // (`editable`) mutates its fields directly as the keeper clicks and types on
   // the card itself, and this desk never keeps a second copy of the same data
   // in a pile of loose variables that could drift from what the card shows.
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { api } from "$lib/api";
-  import { t, lang, type TranslationKey } from "$lib/i18n";
+  import {
+    t,
+    lang,
+    LANGS,
+    LANG_META,
+    localized,
+    pick,
+    type Lang,
+    type TranslationKey,
+  } from "$lib/i18n";
   import BattleScene from "$lib/components/BattleScene.svelte";
   import FrameDesk from "$lib/components/studio/FrameDesk.svelte";
   import BattleFieldDesk from "$lib/components/admin/BattleFieldDesk.svelte";
@@ -84,6 +93,13 @@
     CHANNELS,
     CHANNEL_ICON,
     CHANNEL_LABELS,
+    CITY_FIELD,
+    cityLayout,
+    probeVerdict,
+    siegeGearRequests,
+    siegeRules,
+    siegeWarnings,
+    type SiegeWarning,
   } from "$lib/battles";
   import { SITE_FONTS } from "$lib/fonts";
   import { selectOnFocus, blurOnWheel } from "$lib/utils/fields";
@@ -102,7 +118,10 @@
   import BattleErrandsPanel from "$lib/components/admin/BattleErrandsPanel.svelte";
   import BattleMotionsPanel from "$lib/components/admin/BattleMotionsPanel.svelte";
   import BattleMotionWear from "$lib/components/admin/BattleMotionWear.svelte";
+  import BattleRaceCards from "$lib/components/admin/BattleRaceCards.svelte";
+  import BattleRaceDamage from "$lib/components/admin/BattleRaceDamage.svelte";
   import type {
+    BattleProbeReport,
     BattleAssetRole,
     BattleCard as BattleCardDto,
     BattleDustRates,
@@ -128,6 +147,7 @@
     SliceSlot,
     SliceTurn,
     BattleRace,
+    RaceDamage,
     BattleKeyword,
     BattleWeigh,
     BattleAction,
@@ -179,13 +199,36 @@
   let saving = $state(false);
   let message = $state("");
   let listQuery = $state("");
+  /** Отбор списка карт по расе: id расы, `"none"` — без расы, пусто — все. */
+  let listRace = $state("");
 
   // ── The card being written — one live object, edited on the card itself ──
   let selectedId = $state<string | null>(null);
   let draft = $state<BattleCardDto>(emptyBattleCard());
   /** Which language the on-card fields read and write. The card shows one
    *  language at a time, same as a reader would see it. */
-  let editLang = $state<"en" | "ru">(($lang as "en" | "ru") ?? "ru");
+  let editLang = $state<Lang>($lang ?? "ru");
+  const capOf = (l: Lang) => (l === "ru" ? "Ru" : l === "uk" ? "Uk" : "En");
+  /** One language's text of a field of a card or of one of its traits:
+   *  `said(draft, "title")` is `draft.titleEn`, `titleRu` or `titleUk`. */
+  function said(rec: object, stem: string, l: Lang = editLang): string {
+    return (
+      (rec as Record<string, string | null | undefined>)[stem + capOf(l)] ?? ""
+    );
+  }
+  /** The write that goes with `said`. `nullable` for the optional fields, where
+   *  the empty string means «not written» and travels as `null`. */
+  function say(
+    rec: object,
+    stem: string,
+    value: string,
+    nullable = false,
+    l: Lang = editLang,
+  ) {
+    (rec as Record<string, string | null>)[stem + capOf(l)] = nullable
+      ? value || null
+      : value;
+  }
   /** Prices only ever show on a card's back — flipping is how the desk gets
    *  at them, the same as anyone else would have to turn the card over. */
   let facedown = $state(false);
@@ -234,20 +277,30 @@
 
   // The race dictionary, edited in its own view.
   let raceDraftId = $state<string | null>(null);
+  /** Открыт разбор карт без расы вместо листа расы. */
+  let raceSorting = $state(false);
+  let raceDragFrom = $state<number | null>(null);
+  let raceDragOver = $state<number | null>(null);
   let keywordDraftId = $state<string | null>(null);
   let keywordNameEn = $state("");
   let keywordNameRu = $state("");
+  let keywordNameUk = $state("");
   let keywordRulesEn = $state("");
   let keywordRulesRu = $state("");
+  let keywordRulesUk = $state("");
   let keywordPoints = $state<number | null>(null);
   let raceNameEn = $state("");
   let raceNameRu = $state("");
+  let raceNameUk = $state("");
   let raceNoteEn = $state("");
   let raceNoteRu = $state("");
+  let raceNoteUk = $state("");
   let raceIconUrl = $state("");
   /** Движения расы. Стоят между картой и домом: все лучники расы стреляют её
    *  стрелой, пока отдельная карта не скажет иначе. */
   let raceMotionWear = $state<string | null>(null);
+  /** Урон по расам открытой расы. */
+  let raceDamage = $state<RaceDamage>({ attack: 0, against: [], defence: 0, from: [] });
   /** This race's own dress per level of an owned copy — 5 slots, index 0 = level 1. */
   let raceLevelFrames = $state<(FrameOverride | null)[]>([
     null,
@@ -320,15 +373,22 @@
    *  одной. */
   const DECK_SIZE = 6;
 
-  /** Кто может встать на поле: опубликованные и с ненулевым здоровьем. */
+  /** Кто может встать на поле этюда: опубликованные и «только для этюдов»
+   *  (стены, башни, таран), с ненулевым здоровьем. Зеркало серверного
+   *  `can_stand_in_an_etude`: без второго статуса город собирался бы только
+   *  запросом руками. */
   let benchable = $derived(
-    cards.filter((c) => c.status === "published" && c.health > 0),
+    cards.filter(
+      (c) => (c.status === "published" || c.status === "etude") && c.health > 0,
+    ),
   );
 
   let benchBoard = $state<Record<string, string>>({});
   /** Местность этюда по клетке. Рядом с расстановкой, а не внутри неё: на
    *  укрытии и в топи стоят, и одна клетка несёт и тело, и землю. */
   let benchTerrain = $state<Record<string, BattleGround>>({});
+  /** Фон поля этюда: путь `/static/…` или пусто. Только вид — партии не меняет. */
+  let benchBackground = $state<string | null>(null);
   let benchHands = $state<{ player: string[]; keeper: string[] }>({
     player: [],
     keeper: [],
@@ -360,6 +420,7 @@
       // этюд, а хранитель узнавал бы об этом от гостя.
       rules: etudeOwnRules ? etudeRules : null,
       field: benchField,
+      background: benchBackground,
       terrain: Object.entries(benchTerrain).map(([key, ground]) => {
         const [x, y] = key.split(",").map(Number);
         return { cell: { x, y }, ground };
@@ -505,7 +566,7 @@
   }
 
   const benchTitle = (slug: string) =>
-    cards.find((c) => c.slug === slug)?.titleRu || slug;
+    localized(cards.find((c) => c.slug === slug), "title", $lang) || slug;
 
   /** Событие одной строкой, с разбором урона там, где он есть. */
   function benchLine(e: BattleEvent): string {
@@ -551,8 +612,10 @@
   let challenges = $state<BattleChallenge[]>([]);
   let etudeId = $state<string | null>(null);
   let etudeTitleRu = $state("");
+  let etudeTitleUk = $state("");
   let etudeTitleEn = $state("");
   let etudeNoteRu = $state("");
+  let etudeNoteUk = $state("");
   let etudeNoteEn = $state("");
   /** Рука хранителя. Сложность — это она и только она: бот, которому дали
    *  лишнюю ману, ломает и честность, и всякую возможность измерить силу
@@ -596,6 +659,7 @@
    *  целиком, потом то, что её подкручивает. */
   const RULE_DIALS = [
     { key: "breakthrough", label: "adminBattlesRuleBreakthrough", kind: "flag" },
+    { key: "keeperHoldsOnTime", label: "adminBattlesRuleKeeperHolds", kind: "flag" },
     { key: "walkSpendsTurn", label: "adminBattlesRuleWalk", kind: "flag" },
     { key: "retaliation", label: "adminBattlesRuleRetaliation", kind: "flag" },
     { key: "actsPerTurn", label: "adminBattlesRuleActs", kind: "number", min: 1, max: 255 },
@@ -650,8 +714,10 @@
   function openEtude(challenge: BattleChallenge | null) {
     etudeId = challenge?.id ?? null;
     etudeTitleRu = challenge?.titleRu ?? "";
+    etudeTitleUk = challenge?.titleUk ?? "";
     etudeTitleEn = challenge?.titleEn ?? "";
     etudeNoteRu = challenge?.noteRu ?? "";
+    etudeNoteUk = challenge?.noteUk ?? "";
     etudeNoteEn = challenge?.noteEn ?? "";
     etudeDepth = challenge?.botDepth ?? 1;
     etudeReward = challenge?.rewardDust ?? 0;
@@ -668,10 +734,13 @@
     bench = null;
     benchComplaint = null;
     benchField = { ...(challenge?.setup.field ?? DEFAULT_FIELD) };
+    benchBackground = challenge?.setup.background ?? null;
+    probe = null;
     if (!challenge) {
       benchBoard = {};
       benchTerrain = {};
       benchHands = { player: [], keeper: [] };
+      etudeSaved = null;
       return;
     }
     const ground: Record<string, BattleGround> = {};
@@ -691,6 +760,151 @@
       player: [...challenge.setup.playerHand],
       keeper: [...challenge.setup.keeperHand],
     };
+    etudeSaved = canonical(etudeRequest());
+  }
+
+  // ── Этюд целиком: что записано и что на столе ───────────────────────────
+  //
+  // Один запрос на сохранение и на признак «не сохранено». Прежде признак
+  // считал стол поля сам — по доске, земле и названию, — и правило, рука или
+  // записка, поменянные на том же экране, кнопку сохранения не будили.
+
+  function etudeRequest() {
+    return {
+      titleEn: etudeTitleEn.trim(),
+      titleRu: etudeTitleRu.trim(),
+      titleUk: etudeTitleUk.trim(),
+      noteEn: etudeNoteEn.trim() || null,
+      noteRu: etudeNoteRu.trim() || null,
+      noteUk: etudeNoteUk.trim() || null,
+      setup: benchSetup,
+      botDepth: etudeDepth,
+      rewardDust: etudeReward,
+      rewardFinishDust: etudeFinish,
+      playerSide: etudeSide,
+      status: etudeStatus,
+    };
+  }
+
+  /** Запись без порядка: доска и земля — множества клеток, и одна и та же
+   *  расстановка, набранная в другом порядке, — не правка. */
+  function canonical(value: unknown): string {
+    const byCell = (a: { x?: number; y?: number; cell?: { x: number; y: number } }) => {
+      const at = a.cell ?? a;
+      return (at.y ?? 0) * 100 + (at.x ?? 0);
+    };
+    return JSON.stringify(value, (key, v) =>
+      (key === "playerBoard" || key === "keeperBoard" || key === "terrain") && Array.isArray(v)
+        ? [...v].sort((a, b) => byCell(a) - byCell(b))
+        : v,
+    );
+  }
+
+  /** Записанный этюд в том же виде; `null` — этюд ещё не записан. */
+  let etudeSaved = $state<string | null>(null);
+  let etudeChanged = $derived(etudeSaved === null || canonical(etudeRequest()) !== etudeSaved);
+
+  // ── Штурм: город, его предупреждения, проверка ботами ───────────────────
+
+  let benchHasStructures = $derived(
+    Object.values(benchBoard).some(
+      (slug) => cards.find((c) => c.slug === slug)?.kind === "structure",
+    ),
+  );
+  let siegeWarns = $derived(siegeWarnings(benchHasStructures, etudeOwnRules, etudeRules));
+
+  /** Заложить город одним нажатием: снаряжение (заводится заново, если его
+   *  удалили), поле 4 × 5, стены, ров, укрытие, башня, таран и правила
+   *  штурма. Всё остальное на доске остаётся на местах. */
+  async function makeCity() {
+    try {
+      const missing = siegeGearRequests().filter(
+        (r) => !cards.some((c) => c.slug === r.slug),
+      );
+      for (const request of missing) await api.adminSaveBattleCard(request);
+      if (missing.length) {
+        await loadCards();
+        flash($t("adminBattlesCityGearMade"));
+      }
+    } catch (e) {
+      flash(refusalWord(e), 6000);
+      return;
+    }
+    if (benchField.width !== CITY_FIELD.width || benchField.depth !== CITY_FIELD.depth) {
+      resizeField({ ...CITY_FIELD });
+    }
+    const city = cityLayout(benchField, benchBoard, benchTerrain);
+    benchBoard = city.board;
+    benchTerrain = city.terrain;
+    etudeOwnRules = true;
+    etudeRules = siegeRules(etudeRules);
+    etudeSide = "scripted";
+    flash(
+      city.displaced
+        ? `${$t("adminBattlesCityMade")} ${$t("adminBattlesCityDisplaced")}: ${city.displaced}`
+        : $t("adminBattlesCityMade"),
+      6000,
+    );
+  }
+
+  function fixSiege(warning: SiegeWarning) {
+    etudeOwnRules = true;
+    etudeRules =
+      warning === "idleToll"
+        ? { ...etudeRules, idleToll: 0 }
+        : { ...etudeRules, keeperHoldsOnTime: true };
+  }
+
+  /** Проверка ботами: итог и та расстановка, на которой он получен. */
+  let probe = $state<{ key: string; report: BattleProbeReport | null; failed: boolean } | null>(
+    null,
+  );
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
+  let probeStale = $derived(!!probe && probe.key !== canonical(benchSetup));
+  let probeSays = $derived(probe?.report ? probeVerdict(probe.report) : null);
+  onDestroy(() => clearTimeout(probeTimer));
+
+  async function runProbe() {
+    clearTimeout(probeTimer);
+    const key = canonical(benchSetup);
+    probe = { key, report: null, failed: false };
+    try {
+      const { id } = await api.adminStartBattleProbe(benchSetup, etudeDepth);
+      const ask = () => {
+        probeTimer = setTimeout(async () => {
+          if (probe?.key !== key) return;
+          try {
+            const state = await api.adminReadBattleProbe(id);
+            if (probe?.key !== key) return;
+            if (state.state === "done") probe = { key, report: state.report, failed: false };
+            else ask();
+          } catch {
+            probe = { key, report: null, failed: true };
+          }
+        }, 3000);
+      };
+      ask();
+    } catch {
+      probe = { key, report: null, failed: true };
+    }
+  }
+
+  /** Отметка на карте прямо со стола поля: «стреляет», «строение». Пишется
+   *  тем же запросом, что и форма карты (`cardBody`), — второй способ
+   *  собрать карту однажды записал бы не ту карту. */
+  async function markCard(card: BattleCardDto, patch: Partial<BattleCardDto>) {
+    try {
+      const body = cardBody({
+        ...card,
+        traits: (card.traits ?? []).map((t) => ({ ...t })),
+        ...patch,
+      });
+      await api.adminSaveBattleCard(body, card.id);
+      await loadCards();
+      flash($t("adminBattlesCardMarkSaved"));
+    } catch (e) {
+      flash(refusalWord(e), 6000);
+    }
   }
 
   async function saveEtude() {
@@ -702,23 +916,11 @@
     try {
       // Расстановку даёт стол, а не отдельная копия: второй источник правды
       // разошёлся бы с тем, что хранитель только что разыграл.
-      const saved = await api.adminSaveBattleChallenge(
-        {
-          titleEn: etudeTitleEn.trim(),
-          titleRu: etudeTitleRu.trim(),
-          noteEn: etudeNoteEn.trim() || null,
-          noteRu: etudeNoteRu.trim() || null,
-          setup: benchSetup,
-          botDepth: etudeDepth,
-          rewardDust: etudeReward,
-          rewardFinishDust: etudeFinish,
-          playerSide: etudeSide,
-          status: etudeStatus,
-        },
-        etudeId ?? undefined,
-      );
+      const request = etudeRequest();
+      const saved = await api.adminSaveBattleChallenge(request, etudeId ?? undefined);
       challenges = await api.adminListBattleChallenges();
       etudeId = saved.id;
+      etudeSaved = canonical(request);
       flash($t("adminBattlesEtudeSaved"));
     } catch (e) {
       flash(String(e), 6000);
@@ -920,20 +1122,25 @@
     }
   }
 
-  const etudeTitleOf = (c: BattleChallenge) =>
-    $lang === "ru" ? c.titleRu || c.titleEn : c.titleEn || c.titleRu;
+  const etudeTitleOf = (c: BattleChallenge) => localized(c, "title", $lang);
 
 
 
   let visible = $derived(
-    listQuery.trim()
-      ? cards.filter((c) =>
-          `${c.titleRu} ${c.titleEn} ${c.figurineName ?? ""}`
+    cards.filter(
+      (c) =>
+        (!listRace ||
+          (listRace === "none" ? !c.raceId : c.raceId === listRace)) &&
+        (!listQuery.trim() ||
+          `${c.titleRu} ${c.titleEn} ${c.titleUk ?? ""} ${c.figurineName ?? ""}`
             .toLowerCase()
-            .includes(listQuery.trim().toLowerCase()),
-        )
-      : cards,
+            .includes(listQuery.trim().toLowerCase())),
+    ),
   );
+  /** Перетаскивание имеет смысл только на полном списке: в отобранном у места
+   *  нет одного значения. */
+  let listFiltered = $derived(!!listQuery.trim() || !!listRace);
+  let cardsWithoutRace = $derived(cards.filter((c) => !c.raceId).length);
 
   /** The "Work" picker's own filter — the collection is flat and alphabetical
    *  by nothing in particular, so past thirty or so entries scrolling to find
@@ -989,7 +1196,8 @@
     | { kind: "card"; id: string }
     | { kind: "blank"; tier: number };
   let frameSampleKey = $derived.by((): FrameSampleKey => {
-    if (draft.titleRu || draft.titleEn) return { kind: "draft" };
+    if (draft.titleRu || draft.titleEn || draft.titleUk)
+      return { kind: "draft" };
     const tier = frames[frameIndex]?.tier ?? 1;
     const real = cards.find((c) => c.tier === tier);
     return real ? { kind: "card", id: real.id } : { kind: "blank", tier };
@@ -1003,13 +1211,16 @@
   function buildFrameSample(): BattleCardDto {
     const tier = frames[frameIndex]?.tier ?? 1;
     const raw =
-      draft.titleRu || draft.titleEn
+      draft.titleRu || draft.titleEn || draft.titleUk
         ? { ...draft, tier }
         : (cards.find((c) => c.tier === tier) ?? {
             ...emptyBattleCard(),
             tier,
             titleEn: "The Keeper of the Key",
             titleRu: "Хранительница Ключа",
+            titleUk: "Охоронниця Ключа",
+            effectUk:
+              "Вир Душі: кожне третє закляття створює копію ефекту.",
             effectRu:
               "Вихрь Души: каждое третье заклинание создаёт копию эффекта.",
             effectEn:
@@ -1057,10 +1268,13 @@
     tier: 3,
     titleEn: "The Keeper of the Key",
     titleRu: "Хранительница Ключа",
+    titleUk: "Охоронниця Ключа",
     effectEn: "A sample card, to see the icon in place.",
     effectRu: "Пример карты — чтобы увидеть иконку на месте.",
+    effectUk: "Приклад карти — щоб побачити іконку на місці.",
     raceNameEn: raceNameEn || raceNameRu ? raceNameEn || raceNameRu : null,
     raceNameRu: raceNameRu || raceNameEn ? raceNameRu || raceNameEn : null,
+    raceNameUk: raceNameUk || null,
     raceIconUrl: raceIconUrl.trim() || null,
     raceLevelFrames: raceLevelFrames.some((f) => f)
       ? JSON.stringify(raceLevelFrames)
@@ -1599,8 +1813,10 @@
     keywordDraftId = keyword?.id ?? null;
     keywordNameEn = keyword?.nameEn ?? "";
     keywordNameRu = keyword?.nameRu ?? "";
+    keywordNameUk = keyword?.nameUk ?? "";
     keywordRulesEn = keyword?.rulesEn ?? "";
     keywordRulesRu = keyword?.rulesRu ?? "";
+    keywordRulesUk = keyword?.rulesUk ?? "";
     keywordPoints = keyword?.pointValue ?? null;
   }
 
@@ -1611,8 +1827,10 @@
         {
           nameEn: keywordNameEn.trim(),
           nameRu: keywordNameRu.trim(),
+          nameUk: keywordNameUk.trim(),
           rulesEn: keywordRulesEn.trim() || null,
           rulesRu: keywordRulesRu.trim() || null,
+          rulesUk: keywordRulesUk.trim() || null,
           pointValue: keywordPoints,
         },
         keywordDraftId ?? undefined,
@@ -1639,16 +1857,50 @@
     }
   }
 
-  function openRace(race: BattleRace | null) {
+  /** Лист расы целиком, как строка: по ней видно, что правка не сохранена. */
+  function raceForm(): string {
+    return JSON.stringify([
+      raceNameEn, raceNameRu, raceNameUk, raceNoteEn, raceNoteRu, raceNoteUk,
+      raceIconUrl, raceMotionWear, raceLevelFrames, raceDamage,
+    ]);
+  }
+  // Снимок пустого листа, а не пустая строка: иначе нетронутый лист новой
+  // расы с первой секунды считался бы несохранённым.
+  let raceSavedForm = $state(raceForm());
+  let raceDirty = $derived(!raceSorting && raceForm() !== raceSavedForm);
+
+  /** Уйти с листа с несохранённым — только переспросив. */
+  function leaveRaceSheet(): boolean {
+    return !raceDirty || confirm($t("adminRaceUnsaved"));
+  }
+
+  $effect(() => {
+    if (!raceDirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  });
+
+  /** `force` — открыть, не спрашивая о несохранённом: после сохранения и
+   *  удаления спрашивать не о чем. */
+  function openRace(race: BattleRace | null, force = false) {
+    if (!force && !leaveRaceSheet()) return;
+    raceSorting = false;
     raceDraftId = race?.id ?? null;
     raceNameEn = race?.nameEn ?? "";
     raceNameRu = race?.nameRu ?? "";
+    raceNameUk = race?.nameUk ?? "";
     raceNoteEn = race?.noteEn ?? "";
     raceNoteRu = race?.noteRu ?? "";
+    raceNoteUk = race?.noteUk ?? "";
     raceIconUrl = race?.iconUrl ?? "";
     raceMotionWear = race?.motionWear ?? null;
+    raceDamage = race?.raceDamage
+      ? { ...race.raceDamage, against: [...race.raceDamage.against], from: [...race.raceDamage.from] }
+      : { attack: 0, against: [], defence: 0, from: [] };
     raceLevelFrames = parseLevelFrames(race?.levelFrames);
     raceLevelPreview = 1;
+    raceSavedForm = raceForm();
   }
 
   async function saveRace() {
@@ -1658,13 +1910,18 @@
         {
           nameEn: raceNameEn.trim(),
           nameRu: raceNameRu.trim(),
+          nameUk: raceNameUk.trim(),
           noteEn: raceNoteEn.trim() || null,
           noteRu: raceNoteRu.trim() || null,
+          noteUk: raceNoteUk.trim() || null,
           iconUrl: raceIconUrl.trim() || null,
           levelFrames: raceLevelFrames.some((f) => f)
             ? JSON.stringify(raceLevelFrames)
             : null,
           motionWear: raceMotionWear,
+          // У новой расы таблицы ещё нет: ссылаться на себя она не может, пока
+          // у неё нет id.
+          raceDamage: raceDraftId ? $state.snapshot(raceDamage) : null,
         },
         raceDraftId ?? undefined,
       );
@@ -1675,7 +1932,8 @@
       races = raceDraftId
         ? races.map((r) => (r.id === saved.id ? saved : r))
         : [...races, saved];
-      openRace(null);
+      // Остаёмся на сохранённой расе: новой сразу ставят карты.
+      openRace(saved, true);
       flash($t("adminBattlesRaceSaved"));
     } catch (e) {
       flash(String(e), 6000);
@@ -1715,7 +1973,7 @@
       await api.adminDeleteBattleRace(race.id);
       races = await api.getBattleRaces();
       await loadCards();
-      if (raceDraftId === race.id) openRace(null);
+      if (raceDraftId === race.id) openRace(null, true);
       flash($t("adminBattlesRaceDeleted"));
     } catch (e) {
       flash(String(e), 6000);
@@ -1739,6 +1997,75 @@
   // still previews live, so moving the typing here loses nothing — the card
   // stays the single source of truth, it is just no longer also the keyboard.
 
+  /** Расу ставят сразу нескольким картам (стол рас). Карты в памяти стола
+   *  переписываются тут же, вместе с полями, которые обычно присоединяет
+   *  сервер, — иначе открытая карта, сохранённая следом, вернула бы прежнюю
+   *  расу. */
+  async function assignRace(ids: string[], raceId: string | null) {
+    let changed: number;
+    try {
+      ({ changed } = await api.adminSetBattleCardsRace(ids, raceId));
+    } catch (e) {
+      flash(String(e), 6000);
+      return;
+    }
+    // Страница отправляет только карты, которым раса действительно меняется.
+    // Если сервер поменял меньше — список на странице устарел (карту убрали
+    // или правили в другой вкладке): перечитываем, а не дописываем догадку.
+    if (changed !== ids.length) {
+      await loadCards();
+      races = races.map((r) => ({
+        ...r,
+        cardCount: cards.filter((c) => c.raceId === r.id).length,
+      }));
+      flash($t("adminRaceCardsReloaded"), 6000);
+      return;
+    }
+    const picked = races.find((r) => r.id === raceId) ?? null;
+    const dress = {
+      raceId,
+      raceNameEn: picked?.nameEn ?? null,
+      raceNameRu: picked?.nameRu ?? null,
+      raceNameUk: picked?.nameUk || null,
+      raceIconUrl: picked?.iconUrl ?? null,
+      raceLevelFrames: picked?.levelFrames ?? null,
+      raceMotionWear: picked?.motionWear ?? null,
+    };
+    const touched = new Set(ids);
+    cards = cards.map((c) => (touched.has(c.id) ? { ...c, ...dress } : c));
+    if (selectedId && touched.has(selectedId)) Object.assign(draft, dress);
+    races = races.map((r) => ({
+      ...r,
+      cardCount: cards.filter((c) => c.raceId === r.id).length,
+    }));
+    flash(
+      raceId
+        ? `${$t("adminRaceCardsDone")} «${localized(picked!, "name", $lang)}»: ${ids.length}`
+        : `${$t("adminRaceCardsTaken")}: ${ids.length}`,
+    );
+  }
+
+  /** Порядок рас — перетаскиванием в списке; в нём же они стоят в отборе
+   *  полки и в выборе расы на листе карты. */
+  async function dropRace(to: number) {
+    const from = raceDragFrom;
+    raceDragFrom = null;
+    raceDragOver = null;
+    if (from === null || from === to) return;
+    const before = races;
+    const next = [...races];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    races = next;
+    try {
+      await api.adminReorderBattleRaces(next.map((r) => r.id));
+      flash($t("adminRacesOrderSaved"));
+    } catch (e) {
+      races = before;
+      flash(String(e), 6000);
+    }
+  }
+
   /** Picking a race also updates what the header actually shows — the DTO's
    *  flattened name/icon are normally the server's doing, and the live card
    *  must agree with them before anything is saved. */
@@ -1747,6 +2074,7 @@
     const picked = races.find((r) => r.id === id);
     draft.raceNameEn = picked?.nameEn ?? null;
     draft.raceNameRu = picked?.nameRu ?? null;
+    draft.raceNameUk = picked?.nameUk || null;
     draft.raceIconUrl = picked?.iconUrl ?? null;
     draft.raceLevelFrames = picked?.levelFrames ?? null;
     draft.raceMotionWear = picked?.motionWear ?? null;
@@ -1763,7 +2091,7 @@
     if (list.length >= TRAITS_MAX) return;
     draft.traits = [
       ...list,
-      { nameEn: "", nameRu: "", textEn: "", textRu: "" },
+      { nameEn: "", nameRu: "", textEn: "", textRu: "", nameUk: "", textUk: "" },
     ];
   }
 
@@ -1895,14 +2223,12 @@
   const tallyTitle = (t: {
     titleRu: string | null;
     titleEn: string | null;
+    titleUk?: string | null;
     slug?: string;
-  }) =>
-    ($lang === "ru" ? t.titleRu || t.titleEn : t.titleEn || t.titleRu) ||
-    t.slug ||
-    "—";
+  }) => localized(t, "title", $lang) || t.slug || "—";
 
   const shortDate = (iso: string) =>
-    new Date(iso).toLocaleString($lang === "ru" ? "ru-RU" : "en-GB", {
+    new Date(iso).toLocaleString(pick($lang, { en: "en-GB", ru: "ru-RU", uk: "uk-UA" }), {
       day: "2-digit",
       month: "2-digit",
       hour: "2-digit",
@@ -1967,7 +2293,7 @@
   function takeDeed(deed: AdminBattleErrand) {
     grantCoin = deed.currency;
     grantAmount = deed.amount;
-    grantNote = $lang === "ru" ? deed.titleRu : deed.titleEn;
+    grantNote = localized(deed, "title", $lang);
   }
 
   async function saveClock() {
@@ -2013,6 +2339,7 @@
     draft: "bg-[#b9a68f]",
     published: "bg-emerald-600",
     retired: "bg-[#b0a08e]",
+    etude: "bg-[#6f3b24]",
   };
 
   function flash(text: string, ms = 3000) {
@@ -2022,11 +2349,7 @@
   }
 
   function titleOf(card: BattleCardDto): string {
-    return (
-      ($lang === "ru"
-        ? card.titleRu || card.titleEn
-        : card.titleEn || card.titleRu) || "—"
-    );
+    return localized(card, "title", $lang) || "—";
   }
 
   async function loadCards() {
@@ -2055,47 +2378,52 @@
    * начали бы взвешивать не ту карту, которую записывает кнопка, и разошлись бы
    * молча.
    */
-  function cardBody(): SaveBattleCardRequest {
+  function cardBody(c: typeof draft = draft): SaveBattleCardRequest {
     return {
-      slug: draft.slug.trim() || null,
-      status: draft.status,
-      tier: draft.tier,
-      titleEn: draft.titleEn.trim(),
-      titleRu: draft.titleRu.trim(),
-      effectEn: draft.effectEn?.trim() || null,
-      effectRu: draft.effectRu?.trim() || null,
-      loreEn: draft.loreEn?.trim() || null,
-      loreRu: draft.loreRu?.trim() || null,
-      cost: draft.cost,
-      power: draft.power,
-      health: draft.health,
-      mana: draft.mana,
-      traits: (draft.traits ?? []).filter(
-        (t) => t.nameEn.trim() || t.nameRu.trim(),
+      slug: c.slug.trim() || null,
+      status: c.status,
+      tier: c.tier,
+      titleEn: c.titleEn.trim(),
+      titleRu: c.titleRu.trim(),
+      titleUk: (c.titleUk ?? "").trim(),
+      effectEn: c.effectEn?.trim() || null,
+      effectRu: c.effectRu?.trim() || null,
+      effectUk: c.effectUk?.trim() || null,
+      loreEn: c.loreEn?.trim() || null,
+      loreRu: c.loreRu?.trim() || null,
+      loreUk: c.loreUk?.trim() || null,
+      cost: c.cost,
+      power: c.power,
+      health: c.health,
+      mana: c.mana,
+      traits: (c.traits ?? []).filter(
+        (t) => t.nameEn.trim() || t.nameRu.trim() || (t.nameUk ?? "").trim(),
       ),
-      kind: draft.kind,
-      armor: draft.armor,
-      ward: draft.ward,
-      attackChannel: draft.attackChannel,
-      reach: draft.reach,
-      step: draft.step,
-      speed: draft.speed,
-      mend: draft.mend,
+      kind: c.kind,
+      armor: c.armor,
+      ward: c.ward,
+      attackChannel: c.attackChannel,
+      reach: c.reach,
+      step: c.step,
+      speed: c.speed,
+      mend: c.mend,
       // Прозу движок не читает; исполняемая половина едет отдельно.
-      abilities: draft.abilities ?? [],
-      raceId: draft.raceId || null,
-      typeEn: draft.typeEn?.trim() || null,
-      typeRu: draft.typeRu?.trim() || null,
-      priceDust: draft.priceDust,
-      priceFeed: draft.priceFeed,
-      levelPriceDust: draft.levelPriceDust,
-      lendable: draft.lendable,
-      editionSize: draft.editionSize ?? null,
-      artUrl: draft.artUrlOverride?.trim() || null,
-      artFocal: draft.artFocal,
-      frameOverride: draft.frameOverride,
-      motionWear: draft.motionWear ?? null,
-      figurineId: draft.figurineId || null,
+      abilities: c.abilities ?? [],
+      raceId: c.raceId || null,
+      typeEn: c.typeEn?.trim() || null,
+      typeRu: c.typeRu?.trim() || null,
+      typeUk: c.typeUk?.trim() || null,
+      priceDust: c.priceDust,
+      priceFeed: c.priceFeed,
+      levelPriceDust: c.levelPriceDust,
+      lendable: c.lendable,
+      shoots: !!c.shoots,
+      editionSize: c.editionSize ?? null,
+      artUrl: c.artUrlOverride?.trim() || null,
+      artFocal: c.artFocal,
+      frameOverride: c.frameOverride,
+      motionWear: c.motionWear ?? null,
+      figurineId: c.figurineId || null,
     };
   }
 
@@ -2204,8 +2532,8 @@
   let faults = $derived(new Set([...missing, ...blocking]));
 
   /** Чего нет у поля на двух языках — по словам сервера. */
-  const lacks = (field: "title" | "effect", side: "en" | "ru") =>
-    faults.has(`${field}${side === "en" ? "En" : "Ru"}`);
+  const lacks = (field: "title" | "effect", side: Lang) =>
+    faults.has(`${field}${capOf(side)}`);
 
   /** Пометка под полем: пусто здесь — или здесь заполнено, а пусто там. */
   function lackNote(field: "title" | "effect"): string {
@@ -2217,9 +2545,12 @@
   /** Метки EN / RU у подписи поля: что заполнено, видно сразу на обеих
    *  сторонах. Это показ, а не правило — решает сервер. */
   function langsOf(field: "title" | "effect") {
-    const en = (field === "title" ? draft.titleEn : draft.effectEn) ?? "";
-    const ru = (field === "title" ? draft.titleRu : draft.effectRu) ?? "";
-    return { en: !!en.trim(), ru: !!ru.trim(), current: editLang };
+    return {
+      en: !!said(draft, field, "en").trim(),
+      ru: !!said(draft, field, "ru").trim(),
+      uk: !!said(draft, field, "uk").trim(),
+      current: editLang,
+    };
   }
 
   /** Начато на одном языке, а на другом пусто. */
@@ -2228,7 +2559,7 @@
 
   /** На какой стороне пусто у черты или способности, начатой на одном
    *  языке, — чтобы отвести к ней, а не к той, что уже заполнена. */
-  function halfSide(fault: string): "en" | "ru" | null {
+  function halfSide(fault: string): Lang | null {
     const pairs: [string, string][] =
       fault === "abilityName"
         ? (draft.abilities ?? []).map((a) => [a.nameEn, a.nameRu])
@@ -2285,7 +2616,7 @@
     const tail = count % 100;
     const last = count % 10;
     const form =
-      $lang === "ru"
+      $lang !== "en"
         ? tail >= 11 && tail <= 14
           ? "Many"
           : last === 1
@@ -3643,7 +3974,7 @@
                 </label>
                 <p class="pb-1.5 text-[11px] text-[#8a6a55]">
                   {$t("adminBattlesClockNow")}
-                  {new Date(Date.now() + (clock.offsetMin + new Date().getTimezoneOffset()) * 60000).toLocaleString($lang === "ru" ? "ru-RU" : "en-GB")}
+                  {new Date(Date.now() + (clock.offsetMin + new Date().getTimezoneOffset()) * 60000).toLocaleString(pick($lang, { en: "en-GB", ru: "ru-RU", uk: "uk-UA" }))}
                 </p>
                 <button
                   type="button"
@@ -3657,255 +3988,7 @@
           </div>
         </details>
 
-        <!-- ── Чем расстановка подписана, если её оставить ────────────────
-             Поля стоят над столом, а расстановки не хранят: её всегда даёт
-             `benchSetup`. Сохранить можно только то, что стоит на столе
-             сейчас, — и только когда на обеих половинах кто-то есть, ровно
-             как проверяет сервер. -->
-        <div class="mb-6 pb-5 border-b border-[#34251c]/10">
-          <p
-            class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-          >
-            {etudeId ? $t("adminBattlesEtude") : $t("adminBattlesEtudeNew")}
-          </p>
-          <details class="mb-3">
-            <summary
-              class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-              >{$t("adminBattlesHintOpen")}</summary
-            >
-            <p
-              class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
-            >
-              {$t("adminBattlesEtudeHint")}
-            </p>
-          </details>
-
-          <div class="flex flex-wrap gap-x-4 gap-y-3 items-end">
-            {#each [{ label: $t("adminBattlesEtudeTitle") + " · RU", get: () => etudeTitleRu, set: (v: string) => (etudeTitleRu = v), wide: true }, { label: $t("adminBattlesEtudeTitle") + " · EN", get: () => etudeTitleEn, set: (v: string) => (etudeTitleEn = v), wide: true }, { label: $t("adminBattlesEtudeNote") + " · RU", get: () => etudeNoteRu, set: (v: string) => (etudeNoteRu = v), wide: false }, { label: $t("adminBattlesEtudeNote") + " · EN", get: () => etudeNoteEn, set: (v: string) => (etudeNoteEn = v), wide: false }] as field (field.label)}
-              <label class="block {field.wide ? 'w-52' : 'w-64'}">
-                <span
-                  class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                  >{field.label}</span
-                >
-                <input
-                  value={field.get()}
-                  oninput={(e) => field.set(e.currentTarget.value)}
-                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
-                />
-              </label>
-            {/each}
-
-            <label class="block w-44">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesEtudeDepth")}</span
-              >
-              <select
-                bind:value={etudeDepth}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
-              >
-                {#each BOT_HANDS as hand (hand.depth)}
-                  <option value={hand.depth}>{$t(hand.label)}</option>
-                {/each}
-              </select>
-            </label>
-
-            <label class="block w-32">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesEtudeReward")}</span
-              >
-              <input
-                type="number"
-                min="0"
-                max="1000"
-                bind:value={etudeReward}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
-              />
-            </label>
-
-            <!-- За доведённое до конца. Платится и проигравшему: до сих пор
-                 новичок, проигравший первую партию, не получал ровно ничего —
-                 худший из возможных ответов на первую же попытку сыграть.
-                 Ключ у неё свой, так что фермы это не открывает. -->
-            <label class="block w-32">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesEtudeFinish")}</span
-              >
-              <input
-                type="number"
-                min="0"
-                max="1000"
-                bind:value={etudeFinish}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
-              />
-            </label>
-
-            <label class="block w-44">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesEtudeSide")}</span
-              >
-              <select
-                bind:value={etudeSide}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
-              >
-                <option value="scripted"
-                  >{$t("adminBattlesEtudeSideScripted")}</option
-                >
-                <option value="deck">{$t("adminBattlesEtudeSideDeck")}</option>
-              </select>
-            </label>
-
-            <label class="block w-32">
-              <span
-                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesStatus")}</span
-              >
-              <select
-                bind:value={etudeStatus}
-                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
-              >
-                <option value="draft">{$t("adminBattlesStatusDraft")}</option>
-                <option value="published"
-                  >{$t("adminBattlesStatusPublished")}</option
-                >
-                <option value="retired"
-                  >{$t("adminBattlesStatusRetired")}</option
-                >
-              </select>
-            </label>
-
-            <div class="flex gap-2">
-              <button
-                type="button"
-                disabled={!etudeReady || saving}
-                onclick={saveEtude}
-                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
-                >{$t("adminBattlesEtudeSave")}</button
-              >
-              {#if etudeId}
-                <button
-                  type="button"
-                  onclick={removeEtude}
-                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
-                  >{$t("adminBattlesEtudeDelete")}</button
-                >
-              {/if}
-            </div>
-          </div>
-
-          <!-- Пыль за этюд, а не за победу: переигрывать можно сколько угодно,
-               заплатят однажды. Сказано здесь, чтобы число ставили осознанно. -->
-          <p
-            class="mt-3 max-w-[62ch] text-[11px] leading-relaxed text-[#8a6a55]"
-          >
-            {$t("adminBattlesEtudeRewardNote")}
-          </p>
-
-          <!-- ── Правила этюда ──────────────────────────────────────────────
-               Вторая половина замысла: расстановка говорит, кто стоит, правила
-               — во что играют. Стол ниже играет ими же, поэтому проверяется
-               именно тот этюд, который потом достанется гостю. -->
-          <div class="mt-4 pt-4 border-t border-[#34251c]/10">
-            <label class="inline-flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" bind:checked={etudeOwnRules} />
-              <span class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >{$t("adminBattlesRulesOwn")}</span
-              >
-            </label>
-            <details class="mt-1">
-              <summary
-                class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
-                >{$t("adminBattlesHintOpen")}</summary
-              >
-              <p
-                class="mt-2 max-w-[62ch] text-[11px] leading-relaxed italic text-[#8a6a55]"
-              >
-                {$t("adminBattlesRulesHint")}
-              </p>
-            </details>
-
-            {#if etudeOwnRules}
-              <div class="mt-3 flex flex-wrap gap-x-5 gap-y-3 items-end">
-                {#each RULE_DIALS as dial (dial.key)}
-                  {#if dial.kind === "flag"}
-                    <label
-                      class="inline-flex items-center gap-2 w-56 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={!!etudeRules[dial.key]}
-                        onchange={(e) =>
-                          tune(dial.key, e.currentTarget.checked)}
-                      />
-                      <span class="text-[11px] text-[#5f4636]"
-                        >{$t(dial.label)}</span
-                      >
-                    </label>
-                  {:else}
-                    <label class="block w-40">
-                      <span
-                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                        >{$t(dial.label)}</span
-                      >
-                      <input
-                        type="number"
-                        min={dial.min}
-                        max={dial.max}
-                        value={etudeRules[dial.key]}
-                        oninput={(e) =>
-                          tune(dial.key, Number(e.currentTarget.value))}
-                        class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
-                      />
-                    </label>
-                  {/if}
-                {/each}
-              </div>
-
-              <!-- То же самое, что прочтёт гость на полке. Хранитель, видящий
-                   другую строку, правит вслепую. -->
-              <p
-                class="mt-3 max-w-[62ch] text-[11px] leading-relaxed text-[#5f4636]"
-              >
-                {#if etudeApart.length}
-                  {$t("adminBattlesRulesApart")}:
-                  {#each etudeApart as line, i (line.key)}{i > 0
-                      ? " · "
-                      : " "}{$t(line.key)}{line.amount === null
-                      ? ""
-                      : ` — ${line.amount}`}{/each}
-                {:else}
-                  {$t("adminBattlesRulesSame")}
-                {/if}
-              </p>
-              <button
-                type="button"
-                onclick={() => (etudeRules = { ...HOUSE_RULES })}
-                class="mt-2 px-2 py-1 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
-                >{$t("adminBattlesRulesReset")}</button
-              >
-            {/if}
-          </div>
-          {#if etudeSide === "deck"}
-            <p
-              class="mt-2 max-w-[62ch] text-[11px] leading-relaxed text-[#8a6a55]"
-            >
-              {$t("adminBattlesEtudeSideDeckNote")}
-            </p>
-          {/if}
-
-          {#if benchGone.length}
-            <p
-              class="mt-2 max-w-[62ch] text-[11px] leading-relaxed text-[#8f2f22]"
-            >
-              {$t("adminBattlesEtudeGone")}: {benchGone
-                .map(benchTitle)
-                .join(", ")}
-            </p>
-          {/if}
-        </div>
+        {@render etudeMeta(false)}
 
         {#if benchComplaint}
           <p class="mb-4 text-xs text-[#8f2f22]">{benchComplaint}</p>
@@ -3953,7 +4036,7 @@
                       >
                     {/if}
                     {#each benchable as c (c.id)}
-                      <option value={c.slug}>{c.titleRu}</option>
+                      <option value={c.slug}>{localized(c, "title", $lang)}</option>
                     {/each}
                   </select>
                 {/each}
@@ -3989,123 +4072,12 @@
             {/if}
           </div>
 
-          <!-- Руки обеих сторон. -->
-          <div class="w-64 flex flex-col gap-4">
-            {#each [{ side: "keeper" as const, label: $t("adminBattlesBenchKeeperHalf") }, { side: "player" as const, label: $t("adminBattlesBenchGuestHalf") }] as row (row.side)}
-              <div>
-                <p
-                  class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-                >
-                  {$t("adminBattlesBenchHand")} · {row.label}
-                </p>
-                <select
-                  value=""
-                  onchange={(e) => {
-                    benchAddToHand(row.side, e.currentTarget.value);
-                    e.currentTarget.value = "";
-                  }}
-                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
-                >
-                  <option value="">+</option>
-                  {#each benchable as c (c.id)}
-                    <option value={c.slug}>{c.titleRu}</option>
-                  {/each}
-                </select>
-                <div class="mt-1 flex flex-wrap gap-1">
-                  {#each benchHands[row.side] as slug, i (i)}
-                    <button
-                      type="button"
-                      onclick={() => benchDropFromHand(row.side, i)}
-                      class="px-1.5 py-0.5 text-[11px] border hover:bg-[#c65f3c]/10 {gone(
-                        slug,
-                      )
-                        ? 'border-[#8f2f22]/40 text-[#8f2f22]'
-                        : 'border-[#34251c]/15'}">{benchTitle(slug)} ×</button
-                    >
-                  {:else}
-                    <span class="text-[11px] italic text-[#8a6a55]"
-                      >{$t("adminBattlesBenchEmpty")}</span
-                    >
-                  {/each}
-                </div>
-              </div>
-            {/each}
+          {@render etudeHands()}
 
-            <label class="flex items-center gap-2 text-[11px] text-[#5f4636]">
-              <input type="checkbox" bind:checked={benchBoth} />
-              {$t("adminBattlesBenchBothSides")}
-            </label>
-
-            <div class="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={!benchReady || benchBusy}
-                onclick={benchStart}
-                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
-                >{$t("adminBattlesBenchStart")}</button
-              >
-              <button
-                type="button"
-                disabled={!benchReady || benchBusy}
-                onclick={() => benchCall(null, true)}
-                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 disabled:opacity-40"
-                >{$t("adminBattlesBenchPlayOut")}</button
-              >
-              <button
-                type="button"
-                disabled={!benchJournal.length || benchBusy}
-                onclick={benchUndo}
-                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 disabled:opacity-40"
-                >{$t("adminBattlesBenchUndo")}</button
-              >
-              <button
-                type="button"
-                onclick={benchReset}
-                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
-                >{$t("adminBattlesBenchReset")}</button
-              >
-            </div>
-            {#if !benchReady}
-              <p class="text-[11px] italic text-[#8a6a55]">
-                {$t("adminBattlesBenchNeedsBodies")}
-              </p>
-            {/if}
-          </div>
-
-          <!-- Сама партия. -->
-          {#if benchMatch}
-            <div class="w-[24rem]">
-              <!-- Исход рисует сама сцена — сургучной печатью. Второй строки
-                   под доской здесь больше нет: стол должен видеть ровно то,
-                   что увидит гость. -->
-              <BattleScene
-                match={benchMatch}
-                {cards}
-                {frames}
-                {motions}
-                busy={benchBusy}
-                control={benchBoth ? "both" : "player"}
-                onact={(a) => benchCall(a)}
-              />
-            </div>
-          {/if}
+          {@render etudePlay()}
         </div>
 
-        <!-- Журнал. Ради разбора урона он и нужен: видно, почему три, а не восемь. -->
-        {#if bench && bench.events.length}
-          <div class="mt-8 max-w-3xl">
-            <p
-              class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
-            >
-              {$t("adminBattlesBenchLog")}
-            </p>
-            <ul class="text-[11px] leading-relaxed text-[#5f4636] font-mono">
-              {#each bench.events as e, i (i)}
-                <li>{benchLine(e)}</li>
-              {/each}
-            </ul>
-          </div>
-        {/if}
+        {@render etudeLog()}
       </div>
     </div>
   {:else if view === "hand"}
@@ -4298,7 +4270,7 @@
                   onclick={() => takeDeed(deed)}
                   class="px-2.5 py-1 text-[11px] border border-[#34251c]/20 hover:bg-[#34251c]/5"
                 >
-                  {$lang === "ru" ? deed.titleRu : deed.titleEn}
+                  {localized(deed, "title", $lang)}
                   <span class="ml-1 text-[#6f3b24]">{deed.amount}</span>
                 </button>
               {/each}
@@ -4366,13 +4338,19 @@
       </div>
     </div>
   {:else if view === "field"}
+    <!-- Этюд целиком на одной странице: доска с городом и проверкой сверху,
+         под ней — записка, награда, правила, руки сторон и пробная партия.
+         Те же фрагменты, что на «Столе», а не их копии. -->
+    <div class="flex-1 overflow-y-auto min-w-0">
     <BattleFieldDesk
       {challenges}
       {etudeId}
       bind:titleRu={etudeTitleRu}
       bind:titleEn={etudeTitleEn}
+      bind:titleUk={etudeTitleUk}
       bind:board={benchBoard}
       bind:terrain={benchTerrain}
+      bind:background={benchBackground}
       bind:side={etudeSide}
       field={benchField}
       cards={benchable}
@@ -4381,7 +4359,32 @@
       onopen={openEtude}
       onsave={saveEtude}
       onresize={resizeField}
+      changed={etudeChanged}
+      tools={siegeTools}
+      cardTools={cardMarks}
     />
+      <div class="px-5 pb-10">
+        <section class="pt-5 border-t border-[#34251c]/10">
+          <p class="mb-3 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+            {$t("adminBattlesEtudeSection")}
+          </p>
+          {@render etudeMeta(true)}
+        </section>
+        <section class="pt-5 border-t border-[#34251c]/10">
+          <p class="mb-3 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]">
+            {$t("adminBattlesFieldPlay")}
+          </p>
+          {#if benchComplaint}
+            <p class="mb-4 text-xs text-[#8f2f22]">{benchComplaint}</p>
+          {/if}
+          <div class="flex flex-wrap gap-8 items-start">
+            {@render etudeHands()}
+            {@render etudePlay()}
+          </div>
+          {@render etudeLog()}
+        </section>
+      </div>
+    </div>
   {:else if view === "matches"}
     <!--
       ── Сыгранные партии ──────────────────────────────────────────────────
@@ -4718,14 +4721,14 @@
                   <span
                     class="text-sm"
                     style="font-family: 'Cormorant Garamond', Georgia, serif;"
-                    >{keyword.nameRu}</span
+                    >{localized(keyword, "name", $lang)}</span
                   >
                   <span class="ml-2 text-[11px] text-[#8a6a55]"
                     >{keyword.nameEn}</span
                   >
-                  {#if keyword.rulesRu}
+                  {#if localized(keyword, "rules", $lang)}
                     <span class="block text-[11px] leading-snug text-[#8a6a55]"
-                      >{keyword.rulesRu}</span
+                      >{localized(keyword, "rules", $lang)}</span
                     >
                   {/if}
                 </button>
@@ -4775,6 +4778,17 @@
                 class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
               />
             </label>
+            <label class="block w-52">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesKeywordName")} · UK</span
+              >
+              <input
+                bind:value={keywordNameUk}
+                maxlength="60"
+                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
             <label class="block w-40">
               <span
                 class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
@@ -4811,6 +4825,17 @@
               >
               <input
                 bind:value={keywordRulesEn}
+                maxlength="300"
+                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
+            <label class="block flex-1 min-w-[14rem]">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesKeywordRules")} · UK</span
+              >
+              <input
+                bind:value={keywordRulesUk}
                 maxlength="300"
                 class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
               />
@@ -4862,34 +4887,92 @@
             >{$t("adminBattlesRaceNew")}</button
           >
         </div>
+        <!-- Сколько собрания разобрано по расам — одной полосой: видно, много
+             ли осталось, не открывая «Без расы». -->
+        {#if cards.length}
+          <div class="px-3 py-2 border-b border-[#34251c]/10">
+            <div class="flex justify-between text-[10px] text-[#8a6a55]">
+              <span>{$t("adminRacesCoverage")}</span>
+              <span class="tabular-nums"
+                >{cards.length - cardsWithoutRace} / {cards.length}</span
+              >
+            </div>
+            <div class="mt-1 h-1 bg-[#34251c]/10">
+              <div
+                class="h-full bg-[#c65f3c]/70"
+                style="width: {((cards.length - cardsWithoutRace) / cards.length) * 100}%"
+              ></div>
+            </div>
+          </div>
+        {/if}
         <div class="flex-1 overflow-y-auto">
           {#if !races.length}
             <p class="p-3 text-xs italic text-[#5f4636]">
               {$t("adminBattlesRacesEmpty")}
             </p>
           {:else}
-            <ul class="pb-4">
-              {#each races as race (race.id)}
+            {#if races.length > 1}
+              <p
+                class="px-3 pt-2 pb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+              >
+                {$t("adminRacesDragHint")}
+              </p>
+            {/if}
+            <ul>
+              {#each races as race, i (race.id)}
                 <li
+                  draggable="true"
+                  ondragstart={() => (raceDragFrom = i)}
+                  ondragover={(e) => {
+                    e.preventDefault();
+                    raceDragOver = i;
+                  }}
+                  ondragleave={() => {
+                    if (raceDragOver === i) raceDragOver = null;
+                  }}
+                  ondrop={(e) => {
+                    e.preventDefault();
+                    dropRace(i);
+                  }}
+                  ondragend={() => {
+                    raceDragFrom = null;
+                    raceDragOver = null;
+                  }}
                   class="relative group border-b border-[#34251c]/5 {raceDraftId ===
-                  race.id
+                    race.id && !raceSorting
                     ? 'bg-[#34251c]/[0.06]'
+                    : ''} {raceDragOver === i ? 'bg-[#c65f3c]/10' : ''} {raceDragFrom ===
+                  i
+                    ? 'opacity-40'
                     : ''}"
                 >
                   <button
                     onclick={() => openRace(race)}
-                    class="w-full text-left px-3 py-2.5 pr-8 hover:bg-[#34251c]/[0.04]"
+                    class="w-full text-left px-3 py-2 pr-8 flex items-center gap-2.5 hover:bg-[#34251c]/[0.04]"
                   >
+                    <!-- Значок расы — тот, что стоит в шапке карты; без него
+                         пунктирная клетка, чтобы пустое было видно сразу. -->
                     <span
-                      class="block text-[13px] leading-snug truncate {raceDraftId ===
-                      race.id
-                        ? 'text-[#c65f3c]'
-                        : ''}"
-                      style="font-family: 'Cormorant Garamond', Georgia, serif;"
-                      >{race.nameRu}</span
-                    >
-                    <span class="block text-[10px] text-[#8a6a55] truncate">
-                      {race.nameEn} · {cardsOf(race.cardCount)}
+                      class="w-7 h-7 flex-shrink-0 bg-center bg-contain bg-no-repeat {race.iconUrl
+                        ? ''
+                        : 'border border-dashed border-[#34251c]/25'}"
+                      style={race.iconUrl ? `background-image:url('${race.iconUrl}')` : ""}
+                    ></span>
+                    <span class="min-w-0 flex-1">
+                      <span
+                        class="block text-[13px] leading-snug truncate {raceDraftId ===
+                          race.id && !raceSorting
+                          ? 'text-[#c65f3c]'
+                          : ''}"
+                        style="font-family: 'Cormorant Garamond', Georgia, serif;"
+                        >{localized(race, "name", $lang)}</span
+                      >
+                      <span class="block text-[10px] text-[#8a6a55] truncate">
+                        {cardsOf(race.cardCount)}{#if race.cardCount}{" · "}{cards.filter(
+                            (c) => c.raceId === race.id && c.status === "published",
+                          ).length}
+                          {$t("adminRacesOnShelf")}{/if}
+                      </span>
                     </span>
                   </button>
                   <!-- Убрать расу — у самой расы, а не общей кнопкой внизу:
@@ -4905,14 +4988,57 @@
               {/each}
             </ul>
           {/if}
+          <!-- Карты без расы — отдельной строкой в конце списка: это не раса,
+               а то, что ещё не разобрано. -->
+          <button
+            onclick={() => {
+              if (!leaveRaceSheet()) return;
+              raceSorting = true;
+              raceDraftId = null;
+            }}
+            class="w-full text-left px-3 py-2.5 mb-4 flex items-center gap-2.5 border-t border-[#34251c]/10 hover:bg-[#34251c]/[0.04] {raceSorting
+              ? 'bg-[#34251c]/[0.06]'
+              : ''}"
+          >
+            <span class="w-7 h-7 flex-shrink-0 border border-dashed border-[#34251c]/25"></span>
+            <span class="min-w-0 flex-1">
+              <span
+                class="block text-[13px] leading-snug italic {raceSorting
+                  ? 'text-[#c65f3c]'
+                  : 'text-[#5f4636]'}"
+                style="font-family: 'Cormorant Garamond', Georgia, serif;"
+                >{$t("adminRacesWithout")}</span
+              >
+              <span class="block text-[10px] text-[#8a6a55]">{cardsOf(cardsWithoutRace)}</span>
+            </span>
+          </button>
         </div>
       </aside>
 
       <div class="flex-1 flex flex-col min-h-0 overflow-y-auto @container">
+        {#if raceSorting}
+          <div class="flex-1 w-full max-w-[900px] mx-auto px-8 pt-7 pb-6">
+            <SheetHead
+              title={$t("adminRacesWithout")}
+              tag={cardsOf(cardsWithoutRace)}
+              lead={$t("adminRacesWithoutLead")}
+            />
+            <BattleRaceCards
+              {cards}
+              {races}
+              raceId={null}
+              onAssign={assignRace}
+              onOpen={(card) => {
+                view = "cards";
+                openCard(card);
+              }}
+            />
+          </div>
+        {:else}
         <div class="flex-1 w-full max-w-[1320px] mx-auto px-8 pt-7 pb-6">
           <SheetHead
             title={raceDraftId
-              ? raceNameRu || raceNameEn || $t("adminBattlesRaceNew")
+              ? raceNameRu || raceNameEn || raceNameUk || $t("adminBattlesRaceNew")
               : $t("adminBattlesRaceNew")}
             tag={raceDraftId
               ? cardsOf(races.find((r) => r.id === raceDraftId)?.cardCount ?? 0)
@@ -4946,7 +5072,47 @@
                   <SheetField label={`${$t("adminBattlesRaceNote")} · EN`}>
                     <input bind:value={raceNoteEn} maxlength="200" />
                   </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceName")} · UK`}>
+                    <input bind:value={raceNameUk} maxlength="60" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceNote")} · UK`}>
+                    <input bind:value={raceNoteUk} maxlength="200" />
+                  </SheetField>
                 </div>
+              </SheetPanel>
+
+              <!-- Карты расы: кто под ней стоит и кого поставить. Сразу под
+                   именем — ради этого вкладку открывают чаще всего. -->
+              <SheetPanel
+                wide
+                title={$t("adminRaceCardsTitle")}
+                lead={$t("adminRaceCardsLead")}
+              >
+                {#if raceDraftId}
+                  <BattleRaceCards
+                    {cards}
+                    {races}
+                    raceId={raceDraftId}
+                    onAssign={assignRace}
+                    onOpen={(card) => {
+                      view = "cards";
+                      openCard(card);
+                    }}
+                  />
+                {:else}
+                  <p class="text-xs italic text-[#5f4636]">
+                    {$t("adminRaceCardsSaveFirst")}
+                  </p>
+                {/if}
+              </SheetPanel>
+
+              <!-- Урон по расам: число и галочки, под ними сводная таблица. -->
+              <SheetPanel
+                wide
+                title={$t("adminRaceDamageTitle")}
+                lead={$t("adminRaceDamageLead")}
+              >
+                <BattleRaceDamage {races} raceId={raceDraftId} bind:value={raceDamage} />
               </SheetPanel>
 
               <!-- Наряд по уровням. Пять плиток — тот же гардероб, что у карты:
@@ -5125,6 +5291,9 @@
               class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
               >{$t("adminBattlesSaveRace")}</button
             >
+            {#if raceDirty}
+              <span class="text-[11px] text-[#8f2f22]">{$t("adminRaceNotSaved")}</span>
+            {/if}
             {#if raceDraftId}
               <button
                 onclick={() => openRace(null)}
@@ -5138,6 +5307,7 @@
             {/if}
           </div>
         </div>
+        {/if}
       </div>
     </div>
   {:else}
@@ -5155,6 +5325,24 @@
             placeholder={$t("adminBattlesSearch")}
             class="w-full px-2 py-1.5 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
           />
+          <!-- Отбор по расе. Число у каждой — сколько карт она даст, чтобы не
+               выбирать вслепую ту, под которой пусто. -->
+          <select
+            bind:value={listRace}
+            aria-label={$t("adminBattlesFilterRace")}
+            class="w-full px-2 py-1.5 text-xs bg-transparent border outline-none {listRace
+              ? 'border-[#c65f3c]/60 text-[#6f3b24]'
+              : 'border-[#34251c]/15'}"
+          >
+            <option value="">{$t("adminBattlesFilterRaceAll")} · {cards.length}</option>
+            {#each races as r (r.id)}
+              <option value={r.id}
+                >{localized(r, "name", $lang)} · {cards.filter((c) => c.raceId === r.id)
+                  .length}</option
+              >
+            {/each}
+            <option value="none">{$t("adminRacesWithout")} · {cardsWithoutRace}</option>
+          </select>
           <!-- Проверка полки. Карт десятки, и главная беда описи в том, что
                переполнение НЕВИДИМО: не влезшее уезжает в прокрутку, которой
                на карте никто не ищет. Кнопка ставит на стол невидимую стопку
@@ -5218,7 +5406,7 @@
             <ul class="pb-4">
               {#each visible as card, i (card.id)}
                 <li
-                  draggable={!listQuery}
+                  draggable={!listFiltered}
                   ondragstart={() => (dragFrom = i)}
                   ondragover={(e) => {
                     e.preventDefault();
@@ -5258,9 +5446,11 @@
                       >
                         {titleOf(card)}
                       </span>
-                      {#if card.figurineName}
+                      {#if card.figurineName || card.raceId}
                         <span class="block text-[10px] text-[#8a6a55] truncate"
-                          >{card.figurineName}</span
+                          >{#if card.raceId}<span class="text-[#6f3b24]"
+                              >{localized(card, "raceName", $lang)}</span
+                            >{#if card.figurineName}{" · "}{/if}{/if}{card.figurineName ?? ""}</span
                         >
                       {/if}
                     </span>
@@ -5328,20 +5518,16 @@
             <div
               class="flex border border-[#34251c]/15 text-[10px] uppercase tracking-[0.16em]"
             >
-              <button
-                onclick={() => (editLang = "ru")}
-                class="px-2.5 py-1 {editLang === 'ru'
-                  ? 'bg-[#34251c] text-[#f8f1e7]'
-                  : ''}"
-                title={$t("adminBattlesEditLang")}>RU</button
-              >
-              <button
-                onclick={() => (editLang = "en")}
-                class="px-2.5 py-1 {editLang === 'en'
-                  ? 'bg-[#34251c] text-[#f8f1e7]'
-                  : ''}"
-                title={$t("adminBattlesEditLang")}>EN</button
-              >
+              {#each LANGS as code (code)}
+                <button
+                  onclick={() => (editLang = code)}
+                  class="px-2.5 py-1 {editLang === code
+                    ? 'bg-[#34251c] text-[#f8f1e7]'
+                    : ''}"
+                  title={`${$t("adminBattlesEditLang")}: ${LANG_META[code].native}`}
+                  >{code.toUpperCase()}</button
+                >
+              {/each}
             </div>
             <label
               class="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
@@ -5648,12 +5834,8 @@
                   >
                     <input
                       maxlength="80"
-                      value={editLang === "en" ? draft.titleEn : draft.titleRu}
-                      oninput={(e) => {
-                        if (editLang === "en")
-                          draft.titleEn = e.currentTarget.value;
-                        else draft.titleRu = e.currentTarget.value;
-                      }}
+                      value={said(draft, "title")}
+                      oninput={(e) => say(draft, "title", e.currentTarget.value)}
                     />
                     <!-- Русские буквы в английском поле карта молча не
                          печатает (`lineInLang`): имя «не появлялось на карте»,
@@ -5672,9 +5854,7 @@
                       <option value="">{$t("adminBattlesRaceNone")}</option>
                       {#each races as race (race.id)}
                         <option value={race.id}
-                          >{editLang === "en"
-                            ? race.nameEn
-                            : race.nameRu}</option
+                          >{localized(race, "name", editLang)}</option
                         >
                       {/each}
                     </select>
@@ -5682,14 +5862,8 @@
                   <SheetField label={$t("battlesTypeLabel")}>
                     <input
                       maxlength="40"
-                      value={editLang === "en"
-                        ? (draft.typeEn ?? "")
-                        : (draft.typeRu ?? "")}
-                      oninput={(e) => {
-                        if (editLang === "en")
-                          draft.typeEn = e.currentTarget.value;
-                        else draft.typeRu = e.currentTarget.value;
-                      }}
+                      value={said(draft, "type")}
+                      oninput={(e) => say(draft, "type", e.currentTarget.value)}
                     />
                   </SheetField>
                   <SheetField
@@ -5705,14 +5879,9 @@
                     <textarea
                       maxlength="400"
                       rows="3"
-                      value={editLang === "en"
-                        ? (draft.effectEn ?? "")
-                        : (draft.effectRu ?? "")}
-                      oninput={(e) => {
-                        if (editLang === "en")
-                          draft.effectEn = e.currentTarget.value || null;
-                        else draft.effectRu = e.currentTarget.value || null;
-                      }}
+                      value={said(draft, "effect")}
+                      oninput={(e) =>
+                        say(draft, "effect", e.currentTarget.value, true)}
                     ></textarea>
                     {#if editLang === "en" && mostlyCyrillic(draft.effectEn ?? "")}
                       <p class="mt-1 text-[11px] leading-snug text-[#8f2f22]">
@@ -5727,14 +5896,9 @@
                     <textarea
                       maxlength="400"
                       rows="2"
-                      value={editLang === "en"
-                        ? (draft.loreEn ?? "")
-                        : (draft.loreRu ?? "")}
-                      oninput={(e) => {
-                        if (editLang === "en")
-                          draft.loreEn = e.currentTarget.value || null;
-                        else draft.loreRu = e.currentTarget.value || null;
-                      }}
+                      value={said(draft, "lore")}
+                      oninput={(e) =>
+                        say(draft, "lore", e.currentTarget.value, true)}
                     ></textarea>
                   </SheetField>
                 </div>
@@ -5761,28 +5925,20 @@
                         <input
                           maxlength="60"
                           aria-invalid={half(trait.nameEn, trait.nameRu) &&
-                            !(editLang === "en" ? trait.nameEn : trait.nameRu).trim()}
+                            !said(trait, "name").trim()}
                           placeholder={$t("adminBattlesTraitName")}
-                          value={editLang === "en" ? trait.nameEn : trait.nameRu}
-                          oninput={(e) => {
-                            if (editLang === "en")
-                              trait.nameEn = e.currentTarget.value;
-                            else trait.nameRu = e.currentTarget.value;
-                          }}
+                          value={said(trait, "name")}
+                          oninput={(e) => say(trait, "name", e.currentTarget.value)}
                           class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
                         />
                         <input
                           maxlength="200"
                           aria-invalid={!!(trait.nameEn.trim() || trait.nameRu.trim()) &&
                             half(trait.textEn, trait.textRu) &&
-                            !(editLang === "en" ? trait.textEn : trait.textRu).trim()}
+                            !said(trait, "text").trim()}
                           placeholder={$t("adminBattlesTraitText")}
-                          value={editLang === "en" ? trait.textEn : trait.textRu}
-                          oninput={(e) => {
-                            if (editLang === "en")
-                              trait.textEn = e.currentTarget.value;
-                            else trait.textRu = e.currentTarget.value;
-                          }}
+                          value={said(trait, "text")}
+                          oninput={(e) => say(trait, "text", e.currentTarget.value)}
                           class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
                         />
                       </div>
@@ -5891,6 +6047,13 @@
                     selected={draft.kind === "relic"}
                     onclick={() => (draft.kind = "relic")}
                   />
+                  <Medallion
+                    icon="structure"
+                    caption={$t("adminBattlesKindStructure")}
+                    note={$t("adminBattlesKindStructureNote")}
+                    selected={draft.kind === "structure"}
+                    onclick={() => (draft.kind = "structure")}
+                  />
                 </div>
 
                 <p class="mb-2 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">
@@ -5906,6 +6069,19 @@
                     />
                   {/each}
                 </div>
+
+                <!-- Стрелок — отметкой, а не дальностью: дальность 2 бывает и у
+                     копья, а копьём через стену города не бьют. Маг (магический
+                     урон) бьёт через стены и без отметки. -->
+                <label
+                  class="mt-4 flex items-start gap-2 text-[11px] leading-relaxed text-[#5f4636]"
+                >
+                  <input type="checkbox" class="mt-0.5" bind:checked={draft.shoots} />
+                  <span>
+                    {$t("adminBattlesShoots")}
+                    <span class="block italic text-[#8a6a55]">{$t("adminBattlesShootsHint")}</span>
+                  </span>
+                </label>
               </SheetPanel>
 
               <!--
@@ -6257,6 +6433,9 @@
                       <option value="retired"
                         >{$t("adminBattlesStatusRetired")}</option
                       >
+                      <option value="etude"
+                        >{$t("adminBattlesStatusEtude")}</option
+                      >
                     </select>
                   </SheetField>
                   <SheetField label={$t("adminBattlesSlug")}>
@@ -6468,3 +6647,470 @@
     />
   {/if}
 </div>
+
+<!-- ── Фрагменты этюда ──────────────────────────────────────────────────────
+     Одни и те же на «Столе» и на «Поле боя»: этюд один, и два его редактора
+     обязаны показывать одно и то же, а не две копии разметки, которые
+     однажды разойдутся. -->
+{#snippet etudeMeta(inField: boolean)}
+        <!-- ── Чем расстановка подписана, если её оставить ────────────────
+             Поля стоят над столом, а расстановки не хранят: её всегда даёт
+             `benchSetup`. Сохранить можно только то, что стоит на столе
+             сейчас, — и только когда на обеих половинах кто-то есть, ровно
+             как проверяет сервер. -->
+        <div class="mb-6 pb-5 border-b border-[#34251c]/10">
+          <p
+            class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+          >
+            {etudeId ? $t("adminBattlesEtude") : $t("adminBattlesEtudeNew")}
+          </p>
+          <details class="mb-3">
+            <summary
+              class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+              >{$t("adminBattlesHintOpen")}</summary
+            >
+            <p
+              class="max-w-[62ch] mt-2 text-[11px] leading-relaxed italic text-[#8a6a55]"
+            >
+              {$t("adminBattlesEtudeHint")}
+            </p>
+          </details>
+
+          <div class="flex flex-wrap gap-x-4 gap-y-3 items-end">
+            {#each [{ label: $t("adminBattlesEtudeTitle") + " · RU", get: () => etudeTitleRu, set: (v: string) => (etudeTitleRu = v), wide: true }, { label: $t("adminBattlesEtudeTitle") + " · EN", get: () => etudeTitleEn, set: (v: string) => (etudeTitleEn = v), wide: true }, { label: $t("adminBattlesEtudeNote") + " · RU", get: () => etudeNoteRu, set: (v: string) => (etudeNoteRu = v), wide: false }, { label: $t("adminBattlesEtudeNote") + " · EN", get: () => etudeNoteEn, set: (v: string) => (etudeNoteEn = v), wide: false }, { label: $t("adminBattlesEtudeTitle") + " · UK", get: () => etudeTitleUk, set: (v: string) => (etudeTitleUk = v), wide: true }, { label: $t("adminBattlesEtudeNote") + " · UK", get: () => etudeNoteUk, set: (v: string) => (etudeNoteUk = v), wide: false }] as field (field.label)}
+              {#if !(inField && field.wide)}
+              <label class="block {field.wide ? 'w-52' : 'w-64'}">
+                <span
+                  class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                  >{field.label}</span
+                >
+                <input
+                  value={field.get()}
+                  oninput={(e) => field.set(e.currentTarget.value)}
+                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
+                />
+              </label>
+              {/if}
+            {/each}
+
+            <label class="block w-44">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesEtudeDepth")}</span
+              >
+              <select
+                bind:value={etudeDepth}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
+              >
+                {#each BOT_HANDS as hand (hand.depth)}
+                  <option value={hand.depth}>{$t(hand.label)}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label class="block w-32">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesEtudeReward")}</span
+              >
+              <input
+                type="number"
+                min="0"
+                max="1000"
+                bind:value={etudeReward}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
+              />
+            </label>
+
+            <!-- За доведённое до конца. Платится и проигравшему: до сих пор
+                 новичок, проигравший первую партию, не получал ровно ничего —
+                 худший из возможных ответов на первую же попытку сыграть.
+                 Ключ у неё свой, так что фермы это не открывает. -->
+            <label class="block w-32">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesEtudeFinish")}</span
+              >
+              <input
+                type="number"
+                min="0"
+                max="1000"
+                bind:value={etudeFinish}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
+              />
+            </label>
+
+            <label class="block w-44">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesEtudeSide")}</span
+              >
+              <select
+                bind:value={etudeSide}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
+              >
+                <option value="scripted"
+                  >{$t("adminBattlesEtudeSideScripted")}</option
+                >
+                <option value="deck">{$t("adminBattlesEtudeSideDeck")}</option>
+              </select>
+            </label>
+
+            <label class="block w-32">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesStatus")}</span
+              >
+              <select
+                bind:value={etudeStatus}
+                class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
+              >
+                <option value="draft">{$t("adminBattlesStatusDraft")}</option>
+                <option value="published"
+                  >{$t("adminBattlesStatusPublished")}</option
+                >
+                <option value="retired"
+                  >{$t("adminBattlesStatusRetired")}</option
+                >
+              </select>
+            </label>
+
+            <div class="flex gap-2">
+              {#if !inField}
+              <button
+                type="button"
+                disabled={!etudeReady || saving}
+                onclick={saveEtude}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
+                >{$t("adminBattlesEtudeSave")}</button
+              >
+              {/if}
+              {#if etudeId}
+                <button
+                  type="button"
+                  onclick={removeEtude}
+                  class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
+                  >{$t("adminBattlesEtudeDelete")}</button
+                >
+              {/if}
+            </div>
+          </div>
+
+          <!-- Пыль за этюд, а не за победу: переигрывать можно сколько угодно,
+               заплатят однажды. Сказано здесь, чтобы число ставили осознанно. -->
+          <p
+            class="mt-3 max-w-[62ch] text-[11px] leading-relaxed text-[#8a6a55]"
+          >
+            {$t("adminBattlesEtudeRewardNote")}
+          </p>
+
+          <!-- ── Правила этюда ──────────────────────────────────────────────
+               Вторая половина замысла: расстановка говорит, кто стоит, правила
+               — во что играют. Стол ниже играет ими же, поэтому проверяется
+               именно тот этюд, который потом достанется гостю. -->
+          <div class="mt-4 pt-4 border-t border-[#34251c]/10">
+            <label class="inline-flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" bind:checked={etudeOwnRules} />
+              <span class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesRulesOwn")}</span
+              >
+            </label>
+            <details class="mt-1">
+              <summary
+                class="text-[10px] uppercase tracking-[0.16em] text-[#8a6a55] cursor-pointer"
+                >{$t("adminBattlesHintOpen")}</summary
+              >
+              <p
+                class="mt-2 max-w-[62ch] text-[11px] leading-relaxed italic text-[#8a6a55]"
+              >
+                {$t("adminBattlesRulesHint")}
+              </p>
+            </details>
+
+            {#if etudeOwnRules}
+              <div class="mt-3 flex flex-wrap gap-x-5 gap-y-3 items-end">
+                {#each RULE_DIALS as dial (dial.key)}
+                  {#if dial.kind === "flag"}
+                    <label
+                      class="inline-flex items-center gap-2 w-56 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!etudeRules[dial.key]}
+                        onchange={(e) =>
+                          tune(dial.key, e.currentTarget.checked)}
+                      />
+                      <span class="text-[11px] text-[#5f4636]"
+                        >{$t(dial.label)}</span
+                      >
+                    </label>
+                  {:else}
+                    <label class="block w-40">
+                      <span
+                        class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                        >{$t(dial.label)}</span
+                      >
+                      <input
+                        type="number"
+                        min={dial.min}
+                        max={dial.max}
+                        value={etudeRules[dial.key]}
+                        oninput={(e) =>
+                          tune(dial.key, Number(e.currentTarget.value))}
+                        class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
+                      />
+                    </label>
+                  {/if}
+                {/each}
+              </div>
+
+              <!-- То же самое, что прочтёт гость на полке. Хранитель, видящий
+                   другую строку, правит вслепую. -->
+              <p
+                class="mt-3 max-w-[62ch] text-[11px] leading-relaxed text-[#5f4636]"
+              >
+                {#if etudeApart.length}
+                  {$t("adminBattlesRulesApart")}:
+                  {#each etudeApart as line, i (line.key)}{i > 0
+                      ? " · "
+                      : " "}{$t(line.key)}{line.amount === null
+                      ? ""
+                      : ` — ${line.amount}`}{/each}
+                {:else}
+                  {$t("adminBattlesRulesSame")}
+                {/if}
+              </p>
+              <button
+                type="button"
+                onclick={() => (etudeRules = { ...HOUSE_RULES })}
+                class="mt-2 px-2 py-1 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
+                >{$t("adminBattlesRulesReset")}</button
+              >
+            {/if}
+          </div>
+          {#if etudeSide === "deck"}
+            <p
+              class="mt-2 max-w-[62ch] text-[11px] leading-relaxed text-[#8a6a55]"
+            >
+              {$t("adminBattlesEtudeSideDeckNote")}
+            </p>
+          {/if}
+
+          {#if benchGone.length}
+            <p
+              class="mt-2 max-w-[62ch] text-[11px] leading-relaxed text-[#8f2f22]"
+            >
+              {$t("adminBattlesEtudeGone")}: {benchGone
+                .map(benchTitle)
+                .join(", ")}
+            </p>
+          {/if}
+        </div>
+
+{/snippet}
+
+{#snippet etudeHands()}
+          <!-- Руки обеих сторон. -->
+          <div class="w-64 flex flex-col gap-4">
+            {#each [{ side: "keeper" as const, label: $t("adminBattlesBenchKeeperHalf") }, { side: "player" as const, label: $t("adminBattlesBenchGuestHalf") }] as row (row.side)}
+              <div>
+                <p
+                  class="mb-1 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >
+                  {$t("adminBattlesBenchHand")} · {row.label}
+                </p>
+                <select
+                  value=""
+                  onchange={(e) => {
+                    benchAddToHand(row.side, e.currentTarget.value);
+                    e.currentTarget.value = "";
+                  }}
+                  class="w-full px-2 py-1 text-xs bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35 aria-[invalid=true]:border-[#8f2f22]/60 aria-[invalid=true]:bg-[#8f2f22]/5"
+                >
+                  <option value="">+</option>
+                  {#each benchable as c (c.id)}
+                    <option value={c.slug}>{localized(c, "title", $lang)}</option>
+                  {/each}
+                </select>
+                <div class="mt-1 flex flex-wrap gap-1">
+                  {#each benchHands[row.side] as slug, i (i)}
+                    <button
+                      type="button"
+                      onclick={() => benchDropFromHand(row.side, i)}
+                      class="px-1.5 py-0.5 text-[11px] border hover:bg-[#c65f3c]/10 {gone(
+                        slug,
+                      )
+                        ? 'border-[#8f2f22]/40 text-[#8f2f22]'
+                        : 'border-[#34251c]/15'}">{benchTitle(slug)} ×</button
+                    >
+                  {:else}
+                    <span class="text-[11px] italic text-[#8a6a55]"
+                      >{$t("adminBattlesBenchEmpty")}</span
+                    >
+                  {/each}
+                </div>
+              </div>
+            {/each}
+
+            <label class="flex items-center gap-2 text-[11px] text-[#5f4636]">
+              <input type="checkbox" bind:checked={benchBoth} />
+              {$t("adminBattlesBenchBothSides")}
+            </label>
+
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={!benchReady || benchBusy}
+                onclick={benchStart}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] bg-[#34251c] text-[#f8f1e7] disabled:opacity-40"
+                >{$t("adminBattlesBenchStart")}</button
+              >
+              <button
+                type="button"
+                disabled={!benchReady || benchBusy}
+                onclick={() => benchCall(null, true)}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 disabled:opacity-40"
+                >{$t("adminBattlesBenchPlayOut")}</button
+              >
+              <button
+                type="button"
+                disabled={!benchJournal.length || benchBusy}
+                onclick={benchUndo}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 disabled:opacity-40"
+                >{$t("adminBattlesBenchUndo")}</button
+              >
+              <button
+                type="button"
+                onclick={benchReset}
+                class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20"
+                >{$t("adminBattlesBenchReset")}</button
+              >
+            </div>
+            {#if !benchReady}
+              <p class="text-[11px] italic text-[#8a6a55]">
+                {$t("adminBattlesBenchNeedsBodies")}
+              </p>
+            {/if}
+          </div>
+
+
+{/snippet}
+
+{#snippet etudePlay()}
+          <!-- Сама партия. -->
+          {#if benchMatch}
+            <div class="w-[24rem]">
+              <!-- Исход рисует сама сцена — сургучной печатью. Второй строки
+                   под доской здесь больше нет: стол должен видеть ровно то,
+                   что увидит гость. -->
+              <BattleScene
+                match={benchMatch}
+                backdrop={benchBackground}
+                {cards}
+                {frames}
+                {motions}
+                busy={benchBusy}
+                control={benchBoth ? "both" : "player"}
+                onact={(a) => benchCall(a)}
+              />
+            </div>
+          {/if}
+{/snippet}
+
+{#snippet etudeLog()}
+        <!-- Журнал. Ради разбора урона он и нужен: видно, почему три, а не восемь. -->
+        {#if bench && bench.events.length}
+          <div class="mt-8 max-w-3xl">
+            <p
+              class="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#8a6a55]"
+            >
+              {$t("adminBattlesBenchLog")}
+            </p>
+            <ul class="text-[11px] leading-relaxed text-[#5f4636] font-mono">
+              {#each bench.events as e, i (i)}
+                <li>{benchLine(e)}</li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+{/snippet}
+
+<!-- Город, предупреждения штурма и проверка ботами — над доской поля. -->
+{#snippet siegeTools()}
+  <div class="mt-3 flex flex-col gap-2">
+    <div class="flex flex-wrap items-center gap-3">
+      <button
+        type="button"
+        onclick={makeCity}
+        class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] bg-[#6f3b24] text-[#f8f1e7] hover:bg-[#34251c]"
+        >{$t("adminBattlesCityMake")}</button
+      >
+      <span class="max-w-[60ch] text-[11px] leading-snug text-[#8a6a55]">{$t("adminBattlesCityHint")}</span>
+    </div>
+    {#each siegeWarns as warning (warning)}
+      <p class="flex flex-wrap items-center gap-2 text-[11px] text-[#8f2f22]">
+        <span>{warning === "idleToll" ? $t("adminBattlesSiegeWarnIdle") : $t("adminBattlesSiegeWarnTime")}</span>
+        <button
+          type="button"
+          onclick={() => fixSiege(warning)}
+          class="px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] border border-[#8f2f22]/40 hover:bg-[#8f2f22]/5"
+          >{$t("adminBattlesSiegeFix")}</button
+        >
+      </p>
+    {/each}
+    <div class="flex flex-wrap items-center gap-3">
+      <button
+        type="button"
+        disabled={!benchReady || (!!probe && !probe.report && !probe.failed)}
+        onclick={runProbe}
+        class="px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/25 disabled:opacity-40"
+        >{$t("adminBattlesProbe")}</button
+      >
+      {#if probe && !probe.report && !probe.failed}
+        <span class="text-[11px] italic text-[#8a6a55]">{$t("adminBattlesProbeRunning")}</span>
+      {:else if probe?.failed}
+        <span class="text-[11px] text-[#8f2f22]">{$t("adminBattlesProbeFailed")}</span>
+      {:else if probe?.report}
+        <span class="text-[11px] text-[#5f4636] tabular-nums">
+          {$t("adminBattlesProbeSkilled")} {probe.report.skilledTaken} {$t("adminBattlesProbeOf")}
+          {probe.report.skilledPlayed}, {$t("adminBattlesProbeGreedy")} — {probe.report.greedyTaken}
+          {$t("adminBattlesProbeOf")} {probe.report.greedyPlayed}{#if probeSays?.pace}
+            · <b>{$t(probeSays.pace === "easy" ? "adminBattlesProbeEasy" : probeSays.pace === "hard" ? "adminBattlesProbeHard" : "adminBattlesProbeFair")}</b>{/if}{#if probeSays?.random}
+            · {$t("adminBattlesProbeRandom")}{/if}{#if !probe.report.finished}
+            · {$t("adminBattlesProbePartial")}{/if}
+        </span>
+        {#if probeStale}
+          <span class="text-[11px] text-[#c65f3c]">{$t("adminBattlesProbeStale")}</span>
+        {/if}
+      {/if}
+    </div>
+    {#if probe?.report}
+      <p class="text-[10px] italic text-[#8a6a55]">{$t("adminBattlesProbeNote")}</p>
+    {/if}
+  </div>
+{/snippet}
+
+<!-- Отметки выбранной карты — под палитрой поля, без похода на «Карты». -->
+{#snippet cardMarks(card: BattleCardDto)}
+  <div class="mt-2 p-2 border border-[#34251c]/12 flex flex-col gap-1.5">
+    <p class="text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]">{$t("adminBattlesCardMarks")}</p>
+    <label class="flex items-start gap-2 text-[11px] text-[#5f4636]">
+      <input
+        type="checkbox"
+        class="mt-0.5"
+        checked={!!card.shoots}
+        onchange={(e) => markCard(card, { shoots: e.currentTarget.checked })}
+      />
+      <span>{$t("adminBattlesShoots")}</span>
+    </label>
+    <label class="flex items-start gap-2 text-[11px] text-[#5f4636]">
+      <input
+        type="checkbox"
+        class="mt-0.5"
+        checked={card.kind === "structure"}
+        onchange={(e) => markCard(card, { kind: e.currentTarget.checked ? "structure" : "unit" })}
+      />
+      <span>{$t("adminBattlesKindStructure")} — {$t("adminBattlesKindStructureNote")}</span>
+    </label>
+  </div>
+{/snippet}

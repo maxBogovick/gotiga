@@ -7,6 +7,7 @@ export const SITE_URL = 'https://ritunia.com';
 // URLs to be real, crawlable pages (a fabricated link is worse than omitting them).
 export const IMAGE_RIGHTS_PATH = '/rights';
 export const PRIVACY_PATH = '/privacy';
+export const TERMS_PATH = '/terms';
 export const ACQUIRE_PATH = '/acquire';
 export const IMPRESSIONS_PATH = '/impressions';
 
@@ -35,6 +36,7 @@ export const SITEMAP_STATIC_ROUTES = [
     ACQUIRE_PATH,
     IMPRESSIONS_PATH,
     PRIVACY_PATH,
+    TERMS_PATH,
     IMAGE_RIGHTS_PATH,
 ] as const;
 

@@ -59,9 +59,10 @@ import type {
   SliceSide,
   SliceSlot,
   SliceTurn,
+  BattleCell,
 } from "$lib/types/api";
 import { fontStack } from "$lib/fonts";
-import type { Lang, TranslationKey } from "$lib/i18n";
+import { localized, type Lang, type TranslationKey } from "$lib/i18n";
 
 export const TIERS = [1, 2, 3, 4, 5] as const;
 
@@ -1765,6 +1766,15 @@ export function dressWindowMissing(
   );
 }
 
+/** What the five ranks are called in Ukrainian. */
+const DEFAULT_FRAME_NAME_UK: Record<number, string> = {
+  1: "Скромна",
+  2: "Міцна",
+  3: "Пам’ятна",
+  4: "Рідкісна",
+  5: "Епічна",
+};
+
 function painted(
   tier: number,
   nameEn: string,
@@ -1778,6 +1788,7 @@ function painted(
     tier,
     nameEn,
     nameRu,
+    nameUk: DEFAULT_FRAME_NAME_UK[tier] ?? "",
     paper,
     ink,
     border,
@@ -1932,7 +1943,7 @@ export function frameFor(
  *  the old way — a picture and the four insets around its window — still means
  *  exactly what it meant when it was saved. */
 export type FrameOverride = Partial<
-  Omit<BattleFrame, "tier" | "nameEn" | "nameRu">
+  Omit<BattleFrame, "tier" | "nameEn" | "nameRu" | "nameUk">
 >;
 
 /** A frame taken off and folded into a dress — carving, paint and window.
@@ -1946,6 +1957,7 @@ export function dressOf(frame: BattleFrame): FrameOverride {
     tier: _tier,
     nameEn: _nameEn,
     nameRu: _nameRu,
+    nameUk: _nameUk,
     sheet: _sheet,
     typeScale: _typeScale,
     inkFade: _inkFade,
@@ -2020,6 +2032,7 @@ function patchFrame(
   worn.tier = base.tier;
   worn.nameEn = base.nameEn;
   worn.nameRu = base.nameRu;
+  worn.nameUk = base.nameUk;
   return worn;
 }
 
@@ -2600,9 +2613,7 @@ export function applyInsetDelta(
 }
 
 export function frameName(frame: BattleFrame, lang: Lang): string {
-  const ru = (frame.nameRu ?? "").trim();
-  const en = (frame.nameEn ?? "").trim();
-  return (lang === "ru" ? ru || en : en || ru) || String(frame.tier);
+  return localized(frame, "name", lang) || String(frame.tier);
 }
 
 /**
@@ -2624,6 +2635,31 @@ function lineInLang(own: string | null | undefined, lang: Lang): string {
   return s;
 }
 
+/** The text of one field of a card for this language.
+ *
+ *  English and Russian keep the strict rule above. Ukrainian is the newest
+ *  language and most cards will not have it written for a while, so a
+ *  Ukrainian reader gets, in order: Ukrainian, English, Russian — never a
+ *  blank. Russian is last on purpose: a line the reader can at least read
+ *  beats an empty card. */
+function cardLine(
+  record: object | null | undefined,
+  stem: string,
+  lang: Lang,
+): string {
+  if (!record) return "";
+  const r = record as Record<string, string | null | undefined>;
+  const at = (l: Lang) => r[stem + l[0].toUpperCase() + l.slice(1)];
+  if (lang === "uk") {
+    return (
+      lineInLang(at("uk"), "uk") ||
+      lineInLang(at("en"), "en") ||
+      lineInLang(at("ru"), "ru")
+    );
+  }
+  return lineInLang(at(lang), lang);
+}
+
 /** Больше половины букв — кириллица. Такой текст в английском поле карта не
  *  печатает (`lineInLang`), и стол обязан сказать об этом словами. */
 export function mostlyCyrillic(s: string): boolean {
@@ -2637,11 +2673,10 @@ export function cardCopy(
   card: BattleCard,
   lang: Lang,
 ): { title: string; effect: string; lore: string } {
-  const ru = lang === "ru";
   return {
-    title: lineInLang(ru ? card.titleRu : card.titleEn, lang),
-    effect: lineInLang(ru ? card.effectRu : card.effectEn, lang),
-    lore: lineInLang(ru ? card.loreRu : card.loreEn, lang),
+    title: cardLine(card, "title", lang),
+    effect: cardLine(card, "effect", lang),
+    lore: cardLine(card, "lore", lang),
   };
 }
 
@@ -2651,10 +2686,15 @@ export function traitCopy(
   trait: CardTrait,
   lang: Lang,
 ): { name: string; other: string; text: string } {
-  const ru = lang === "ru";
-  const name = lineInLang(ru ? trait.nameRu : trait.nameEn, lang);
-  const other = lineInLang(ru ? trait.nameEn : trait.nameRu, ru ? "en" : "ru");
-  const text = lineInLang(ru ? trait.textRu : trait.textEn, lang);
+  const name = cardLine(trait, "name", lang);
+  // The second name printed alongside: the other of Russian/English, and for
+  // Ukrainian the English one (the world language, as the fallback is).
+  const otherLang: Lang = lang === "ru" ? "en" : lang === "en" ? "ru" : "en";
+  const other = lineInLang(
+    otherLang === "en" ? trait.nameEn : trait.nameRu,
+    otherLang,
+  );
+  const text = cardLine(trait, "text", lang);
   return { name, other: name && other && name !== other ? other : "", text };
 }
 
@@ -2664,8 +2704,7 @@ export function abilityCopy(
   ability: CardAbility,
   lang: Lang,
 ): { name: string } {
-  const ru = lang === "ru";
-  return { name: lineInLang(ru ? ability.nameRu : ability.nameEn, lang) };
+  return { name: cardLine(ability, "name", lang) };
 }
 
 /** The header band: what this is. Kind is a dictionary word, printed elsewhere;
@@ -2674,11 +2713,10 @@ export function headerCopy(
   card: BattleCard,
   lang: Lang,
 ): { race: string; type: string } {
-  const ru = lang === "ru";
-  const typeRaw = lineInLang(ru ? card.typeRu : card.typeEn, lang);
+  const typeRaw = cardLine(card, "type", lang);
   const type = /^\d+$/.test(typeRaw) ? "" : typeRaw;
   return {
-    race: lineInLang(ru ? card.raceNameRu : card.raceNameEn, lang),
+    race: cardLine(card, "raceName", lang),
     type,
   };
 }
@@ -2871,9 +2909,10 @@ export const shapeCarriesNumber = (shape: string) =>
 /** One dictionary word for the header: body, spell, or relic — never the free `type`. */
 export function kindLabelKey(
   kind: BattleCardKind,
-): "battlesKindUnit" | "battlesKindSpell" | "battlesKindRelic" {
+): "battlesKindUnit" | "battlesKindSpell" | "battlesKindRelic" | "battlesKindStructure" {
   if (kind === "spell") return "battlesKindSpell";
   if (kind === "relic") return "battlesKindRelic";
+  if (kind === "structure") return "battlesKindStructure";
   return "battlesKindUnit";
 }
 
@@ -2881,6 +2920,23 @@ export function kindLabelKey(
  * The channel of the ordinary blow. Bodily is the default and stays silent;
  * anything else is a word the reader has not already assumed.
  */
+/**
+ * Слова о том, КАК карта бьёт: канал урона и отметка «стреляет». Одно место на
+ * лицо карты, лист взятия и разбор сцены — три места, называющие стрелка
+ * порознь, однажды назвали бы его по-разному. Отметка видна потому, что от
+ * неё зависит, бьёт ли карта через стены (`MatchState::fires_over_walls`), а
+ * правило, которого не видно на карте, читается как обман.
+ */
+export function blowWordKeys(
+  card: Pick<BattleCard, "attackChannel" | "shoots">,
+): TranslationKey[] {
+  const out: TranslationKey[] = [];
+  const channel = channelLabelKey(card.attackChannel);
+  if (channel) out.push(channel);
+  if (card.shoots) out.push("battlesShoots");
+  return out;
+}
+
 export function channelLabelKey(
   channel: BattleChannel,
 ): "battlesChannelMagic" | "battlesChannelPure" | "battlesChannelNone" | null {
@@ -3137,8 +3193,7 @@ export function riderWord(
   const list = card?.abilities ?? [];
   for (let i = 0; i < list.length; i++) {
     if (abilityKey(list[i], i) !== status.name) continue;
-    const own = (lang === "ru" ? list[i].nameRu : list[i].nameEn)?.trim();
-    return own || "";
+    return cardLine(list[i], "name", lang);
   }
   return "";
 }
@@ -3254,7 +3309,7 @@ export function intentsOf(
   // оно по тому же ключу, по которому комната называет всадника.
   const named = new Map<string, string>();
   (card?.abilities ?? []).forEach((a, i) => {
-    const own = (lang === "ru" ? a.nameRu : a.nameEn)?.trim();
+    const own = cardLine(a, "name", lang);
     if (own) named.set(abilityKey(a, i), own);
   });
   for (let i = 0; i < abilities.length; i++) {
@@ -3473,8 +3528,8 @@ export function errandHref(rule: string): string | null {
       return "/figurines";
     case "tales_read":
       return "/tales";
+    // Карты расставляют перед встречей, на странице этюдов.
     case "deck_laid":
-      return "/battles/table";
     case "matches_finished":
     case "matches_won":
     case "challenges_won":
@@ -3618,6 +3673,7 @@ export function newMotion(occasion: MotionOccasion = "blow"): Motion {
         : `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
     nameEn: "",
     nameRu: "",
+    nameUk: "",
     occasion,
     span: 0,
     gestures: [newGesture("striker")],
@@ -3656,8 +3712,9 @@ export function newSlot(
  */
 export const WARD_MOTION: Motion = {
   id: "house-ward",
-  nameEn: "A ward",
-  nameRu: "Оберег",
+  nameEn: "A miss",
+  nameRu: "Промах",
+  nameUk: "Промах",
   occasion: "unseen",
   gestures: [gesture("target", "blanch", 0, 280)],
 };
@@ -3674,6 +3731,7 @@ export const DEFAULT_MOTIONS: Motion[] = [
     id: "house-blow",
     nameEn: "A blow",
     nameRu: "Удар",
+    nameUk: "Удар",
     occasion: "blow",
     gestures: [
       // Подача и возврат — ОДИН жест: 220 туда и 180 обратно живут в его
@@ -3687,6 +3745,7 @@ export const DEFAULT_MOTIONS: Motion[] = [
     id: "house-mend",
     nameEn: "Mending",
     nameRu: "Лечение",
+    nameUk: "Лікування",
     occasion: "mend",
     gestures: [gesture("target", "rise", 0, 300)],
   },
@@ -3694,6 +3753,7 @@ export const DEFAULT_MOTIONS: Motion[] = [
     id: "house-arrive",
     nameEn: "Taking the field",
     nameRu: "Выставление",
+    nameUk: "Виставлення",
     occasion: "arrive",
     gestures: [gesture("striker", "swell", 0, 300)],
   },
@@ -3701,6 +3761,7 @@ export const DEFAULT_MOTIONS: Motion[] = [
     id: "house-fall",
     nameEn: "Falling",
     nameRu: "Падение",
+    nameUk: "Падіння",
     occasion: "fall",
     gestures: [gesture("target", "sink", 0, 500)],
   },
@@ -3708,6 +3769,7 @@ export const DEFAULT_MOTIONS: Motion[] = [
     id: "house-unseen",
     nameEn: "No author",
     nameRu: "Без автора",
+    nameUk: "Без автора",
     occasion: "unseen",
     gestures: [gesture("target", "shiver", 0, 160)],
   },
@@ -3731,8 +3793,7 @@ export function motionSpan(motion: Motion | null): number {
 }
 
 export function motionTitle(motion: Motion, lang: Lang): string {
-  const own = lang === "ru" ? motion.nameRu : motion.nameEn;
-  return own || motion.nameRu || motion.nameEn || motion.id;
+  return localized(motion, "name", lang) || motion.id;
 }
 
 export function parseMotionWear(raw: string | null | undefined): MotionWear {
@@ -3801,6 +3862,10 @@ export function motionFor(
   occasion: MotionOccasion,
   card: BattleCard | null | undefined,
   motions: Motion[] | null | undefined,
+  /** Удар издалека (цель не соседняя). Дом показывает его выстрелом или
+   *  молнией, а не выпадом: выпад к цели за стеной читался ударом оружия
+   *  через стену. `magic` — урон магический. */
+  far: { magic: boolean } | null = null,
 ): Motion | null {
   const drawer = motions?.length ? motions : [];
   const found = (id: string | undefined): Motion | null =>
@@ -3818,6 +3883,8 @@ export function motionFor(
     const asBlow = found(own.blow) ?? found(kin.blow);
     if (asBlow) return asBlow;
   }
+
+  if (occasion === "blow" && far) return farBlowMotion(far.magic);
 
   const houseOccasion: MotionOccasion =
     occasion === "spell" ? "blow" : occasion;
@@ -4638,11 +4705,13 @@ function brightLightning(
   tone: LightningTone,
   nameEn: string,
   nameRu: string,
+  nameUk: string,
 ): (typeof STOCK_MOTIONS)[number] {
   const art = lightningArt(tone);
   return {
     nameEn,
     nameRu,
+    nameUk,
     occasion: "blow",
     gestures: [
       gesture("striker", "sway", 0, 460),
@@ -4778,6 +4847,7 @@ function blackLightning(): (typeof STOCK_MOTIONS)[number] {
   return {
     nameEn: "Black lightning",
     nameRu: "Чёрная молния",
+    nameUk: "Чорна блискавка",
     occasion: "blow",
     gestures: [
       gesture("striker", "loom", 0, 520),
@@ -4816,12 +4886,14 @@ function strikeArt(image: string, at: number, dur: number): MotionGesture {
 export const STOCK_MOTIONS: {
   nameEn: string;
   nameRu: string;
+  nameUk: string;
   occasion: MotionOccasion;
   gestures: MotionGesture[];
 }[] = [
   {
     nameEn: "An axe",
     nameRu: "Секира",
+    nameUk: "Сокира",
     occasion: "blow",
     gestures: [
       gesture("striker", "heave", 0, 600),
@@ -4832,6 +4904,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "A sword",
     nameRu: "Меч",
+    nameUk: "Меч",
     occasion: "blow",
     gestures: [
       gesture("striker", "lunge", 0, 500),
@@ -4842,6 +4915,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "A mace",
     nameRu: "Булава",
+    nameUk: "Булава",
     occasion: "blow",
     gestures: [
       gesture("striker", "heave", 0, 620),
@@ -4854,6 +4928,7 @@ export const STOCK_MOTIONS: {
     // брызжет искрами и темнеет.
     nameEn: "A sword slash",
     nameRu: "Рассечение мечом",
+    nameUk: "Розсічення мечем",
     occasion: "blow",
     gestures: [
       gesture("striker", "lunge", 0, 500),
@@ -4865,6 +4940,7 @@ export const STOCK_MOTIONS: {
     // Секира падает сверху и врубается; расщелина, трещины, щепки, пыль.
     nameEn: "An axe chop",
     nameRu: "Удар секирой",
+    nameUk: "Удар сокирою",
     occasion: "blow",
     gestures: [
       gesture("striker", "heave", 0, 620),
@@ -4879,6 +4955,7 @@ export const STOCK_MOTIONS: {
     // прийти оттуда, где стоит бьющий.
     nameEn: "A fist blow",
     nameRu: "Удар кулаком",
+    nameUk: "Удар кулаком",
     occasion: "blow",
     gestures: [
       gesture("striker", "lunge", 0, 480),
@@ -4890,6 +4967,7 @@ export const STOCK_MOTIONS: {
     // Булава по дуге; кратер, искры металла, обломки, пыль.
     nameEn: "A mace crush",
     nameRu: "Удар булавой",
+    nameUk: "Удар булавою",
     occasion: "blow",
     gestures: [
       gesture("striker", "heave", 0, 640),
@@ -4900,6 +4978,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "A heavy blow",
     nameRu: "Тяжёлый удар",
+    nameUk: "Важкий удар",
     occasion: "blow",
     gestures: [
       gesture("striker", "heave", 0, 520),
@@ -4911,6 +4990,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "A shot",
     nameRu: "Выстрел",
+    nameUk: "Постріл",
     occasion: "blow",
     gestures: [
       gesture("striker", "draw", 0, 420),
@@ -4922,16 +5002,17 @@ export const STOCK_MOTIONS: {
   },
   // Молнии. Повод `blow` — так маг бьёт обычным ударом; на чару их
   // надевают тем же ящиком.
-  brightLightning("", "Lightning", "Молния"),
-  brightLightning("red", "Red lightning", "Красная молния"),
-  brightLightning("violet", "Violet lightning", "Фиолетовая молния"),
-  brightLightning("green", "Green lightning", "Зелёная молния"),
+  brightLightning("", "Lightning", "Молния", "Блискавка"),
+  brightLightning("red", "Red lightning", "Красная молния", "Червона блискавка"),
+  brightLightning("violet", "Violet lightning", "Фиолетовая молния", "Фіолетова блискавка"),
+  brightLightning("green", "Green lightning", "Зелёная молния", "Зелена блискавка"),
   blackLightning(),
   {
     // Шар летит с пылающим хвостом; на цели вспыхивает пламя, карта
     // обугливается и тлеет.
     nameEn: "A fireball",
     nameRu: "Огненный шар",
+    nameUk: "Вогняна куля",
     occasion: "blow",
     gestures: [
       gesture("striker", "draw", 0, 380),
@@ -4950,6 +5031,7 @@ export const STOCK_MOTIONS: {
     // разлетаются; падают перья.
     nameEn: "A flock of ravens",
     nameRu: "Стая воронов",
+    nameUk: "Зграя круків",
     occasion: "blow",
     gestures: [
       gesture("striker", "rise", 0, 420),
@@ -4965,6 +5047,7 @@ export const STOCK_MOTIONS: {
     // осыпается.
     nameEn: "Ice lances",
     nameRu: "Ледяные копья",
+    nameUk: "Крижані списи",
     occasion: "blow",
     gestures: [
       gesture("striker", "draw", 0, 400),
@@ -4980,6 +5063,7 @@ export const STOCK_MOTIONS: {
     // меркнет, маг разгорается.
     nameEn: "Soul drain",
     nameRu: "Похищение души",
+    nameUk: "Викрадення душі",
     occasion: "blow",
     gestures: [
       lying("target", MAGIC_ART.soulVortex, 8, 125, 0, 900, { layer: 7 }),
@@ -4996,6 +5080,7 @@ export const STOCK_MOTIONS: {
     // рассеивается медленно.
     nameEn: "Poison mist",
     nameRu: "Ядовитый туман",
+    nameUk: "Отруйний туман",
     occasion: "blow",
     gestures: [
       gesture("striker", "sway", 0, 440),
@@ -5010,6 +5095,7 @@ export const STOCK_MOTIONS: {
     // трещины, рука рассыпается дымом. Кисть повёрнута к цели вместе с рукой.
     nameEn: "A ghostly hand",
     nameRu: "Призрачная рука",
+    nameUk: "Примарна рука",
     occasion: "blow",
     gestures: [
       gesture("striker", "loom", 0, 500),
@@ -5025,6 +5111,7 @@ export const STOCK_MOTIONS: {
     // кратер, обломки, столб дыма.
     nameEn: "A meteor",
     nameRu: "Метеор",
+    nameUk: "Метеор",
     occasion: "blow",
     gestures: [
       gesture("striker", "rise", 0, 420),
@@ -5039,6 +5126,7 @@ export const STOCK_MOTIONS: {
     // затягиваются и уходят обратно. Чара: к оцепенению, немоте, разоружению.
     nameEn: "Chains of the abyss",
     nameRu: "Цепи из бездны",
+    nameUk: "Ланцюги з безодні",
     occasion: "spell",
     gestures: [
       gesture("striker", "loom", 0, 500),
@@ -5052,6 +5140,7 @@ export const STOCK_MOTIONS: {
     // из карты и уходит обратно.
     nameEn: "The reaper's scythe",
     nameRu: "Коса жнеца",
+    nameUk: "Коса женця",
     occasion: "blow",
     gestures: [
       gesture("striker", "sway", 0, 460),
@@ -5065,6 +5154,7 @@ export const STOCK_MOTIONS: {
     // Из лужи тени под картой вырастают обсидиановые шипы и рассыпаются.
     nameEn: "Shadow spikes",
     nameRu: "Теневые шипы",
+    nameUk: "Тіньові шипи",
     occasion: "blow",
     gestures: [
       gesture("striker", "loom", 0, 420),
@@ -5077,6 +5167,7 @@ export const STOCK_MOTIONS: {
     // Рой летучих мышей: летит стаей, кружит над целью, кусает, рассеивается.
     nameEn: "A swarm of bats",
     nameRu: "Рой летучих мышей",
+    nameUk: "Рій кажанів",
     occasion: "blow",
     gestures: [
       gesture("striker", "rise", 0, 400),
@@ -5091,6 +5182,7 @@ export const STOCK_MOTIONS: {
     // Столб золотого света, руны и перья, трещины затягиваются золотом.
     nameEn: "Healing light",
     nameRu: "Исцеление",
+    nameUk: "Зцілення",
     occasion: "mend",
     gestures: [
       gesture("striker", "bow", 0, 400),
@@ -5105,6 +5197,7 @@ export const STOCK_MOTIONS: {
     // появляется карта. Повод `arrive` ложится на саму выходящую карту.
     nameEn: "Rising from the flame",
     nameRu: "Явление из пламени",
+    nameUk: "Поява з полум’я",
     occasion: "arrive",
     gestures: [
       lying("striker", ARCANA_ART.summoning, 8, 145, 0, 900),
@@ -5116,6 +5209,7 @@ export const STOCK_MOTIONS: {
     // Саму карту гасит `sink` — полоса кладёт ожог поверх.
     nameEn: "Burning away",
     nameRu: "Гибель в огне",
+    nameUk: "Загибель у вогні",
     occasion: "fall",
     gestures: [
       lying("target", ARCANA_ART.death, 8, DEATH_SIZE, 0, 1000),
@@ -5127,6 +5221,7 @@ export const STOCK_MOTIONS: {
     // рябью, щит ложится на карту. Чара — так играется наложенный щит.
     nameEn: "A rune shield",
     nameRu: "Рунический щит",
+    nameUk: "Рунічний щит",
     occasion: "spell",
     gestures: [
       gesture("striker", "kindle", 0, 500),
@@ -5137,6 +5232,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "A charm",
     nameRu: "Чара",
+    nameUk: "Чари",
     occasion: "spell",
     gestures: [
       gesture("striker", "sway", 0, 460),
@@ -5149,6 +5245,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "A curse",
     nameRu: "Проклятие",
+    nameUk: "Прокляття",
     occasion: "spell",
     gestures: [
       gesture("striker", "loom", 0, 420),
@@ -5160,6 +5257,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "The evil eye",
     nameRu: "Сглаз",
+    nameUk: "Зурочення",
     occasion: "blow",
     gestures: [
       gesture("striker", "sway", 0, 380),
@@ -5169,6 +5267,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "Tending",
     nameRu: "Врачевание",
+    nameUk: "Цілительство",
     occasion: "mend",
     gestures: [
       gesture("striker", "bow", 0, 380),
@@ -5179,6 +5278,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "Stepping out",
     nameRu: "Явление",
+    nameUk: "Поява",
     occasion: "arrive",
     gestures: [
       gesture("striker", "swell", 0, 340),
@@ -5188,6 +5288,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "Guttering out",
     nameRu: "Угасание",
+    nameUk: "Згасання",
     occasion: "fall",
     gestures: [
       gesture("target", "sink", 0, 560),
@@ -5197,6 +5298,7 @@ export const STOCK_MOTIONS: {
   {
     nameEn: "Poison",
     nameRu: "Яд",
+    nameUk: "Отрута",
     occasion: "unseen",
     gestures: [
       gesture("target", "wither", 0, 320),
@@ -5214,6 +5316,7 @@ export function takeStock(index: number): Motion | null {
     ...newMotion(found.occasion),
     nameEn: found.nameEn,
     nameRu: found.nameRu,
+    nameUk: found.nameUk,
     gestures: found.gestures.map((g) => ({ ...g })),
   };
 }
@@ -5227,6 +5330,7 @@ export function takeHouse(index: number): Motion | null {
     ...newMotion(found.occasion),
     nameEn: found.nameEn,
     nameRu: found.nameRu,
+    nameUk: found.nameUk,
     gestures: found.gestures.map((g) => ({ ...g })),
   };
 }
@@ -5255,6 +5359,7 @@ export const HOUSE_RULES: BattleRules = {
   longShotPower: 25,
   pointBlankPower: 50,
   breakthrough: false,
+  keeperHoldsOnTime: false,
 };
 
 /** Одно отличие правил от домашних: чем сказать и какое при нём число. */
@@ -5295,6 +5400,7 @@ export function rulesInForce(rules: BattleRules | null | undefined): RuleApart[]
   if (rules.secondSideCoin > 0) say("battleRuleCoin", rules.secondSideCoin);
   if (rules.breakthrough) say("battleRuleBreakthrough");
   say("battleRuleRounds", rules.maxRounds);
+  if (rules.keeperHoldsOnTime) say("battleRuleKeeperHolds");
 
   return out;
 }
@@ -5372,13 +5478,18 @@ export function rulesApart(rules: BattleRules | null | undefined): RuleApart[] {
   if (!!rules.breakthrough !== !!HOUSE_RULES.breakthrough) {
     say(rules.breakthrough ? "battleRuleBreakthrough" : "battleRuleNoBreakthrough");
   }
+  // Дома выключено, поэтому называется только включённое.
+  if (rules.keeperHoldsOnTime) say("battleRuleKeeperHolds");
   return out;
 }
 
 /** Порядок, в котором местность называется словами и лежит в ящике стола:
  *  сперва то, что не пускает, потом то, что держит и ранит, потом то, что
  *  даёт. */
-export const GROUNDS: BattleGround[] = ['wall', 'ravine', 'pit', 'mire', 'cover', 'hill', 'spring'];
+export const GROUNDS: BattleGround[] = [
+  'wall', 'ravine', 'pit', 'mire', 'maelstrom', 'embers', 'grave', 'rift', 'cover', 'hill', 'spring',
+  'ice', 'crystal', 'glass', 'storm', 'altar',
+];
 
 /** Слово к земле: что она делает, а не как называется. */
 export const GROUND_KEY: Record<BattleGround, TranslationKey> = {
@@ -5389,6 +5500,15 @@ export const GROUND_KEY: Record<BattleGround, TranslationKey> = {
   cover: 'battleGroundCover',
   hill: 'battleGroundHill',
   spring: 'battleGroundSpring',
+  embers: 'battleGroundEmbers',
+  altar: 'battleGroundAltar',
+  ice: 'battleGroundIce',
+  storm: 'battleGroundStorm',
+  grave: 'battleGroundGrave',
+  crystal: 'battleGroundCrystal',
+  glass: 'battleGroundGlass',
+  rift: 'battleGroundRift',
+  maelstrom: 'battleGroundMaelstrom',
 };
 
 /** Что земля делает с тем, кто на неё идёт: запрет, опасность, подмога. По
@@ -5403,6 +5523,15 @@ export const GROUND_KIND: Record<BattleGround, GroundKind> = {
   cover: 'boon',
   hill: 'boon',
   spring: 'boon',
+  embers: 'hazard',
+  altar: 'boon',
+  ice: 'boon',
+  storm: 'boon',
+  grave: 'hazard',
+  crystal: 'boon',
+  glass: 'boon',
+  rift: 'hazard',
+  maelstrom: 'hazard',
 };
 
 /** Правило земли коротко — для легенды рядом с полем, где строка узкая. */
@@ -5414,6 +5543,15 @@ export const GROUND_SHORT: Record<BattleGround, TranslationKey> = {
   cover: 'battleGroundShortCover',
   hill: 'battleGroundShortHill',
   spring: 'battleGroundShortSpring',
+  embers: 'battleGroundShortEmbers',
+  altar: 'battleGroundShortAltar',
+  ice: 'battleGroundShortIce',
+  storm: 'battleGroundShortStorm',
+  grave: 'battleGroundShortGrave',
+  crystal: 'battleGroundShortCrystal',
+  glass: 'battleGroundShortGlass',
+  rift: 'battleGroundShortRift',
+  maelstrom: 'battleGroundShortMaelstrom',
 };
 
 /** Имя земли — одно слово: для стола и для подписи клетки. */
@@ -5425,6 +5563,45 @@ export const GROUND_NAME: Record<BattleGround, TranslationKey> = {
   cover: 'battleGroundNameCover',
   hill: 'battleGroundNameHill',
   spring: 'battleGroundNameSpring',
+  embers: 'battleGroundNameEmbers',
+  altar: 'battleGroundNameAltar',
+  ice: 'battleGroundNameIce',
+  storm: 'battleGroundNameStorm',
+  grave: 'battleGroundNameGrave',
+  crystal: 'battleGroundNameCrystal',
+  glass: 'battleGroundNameGlass',
+  rift: 'battleGroundNameRift',
+  maelstrom: 'battleGroundNameMaelstrom',
+};
+
+/** Правило земли подробно — для листка, который открывает знак в углу клетки:
+ *  что делает, с кем и где кончается. Тот же смысл, что у `GROUND_SHORT`, но
+ *  целыми фразами и с границами правила: «вполсилы» без «издали» объясняет
+ *  ровно половину. */
+export const GROUND_DETAIL: Record<BattleGround, TranslationKey> = {
+  wall: 'battleGroundDetailWall',
+  ravine: 'battleGroundDetailRavine',
+  pit: 'battleGroundDetailPit',
+  mire: 'battleGroundDetailMire',
+  cover: 'battleGroundDetailCover',
+  hill: 'battleGroundDetailHill',
+  spring: 'battleGroundDetailSpring',
+  embers: 'battleGroundDetailEmbers',
+  altar: 'battleGroundDetailAltar',
+  ice: 'battleGroundDetailIce',
+  storm: 'battleGroundDetailStorm',
+  grave: 'battleGroundDetailGrave',
+  crystal: 'battleGroundDetailCrystal',
+  glass: 'battleGroundDetailGlass',
+  rift: 'battleGroundDetailRift',
+  maelstrom: 'battleGroundDetailMaelstrom',
+};
+
+/** Слово к знаку: запрет, опасность, подмога. */
+export const GROUND_KIND_KEY: Record<GroundKind, TranslationKey> = {
+  block: 'battleGroundKindBlock',
+  hazard: 'battleGroundKindHazard',
+  boon: 'battleGroundKindBoon',
 };
 
 /** Поле, на котором играется всё, что не назвало своего. */
@@ -5445,6 +5622,20 @@ export const UNSTANDABLE: ReadonlySet<BattleGround> = new Set(['wall', 'ravine']
  * три стены объясняются одной фразой. Печатается и на полке (местность —
  * всегда отличие от ровного поля), и на листке правил в бою.
  */
+/**
+ * Правила штурма словами. Они не ручки этюда, а следствие того, что на поле
+ * стоят строения, — поэтому и называются, только когда строения есть: на поле
+ * без стен эти три строки не сообщали бы ничего.
+ */
+export function siegeLines(hasStructures: boolean): RuleApart[] {
+  if (!hasStructures) return [];
+  return [
+    { key: "battleRuleStructures", amount: null },
+    { key: "battleRuleWallsBlock", amount: null },
+    { key: "battleRuleInsideWalls", amount: null },
+  ];
+}
+
 export function terrainLines(terrain: BattleTile[] | null | undefined): RuleApart[] {
   const have = new Set((terrain ?? []).map((t) => t.ground));
   return GROUNDS.filter((g) => have.has(g)).map((g) => ({ key: GROUND_KEY[g], amount: null }));
@@ -5522,16 +5713,21 @@ export function emptyBattleCard(): BattleCard {
     raceId: null,
     raceNameEn: null,
     raceNameRu: null,
+    raceNameUk: null,
     raceIconUrl: null,
     raceLevelFrames: null,
     typeEn: null,
     typeRu: null,
+    typeUk: null,
     titleEn: "",
     titleRu: "",
+    titleUk: "",
     effectEn: null,
     effectRu: null,
+    effectUk: null,
     loreEn: null,
     loreRu: null,
+    loreUk: null,
     cost: 1,
     power: 1,
     health: 0,
@@ -5553,6 +5749,7 @@ export function emptyBattleCard(): BattleCard {
     priceFeed: null,
     levelPriceDust: null,
     lendable: false,
+    shoots: false,
     creditName: null,
     editionSize: null,
     minted: 0,
@@ -5591,4 +5788,206 @@ export function deckFaultLine(
     `battlesDeckFault${word[0].toUpperCase()}${word.slice(1)}` as TranslationKey;
   const said = tr(key);
   return said && said !== key ? said : tr(fallback);
+}
+
+// ── Удар издалека по умолчанию ───────────────────────────────────────────────
+
+/** Стрела: летит от бьющего к цели. Рисует `tools/siege_art.py arrow`. */
+const ARROW_ART = "/battles/motion/arrow.png";
+
+let farMotions: { shot: Motion; bolt: Motion } | null = null;
+
+/**
+ * Каким удар издалека показать: выстрелом (стрелок), молнией (маг) или никак
+ * особо (`null` — обычный выпад). Издалека — цель не на соседней клетке.
+ * Решает то же, что решает движок, кто бьёт через стены: отметка «стреляет»
+ * и магический урон (`MatchState::fires_over_walls`).
+ */
+export function farBlowKind(
+  from: BattleCell,
+  to: BattleCell,
+  card: Pick<BattleCard, "shoots" | "attackChannel"> | null | undefined,
+): { magic: boolean } | null {
+  if (!card) return null;
+  const far = Math.max(Math.abs(from.x - to.x), Math.abs(from.y - to.y)) > 1;
+  if (!far) return null;
+  const magic = card.attackChannel === "magic";
+  return card.shoots || magic ? { magic } : null;
+}
+
+/**
+ * Чем дом показывает удар издалека у карты, которой не надето своё движение:
+ * физический — выстрелом (стрела летит), магический — молнией. Прежде у всех
+ * был один выпад к цели, и башня за стеной «рубила» нападающего, стоящего
+ * через ров. Строится лениво: `flying` и молнии объявлены ниже по модулю.
+ */
+function farBlowMotion(magic: boolean): Motion {
+  farMotions ??= {
+    shot: {
+      id: "house-shot",
+      nameEn: "A shot",
+      nameRu: "Выстрел",
+      nameUk: "Постріл",
+      occasion: "blow",
+      gestures: [
+        gesture("striker", "draw", 0, 420),
+        flying(ARROW_ART, STRIP_FRAMES, 45, 80, 340, { fade: "inOut" }),
+        gesture("target", "flinch", 400, 160),
+      ],
+    },
+    bolt: { id: "house-bolt", ...brightLightning("", "A bolt", "Молния", "Блискавка") },
+  };
+  return magic ? farMotions.bolt : farMotions.shot;
+}
+
+// ── Штурм города: заготовка для стола поля ───────────────────────────────────
+
+/** Слуги снаряжения штурма. Карты заводит миграция сервера
+ *  (`20261013000004_siege_gear.sql`); здесь — только имена. */
+export const SIEGE_GEAR = {
+  wall: "fortress-wall",
+  tower: "watchtower",
+  ram: "siege-ram",
+} as const;
+
+/** Поле города: ширина 4 — четыре стены запирают проход целиком, глубина 5 —
+ *  за стеной есть где стоять гарнизону (`BATTLE-GENRE-RESEARCH.md` § 2.1). */
+export const CITY_FIELD: BattleField = { width: 4, depth: 5 };
+
+/**
+ * Снаряжение заново, если его удалили: те же числа и картинки, что у миграции.
+ * Картинки сервер кладёт на склад сам (`siege::lay_gear_art`), поэтому путь
+ * годен на любом сервере.
+ */
+export function siegeGearRequests(): SaveBattleCardRequest[] {
+  const gear = (
+    slug: string,
+    over: Partial<SaveBattleCardRequest>,
+  ): SaveBattleCardRequest => ({
+    ...emptyCardRequest(),
+    slug,
+    status: "etude",
+    tier: 2,
+    priceDust: null,
+    priceFeed: null,
+    artUrl: `/static/frames/siege-${slug === "siege-ram" ? "ram" : slug}.webp`,
+    ...over,
+  });
+  return [
+    gear(SIEGE_GEAR.wall, {
+      kind: "structure", typeEn: "Structure", typeRu: "Строение", typeUk: "Споруда",
+      titleEn: "Fortress wall", titleRu: "Крепостная стена", titleUk: "Фортечний мур",
+      effectEn: "Does not move or strike. Holds the way while it stands.",
+      effectRu: "Не ходит и не бьёт. Держит проход, пока цела.",
+      effectUk: "Не ходить і не б’є. Тримає прохід, поки ціла.",
+      cost: 1, power: 0, health: 8, armor: 3, attackChannel: "none", reach: 1, step: 0,
+    }),
+    gear(SIEGE_GEAR.tower, {
+      kind: "structure", typeEn: "Structure", typeRu: "Строение", typeUk: "Споруда",
+      titleEn: "Watchtower", titleRu: "Сторожевая башня", titleUk: "Сторожова вежа",
+      effectEn: "Does not move. Shoots up to three cells away, over walls.",
+      effectRu: "Не ходит. Стреляет на три клетки, через стены.",
+      effectUk: "Не ходить. Стріляє на три клітини, через мури.",
+      cost: 1, power: 2, health: 8, attackChannel: "physical", reach: 3, step: 0, shoots: true,
+    }),
+    gear(SIEGE_GEAR.ram, {
+      typeEn: "Siege", typeRu: "Осада", typeUk: "Облога",
+      titleEn: "Battering ram", titleRu: "Таран", titleUk: "Таран",
+      effectEn: "Strikes past armour.", effectRu: "Бьёт мимо брони.", effectUk: "Б’є повз броню.",
+      cost: 2, power: 4, health: 9, attackChannel: "pure", reach: 1, step: 1,
+    }),
+  ];
+}
+
+/** Правила штурма поверх тех, что уже выбраны: стоять без дела ничего не
+ *  стоит (иначе стены тают сами), по часам побеждает город, кругов — 16. */
+export function siegeRules(rules: BattleRules): BattleRules {
+  return { ...rules, idleToll: 0, keeperHoldsOnTime: true, maxRounds: Math.max(rules.maxRounds, 16) };
+}
+
+/**
+ * Заложить город на половине хранителя: ряд стен, ров (яма) перед ним,
+ * укрытие за ним, башня в углу и таран у гостя. Чужие тела не трогаются,
+ * кроме стоявших на месте стен (их число — `displaced`); земля на рядах
+ * города заменяется. Земли больше `TERRAIN_MAX` не бывает: не уместилось —
+ * укрытие короче.
+ */
+export function cityLayout(
+  field: BattleField,
+  board: Record<string, string>,
+  terrain: Record<string, BattleGround>,
+): { board: Record<string, string>; terrain: Record<string, BattleGround>; displaced: number } {
+  const wallRow = field.depth - 2;
+  const moatRow = field.depth - 1;
+  const coverRow = field.depth - 3;
+  const next = { ...board };
+  let displaced = 0;
+  for (let x = 0; x < field.width; x++) {
+    const key = `${x},${wallRow}`;
+    if (next[key] && next[key] !== SIEGE_GEAR.wall) displaced += 1;
+    next[key] = SIEGE_GEAR.wall;
+  }
+  const has = (slug: string) => Object.values(next).includes(slug);
+  const towerKey = `0,${Math.max(0, coverRow - 1)}`;
+  if (!has(SIEGE_GEAR.tower) && !next[towerKey]) next[towerKey] = SIEGE_GEAR.tower;
+  if (!has(SIEGE_GEAR.ram)) {
+    const guest = Array.from({ length: field.depth }, (_, i) => field.depth + 1 + i)
+      .filter((y) => y < field.depth * 2)
+      .flatMap((y) => Array.from({ length: field.width }, (_, x) => `${x},${y}`));
+    const free = guest.find((k) => !next[k] && !UNSTANDABLE.has(terrain[k]));
+    if (free) next[free] = SIEGE_GEAR.ram;
+  }
+
+  const ground: Record<string, BattleGround> = {};
+  const cityRows = new Set([wallRow, moatRow, coverRow]);
+  for (const [key, g] of Object.entries(terrain)) {
+    const y = Number(key.split(",")[1]);
+    // Стена — тело, под ним не бывает земли, на которой не стоят.
+    if (cityRows.has(y)) continue;
+    if (next[key] && UNSTANDABLE.has(g)) continue;
+    ground[key] = g;
+  }
+  for (let x = 0; x < field.width; x++) {
+    if (Object.keys(ground).length >= TERRAIN_MAX) break;
+    ground[`${x},${moatRow}`] = "pit";
+  }
+  if (coverRow >= 0) {
+    for (let x = 0; x < field.width; x++) {
+      if (Object.keys(ground).length >= TERRAIN_MAX) break;
+      ground[`${x},${coverRow}`] = "cover";
+    }
+  }
+  return { board: next, terrain: ground, displaced };
+}
+
+/** Что в штурме настроено так, что город поведёт себя не как город. */
+export type SiegeWarning = "idleToll" | "byTime";
+
+export function siegeWarnings(
+  hasStructures: boolean,
+  ownRules: boolean,
+  rules: BattleRules,
+): SiegeWarning[] {
+  if (!hasStructures) return [];
+  const effective = ownRules ? rules : HOUSE_RULES;
+  const out: SiegeWarning[] = [];
+  if (effective.idleToll > 0) out.push("idleToll");
+  if (!effective.keeperHoldsOnTime) out.push("byTime");
+  return out;
+}
+
+/** Итог проверки словом: думающий берёт город в 50–80 % — в самый раз. */
+export function probeVerdict(report: {
+  skilledPlayed: number;
+  skilledTaken: number;
+  greedyPlayed: number;
+  greedyTaken: number;
+}): { pace: "easy" | "fair" | "hard" | null; random: boolean } {
+  const share = (taken: number, played: number) => (played ? taken / played : null);
+  const skilled = share(report.skilledTaken, report.skilledPlayed);
+  const greedy = share(report.greedyTaken, report.greedyPlayed);
+  return {
+    pace: skilled === null ? null : skilled > 0.8 ? "easy" : skilled < 0.5 ? "hard" : "fair",
+    random: greedy !== null && greedy > 0.3,
+  };
 }

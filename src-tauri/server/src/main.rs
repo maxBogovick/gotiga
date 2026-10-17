@@ -94,6 +94,16 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Снаряжение штурма: картинки стены, башни и тарана встроены в сервер и
+    // кладутся на склад при запуске — так они приезжают с выкладкой, а не
+    // загружаются руками (`siege.rs`). Неудача не роняет запуск: без
+    // картинки карта рисуется пергаментом, а журнал говорит, почему.
+    match gotiga_server::siege::lay_gear_art(std::path::Path::new(&config.upload_dir)) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("Laid {n} siege gear pictures into the store"),
+        Err(e) => tracing::warn!("Siege gear pictures were not laid: {e}"),
+    }
+
     // Background: give an existing main background (uploaded before the resize/
     // WebP pipeline existed) the same treatment a fresh upload gets now. Idempotent
     // and detached — see backfill_background_image's doc comment.
@@ -222,6 +232,11 @@ async fn main() -> anyhow::Result<()> {
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Tale letters round failed: {e}"),
                 }
+                match svc.send_tale_book_notes().await {
+                    Ok(n) if n > 0 => tracing::info!("Book notes: {n} sent to Telegram"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Book notes round failed: {e}"),
+                }
                 match svc.send_tale_notes().await {
                     Ok(n) if n > 0 => tracing::info!("Tale notes: {n} sent to Telegram"),
                     Ok(_) => {}
@@ -252,6 +267,26 @@ async fn main() -> anyhow::Result<()> {
                     Ok(n) if n > 0 => tracing::info!("Pruned {n} spent Telegram login words"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Telegram login-word prune failed: {e}"),
+                }
+                // Просроченные сессии — все разом. Прежде сессия стиралась только при
+                // следующем входе того же человека, и у не вернувшегося её строка
+                // (с адресом и браузером) оставалась навсегда.
+                match svc.prune_expired_sessions().await {
+                    Ok(n) if n > 0 => tracing::info!("Pruned {n} expired sessions"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Expired-session prune failed: {e}"),
+                }
+                // Гости боя: имя без дверей живёт месяц, потом уходит с партиями.
+                match svc.prune_stale_guests().await {
+                    Ok(n) if n > 0 => tracing::info!("Pruned {n} stale guest players"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Guest-player prune failed: {e}"),
+                }
+                // Отработавшие и остывшие попытки входа через Google и Apple.
+                match svc.prune_oauth_logins().await {
+                    Ok(n) if n > 0 => tracing::info!("Pruned {n} spent OAuth sign-ins"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("OAuth sign-in prune failed: {e}"),
                 }
             }
         });

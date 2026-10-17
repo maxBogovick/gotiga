@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META } from '$lib/i18n';
   import { resolveLargestImageUrl } from '$lib/api';
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
@@ -60,7 +60,7 @@
     to.focus();
   }
 
-  let ogLocale = $derived($lang === 'ru' ? 'ru_RU' : 'en_US');
+  let ogLocale = $derived(LANG_META[$lang].og);
   let pageTitle = $derived(`${$t('talesPageTitle')} — ${$brandName}`);
   // The shelf shares as its own lead photograph when it has one — a room whose
   // share card is the house's generic background looks like every other room.
@@ -81,7 +81,7 @@
     name: $t('talesPageTitle'),
     description: $t('talesPageRule'),
     url: `${SITE_URL}/tales`,
-    inLanguage: $lang === 'ru' ? 'ru' : 'en',
+    inLanguage: $lang,
     isPartOf: { '@type': 'WebSite', name: $brandName, url: SITE_URL },
     mainEntity: {
       '@type': 'ItemList',

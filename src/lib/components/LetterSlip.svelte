@@ -15,12 +15,15 @@
     submitLabel,
     busy = false,
     error = '',
+    hint = '',
     onsubmit,
   }: {
     id: string;
     submitLabel: string;
     busy?: boolean;
     error?: string;
+    /** Короткая подсказка под формой (например, про папку «Спам»). */
+    hint?: string;
     onsubmit: (email: string, ageConfirmed: boolean) => void;
   } = $props();
 
@@ -54,6 +57,7 @@
     <input type="checkbox" name="age-confirm" bind:checked={age} disabled={busy} />
     {$t('formAgeConfirm')}
   </label>
+  {#if hint}<p class="hint">{hint}</p>{/if}
   {#if error}<p class="err" role="alert">{error}</p>{/if}
 </form>
 
@@ -118,5 +122,10 @@
     height: 1px;
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
+  }
+  .hint {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ink-soft, #5a4638);
   }
 </style>

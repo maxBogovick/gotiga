@@ -83,7 +83,7 @@ function cameBefore(): boolean | null {
  * replaced here rather than at each call site, because every event in this
  * module goes through `basePayload`. Written as prefixes, not as route ids:
  * `location` is all an event has. */
-const SECRET_SEGMENT = ['/cancel/', '/certificate/', '/unsubscribe/', '/gazette/watch/'];
+const SECRET_SEGMENT = ['/cancel/', '/certificate/', '/unsubscribe/', '/subscribe/confirm/', '/gazette/watch/'];
 
 /** Query keys carrying the same kind of secret (`/confirm?token=…`). Dropped
  * whole: which link was opened is already said by the path. */
@@ -270,7 +270,7 @@ const BEATS = [10_000, 20_000, 30_000, 60_000, 120_000];
 
 /** Rooms with an account or a secret in their address: no heading text from
  * them is ever recorded, because a heading there can be a person's name. */
-const NO_SECTION = /^\/(profile|bookings|login|register|confirm|set-password|cancel|certificate|unsubscribe|gazette\/watch)/;
+const NO_SECTION = /^\/(profile|bookings|login|register|confirm|set-password|cancel|certificate|unsubscribe|subscribe\/confirm|gazette\/watch)/;
 
 /** The last heading the visitor's deepest scroll reached — where on the page
  * the visit ended. Text of the heading, or its `data-section` when one is set;

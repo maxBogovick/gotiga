@@ -14,7 +14,7 @@
   // ему даёт ползунок, а не прокрутка: просмотр, считающий иначе, чем страница,
   // соврал бы ровно о том, ради чего его открывают.
   import { api } from '$lib/api';
-  import { t, type Lang } from '$lib/i18n';
+  import { t, firstText, type Lang } from '$lib/i18n';
   import { renderTale } from '$lib/tales';
   import { boundariesOf, placeTransitions, spansFor, type TimingReason } from '$lib/sceneTiming';
   import { taleSceneFor } from '$lib/taleScenes';
@@ -26,8 +26,16 @@
     slug,
     bodyEn,
     bodyRu,
+    bodyUk = '',
     lang,
-  }: { taleId: string; slug: string; bodyEn: string; bodyRu: string; lang: Lang } = $props();
+  }: {
+    taleId: string;
+    slug: string;
+    bodyEn: string;
+    bodyRu: string;
+    bodyUk?: string;
+    lang: Lang;
+  } = $props();
 
   const TYPES: SceneTransitionType[] = ['fade', 'push', 'bloom', 'wipe', 'rise', 'flush', 'surge'];
   const RATIOS = ['3 / 4', '4 / 5', '1 / 1', '1 / 2'];
@@ -47,7 +55,7 @@
 
   // Байка, на которой считают: тот язык, на котором сейчас пишут, а если там
   // пусто — другой. Доли текста у версий совпадают, поэтому момент годится обеим.
-  let blocks = $derived(renderTale((lang === 'ru' ? bodyRu || bodyEn : bodyEn || bodyRu) || ''));
+  let blocks = $derived(renderTale(firstText(lang, { en: bodyEn, ru: bodyRu, uk: bodyUk })));
   let bounds = $derived(boundariesOf(blocks));
   let codeScene = $derived(slug ? taleSceneFor(slug) : null);
   let ready = $derived(!!scene && scene.frames.length >= 2);

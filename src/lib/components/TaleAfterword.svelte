@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { api } from '$lib/api';
-  import { t, lang } from '$lib/i18n';
+  import { api, ApiError } from '$lib/api';
+  import { t, lang, localized } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { visitorBook } from '$lib/stores/visitor-book.svelte';
   import { visitorToken } from '$lib/visitorToken';
@@ -10,6 +10,7 @@
   import { CHANNEL_URL } from '$lib/channel';
   import type { GazetteNeighbor, TaleDoors } from '$lib/types/api';
   import LetterSlip from './LetterSlip.svelte';
+  import TelegramBookButton from './TelegramBookButton.svelte';
   import TalePoll from './TalePoll.svelte';
   import TaleSeal from './TaleSeal.svelte';
 
@@ -60,6 +61,9 @@
   let bookBusy = $state(false);
   let bookError = $state('');
   let bookJustSigned = $state(false);
+  // Подписались через Telegram: пока человек не нажал «Запустить», у него на руках ссылка.
+  let bookTelegram = $state(false);
+  let bookTgLink = $state<string | null>(null);
 
   // Имя канала назвал сервер — берём его; не назвал, стоит тот, что известен
   // сайту: у канала дома адрес один, и дверь не должна исчезать из-за настройки.
@@ -122,8 +126,11 @@
       wants = out.wants;
       letter = out.letter;
       sequelSlip = false;
-    } catch {
-      sequelError = $t('talesLetterError');
+    } catch (e) {
+      sequelError =
+        e instanceof ApiError && e.message.includes('letter_address_unconfirmed')
+          ? $t('talesLetterUnconfirmed')
+          : $t('talesLetterError');
     } finally {
       sequelBusy = false;
     }
@@ -147,6 +154,14 @@
     } finally {
       sequelBusy = false;
     }
+  }
+
+  /** Подписка через Telegram запрошена — тот же список книги, другой канал. */
+  function signedForNextViaTelegram(res: { link: string | null; unsubscribeToken: string }) {
+    visitorBook.sign(res.unsubscribeToken, 'Telegram', authStore.user?.displayName ?? '');
+    bookJustSigned = true;
+    bookTelegram = true;
+    bookTgLink = res.link;
   }
 
   /**
@@ -197,7 +212,7 @@
     {#if sequel}
       <p class="kicker">{$t('talesSequelOutKicker')}</p>
       <a class="sequel" href="/tales/{sequel.slug}?src=tale_sequel">
-        {$lang === 'ru' ? sequel.titleRu || sequel.titleEn : sequel.titleEn || sequel.titleRu} →
+        {localized(sequel, 'title', $lang)} →
       </a>
     {:else}
       <p class="kicker">{$t('talesSequelKicker')}</p>
@@ -256,22 +271,35 @@
       <p class="rule">{$t('talesNextRule')}</p>
       {#if doors.letters}
         {#if booked}
-          <p class="kept">
-            {(bookJustSigned ? $t('talesNextSigned') : $t('talesNextKept')).replace('{email}', visitorBook.email)}
-          </p>
+          {#if bookJustSigned && bookTelegram}
+            <p class="kept">{bookTgLink ? $t('bookTelegramStart') : $t('bookTelegramDone')}</p>
+            {#if bookTgLink}
+              <a class="channel" href={bookTgLink} target="_blank" rel="noopener noreferrer">
+                {$t('bookTelegramOpen')} →
+              </a>
+            {/if}
+          {:else}
+            <p class="kept">
+              {(bookJustSigned ? $t('talesNextSigned') : $t('talesNextKept')).replace('{email}', visitorBook.email)}
+            </p>
+          {/if}
         {:else if accountEmail}
           <button type="button" class="quiet" onclick={() => signForNext(accountEmail, true)} disabled={bookBusy}>
             {$t('talesNextTo').replace('{email}', accountEmail)}
           </button>
+          <p class="hint">{$t('visitorBookSpamHint')}</p>
           {#if bookError}<p class="err" role="alert">{bookError}</p>{/if}
+          <TelegramBookButton source="tale_tg" showAge={false} age={true} onrequested={signedForNextViaTelegram} />
         {:else}
           <LetterSlip
             id="tale-next"
             submitLabel={$t('talesLetterSend')}
             busy={bookBusy}
             error={bookError}
+            hint={$t('visitorBookSpamHint')}
             onsubmit={signForNext}
           />
+          <TelegramBookButton source="tale_tg" onrequested={signedForNextViaTelegram} />
         {/if}
       {/if}
       {#if channel}
@@ -427,5 +455,10 @@
   @media (prefers-reduced-motion: reduce) {
     .want { transition: none; }
     .want:active { transform: none; }
+  }
+  .hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--ink-soft, #5a4638);
   }
 </style>

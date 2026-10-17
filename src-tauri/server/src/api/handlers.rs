@@ -692,6 +692,12 @@ pub async fn record_analytics_event(
     body: Bytes,
 ) -> Result<impl IntoResponse> {
     const MAX_ANALYTICS_BODY: usize = 4096;
+    // Замер принимает всех без входа, а значит и наплыв выдуманных событий,
+    // которые портят цифры хозяину. 600 в минуту с адреса — десятки читателей за
+    // одним выходом в сеть; поток в сотни раз гуще им не бывает.
+    service
+        .check_hot_limit("analytics", &extract_ip(&headers), 600, 60)
+        .await?;
     if body.len() > MAX_ANALYTICS_BODY {
         return Err(AppError::BadRequest(
             "Analytics payload is too large".into(),
@@ -931,9 +937,14 @@ pub async fn list_figurines(
 
 pub async fn get_figurine(
     State(service): State<AppService>,
+    State(config): State<Config>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<FigurineDto>> {
-    let dto = service.get_figurine_details(id).await?;
+    // Скрытая работа читается только хранителем: витрина её прячет, но прямой
+    // адрес (uuid или слаг) отдавал её целиком любому.
+    let is_admin = bearer_token(&headers).is_some_and(|t| t == config.admin_api_key);
+    let dto = service.get_figurine_details(id, is_admin).await?;
     Ok(Json(dto))
 }
 
@@ -974,11 +985,30 @@ pub async fn get_texts_by_param(
 
 // === ADMIN AUTH ===
 
+/// Сравнение без раннего выхода: время не зависит от того, где первое отличие.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let mut diff = a.len() ^ b.len();
+    for i in 0..a.len().max(b.len()) {
+        diff |= (a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0)) as usize;
+    }
+    diff == 0
+}
+
 pub async fn admin_login(
     State(config): State<Config>,
+    State(service): State<AppService>,
+    headers: HeaderMap,
     Json(creds): Json<LoginRequest>,
 ) -> Result<Json<serde_json::Value>> {
-    if creds.login == config.admin_login && creds.password == config.admin_password {
+    // Десять попыток за четверть часа с адреса: перебор пароля иначе ничем не
+    // ограничен, а в ответ на удачную попытку уходит бессрочный ключ.
+    service
+        .check_rate_limit("admin_login", &extract_ip(&headers), 10, 900)
+        .await?;
+    // Обе половины сравниваются всегда, без раннего выхода по первому несовпадению.
+    let login_ok = constant_time_eq(creds.login.as_bytes(), config.admin_login.as_bytes());
+    let password_ok = constant_time_eq(creds.password.as_bytes(), config.admin_password.as_bytes());
+    if login_ok & password_ok {
         tracing::info!(
             target: "gotiga_server::auth",
             event = "admin_login",
@@ -1050,8 +1080,16 @@ pub struct SearchParams {
 /// fuzzy+lexical when embedding weights are not bundled.
 pub async fn semantic_search(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Query(params): Query<SearchParams>,
 ) -> Result<Json<Vec<SemanticHit>>> {
+    // Каждый поиск гоняет кодировщик (процессор, один на всех под замком) и
+    // читает все векторы из базы. Без предела сотня запросов в секунду клала
+    // бы весь сайт, а не только поиск. 30 в минуту с адреса — с запасом на
+    // живой набор текста; повторный вопрос отвечается из кэша.
+    service
+        .check_hot_limit("search", &extract_ip(&headers), 30, 60)
+        .await?;
     // Bound the query length before it reaches the (CPU-bound, mutex-serialised)
     // encoder. The tokenizer also truncates to MAX_TOKENS, but capping characters
     // first keeps a hostile 100 KB "query" from doing pointless tokeniser work on
@@ -1882,7 +1920,11 @@ pub async fn user_list_commissions(
     let user = service.get_user_from_session(token).await?;
     // Adopt orphan petitions sent from this account's email (guest petitions, or
     // ones whose claim token was lost when localStorage was cleared) before listing.
-    if let Some(email) = user.email.as_deref() {
+    // Только подтверждённая почта: названный адрес — ещё не дверь (§ 16.3), иначе
+    // чужие прошения забирал бы любой, кто вписал в профиль почту жертвы.
+    if user.email_confirmed()
+        && let Some(email) = user.email.as_deref()
+    {
         let _ = service.adopt_commissions_by_email(user.id, email).await;
     }
     let commissions = service.get_user_commissions(user.id).await?;
@@ -1923,7 +1965,15 @@ pub async fn user_upload_file(
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
-    let _user = service.get_user_from_session(token).await?;
+    let user = service.get_user_from_session(token).await?;
+    // Загрузка пишет на диск и нигде не учитывается, поэтому счёт идёт по имени:
+    // за час и за сутки. Живому человеку к прошению нужны единицы картинок.
+    service
+        .check_rate_limit("user_upload_hour", &user.id.to_string(), 20, 3600)
+        .await?;
+    service
+        .check_rate_limit("user_upload_day", &user.id.to_string(), 60, 86_400)
+        .await?;
 
     while let Some(field) = multipart
         .next_field()
@@ -2056,7 +2106,7 @@ pub async fn set_figurine_mark(
     service
         .check_rate_limit("mark", &extract_ip(&headers), 60, 3600)
         .await?;
-    let figurine_id = service.resolve_figurine_uuid(&handle).await?;
+    let figurine_id = service.resolve_public_figurine_uuid(&handle).await?;
     let tone = service
         .set_figurine_mark(figurine_id, &req.visitor_token, req.tone.as_deref())
         .await?;
@@ -2078,7 +2128,7 @@ pub async fn set_figurine_like(
     service
         .check_rate_limit("like", &extract_ip(&headers), 60, 3600)
         .await?;
-    let figurine_id = service.resolve_figurine_uuid(&handle).await?;
+    let figurine_id = service.resolve_public_figurine_uuid(&handle).await?;
     let user_id = if let Some(token) = bearer_token(&headers) {
         service
             .get_user_from_session(token)
@@ -2089,7 +2139,13 @@ pub async fn set_figurine_like(
         None
     };
     let (liked, like_count) = service
-        .set_figurine_like(figurine_id, &req.visitor_token, user_id, req.liked)
+        .set_figurine_like(
+            figurine_id,
+            &req.visitor_token,
+            user_id,
+            req.liked,
+            &service.attention_hashes(&headers),
+        )
         .await?;
     Ok(Json(crate::models::LikeToggleResponse {
         liked,
@@ -2755,6 +2811,7 @@ pub async fn tales_feed_rss(
 
 pub async fn get_bookings_by_tokens(
     State(service): State<AppService>,
+    headers: HeaderMap,
     Json(req): Json<crate::models::BookingsByTokensRequest>,
 ) -> Result<Json<std::collections::HashMap<String, crate::models::BookingCancelInfo>>> {
     // Cap the batch to bound the query and guard against abuse.
@@ -2762,6 +2819,11 @@ pub async fn get_bookings_by_tokens(
     if tokens.is_empty() {
         return Ok(Json(std::collections::HashMap::new()));
     }
+    // Одиночная отмена по токену уже ограничена; пакет из ста токенов за запрос
+    // без предела был бы обходом того же лимита.
+    service
+        .check_rate_limit("booking_tokens_lookup", &extract_ip(&headers), 120, 3600)
+        .await?;
     Ok(Json(service.get_bookings_by_tokens(&tokens).await?))
 }
 
@@ -3021,6 +3083,7 @@ pub async fn telegram_login_config(
 pub async fn telegram_login_code(
     State(service): State<AppService>,
     headers: HeaderMap,
+    body: Option<Json<crate::models::TelegramStartRequest>>,
 ) -> Result<Json<crate::models::TelegramCodeResponse>> {
     let ip = extract_ip(&headers);
     service.check_rate_limit("telegram", &ip, 20, 3600).await?;
@@ -3032,7 +3095,12 @@ pub async fn telegram_login_code(
         None => None,
     };
     let res = service
-        .telegram_start_login(bind_user, client_ip(&ip), extract_user_agent(&headers))
+        .telegram_start_login(
+            bind_user,
+            body.map(|Json(b)| b.age_confirmed).unwrap_or(false),
+            client_ip(&ip),
+            extract_user_agent(&headers),
+        )
         .await?;
     Ok(Json(res))
 }
@@ -3068,6 +3136,132 @@ pub async fn telegram_unlink(
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
     Ok(Json(service.telegram_unlink(&user).await?))
+}
+
+// ── Вход через Google и Apple ────────────────────────────────
+
+fn oauth_provider(raw: &str) -> Result<crate::oauth::Provider> {
+    // Неизвестный провайдер — страница, которой нет: перечислять, какие бывают,
+    // незачем.
+    crate::oauth::Provider::parse(raw).ok_or_else(|| AppError::NotFound("no such page".into()))
+}
+
+/// Какие провайдеры включены на этом сервере.
+pub async fn oauth_config(State(service): State<AppService>) -> Json<crate::models::OauthConfig> {
+    Json(service.oauth_config())
+}
+
+/// Ход первый: ссылка к провайдеру. С `Authorization` это привязка к уже
+/// вошедшему имени — ручка одна, потому что обряд один. Заголовка нет — вход;
+/// заголовок есть, но не годится — НЕ вход, а `Unauthorized` (иначе профиль с
+/// протухшей сессией заводил бы второе имя вместо второй двери у прежнего).
+pub async fn oauth_start(
+    State(service): State<AppService>,
+    Path(provider): Path<String>,
+    headers: HeaderMap,
+    body: Option<Json<crate::models::OauthStartRequest>>,
+) -> Result<Json<crate::models::OauthStartResponse>> {
+    let provider = oauth_provider(&provider)?;
+    let ip = extract_ip(&headers);
+    service.oauth_check_start_limit(&ip).await?;
+    let bind_user = match bearer_token(&headers) {
+        Some(token) => Some(service.get_user_from_session(token).await?.id),
+        None => None,
+    };
+    let (return_origin, age_confirmed) = match body {
+        Some(Json(b)) => (b.return_origin, b.age_confirmed),
+        None => (None, false),
+    };
+    Ok(Json(
+        service
+            .oauth_start(
+                provider,
+                bind_user,
+                return_origin,
+                age_confirmed,
+                client_ip(&ip),
+                extract_user_agent(&headers),
+            )
+            .await?,
+    ))
+}
+
+/// Что провайдер приносит в callback. Google присылает это строкой запроса
+/// (`GET`), Apple — телом формы (`POST`, `response_mode=form_post`): поля одни.
+#[derive(serde::Deserialize, Default)]
+pub struct OauthCallback {
+    pub state: Option<String>,
+    pub code: Option<String>,
+    pub error: Option<String>,
+    /// Только у Apple и только при первом согласии: JSON с именем.
+    pub user: Option<String>,
+}
+
+async fn oauth_callback_inner(service: AppService, provider: &str, cb: OauthCallback) -> axum::response::Response {
+    use axum::response::Redirect;
+    let Ok(provider) = oauth_provider(provider) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let to = service
+        .oauth_callback(
+            provider,
+            cb.state.as_deref(),
+            cb.code.as_deref(),
+            cb.error.as_deref(),
+            cb.user.as_deref(),
+        )
+        .await;
+    // 303, а не 302/307: после `POST` от Apple браузер обязан открыть страницу
+    // сайта методом `GET`, а не повторить `POST` туда.
+    let mut res = Redirect::to(&to).into_response();
+    // Адрес с одноразовым состоянием не должен утекать в `Referer` и оседать в
+    // кэше.
+    let h = res.headers_mut();
+    h.insert("Cache-Control", "no-store".parse().unwrap());
+    h.insert("Referrer-Policy", "no-referrer".parse().unwrap());
+    res
+}
+
+/// Ход второй для Google: человек вернулся по ссылке.
+pub async fn oauth_callback_get(
+    State(service): State<AppService>,
+    Path(provider): Path<String>,
+    Query(cb): Query<OauthCallback>,
+) -> axum::response::Response {
+    oauth_callback_inner(service, &provider, cb).await
+}
+
+/// Ход второй для Apple: провайдер присылает форму.
+pub async fn oauth_callback_post(
+    State(service): State<AppService>,
+    Path(provider): Path<String>,
+    axum::Form(cb): axum::Form<OauthCallback>,
+) -> axum::response::Response {
+    oauth_callback_inner(service, &provider, cb).await
+}
+
+/// Ход третий: вкладка забирает результат. Привязка в теле, а не в адресе: ей
+/// не место в истории браузера и в журналах прокси.
+pub async fn oauth_redeem(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::OauthRedeemRequest>,
+) -> Result<Json<crate::models::OauthRedeemResponse>> {
+    let ip = extract_ip(&headers);
+    service.oauth_check_redeem_limit(&ip).await?;
+    Ok(Json(service.oauth_redeem(&body).await?))
+}
+
+/// Отвязать Google или Apple от своего аккаунта.
+pub async fn oauth_unlink(
+    State(service): State<AppService>,
+    Path(provider): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<UserDto>> {
+    let provider = oauth_provider(&provider)?;
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
+    Ok(Json(service.oauth_unlink(&user, provider).await?))
 }
 
 /// Что сыграть за Telegram на своей машине: «это я» по умолчанию, `answer=no`
@@ -3200,7 +3394,10 @@ pub async fn user_profile_orders(
     let user = service.get_user_from_session(token).await?;
     // Adopt any orphan guest orders sent from this account's email (legacy rows or
     // ones submitted while logged out) before listing.
-    if let Some(email) = user.email.as_deref() {
+    // Только подтверждённая почта, по той же причине, что и у прошений выше.
+    if user.email_confirmed()
+        && let Some(email) = user.email.as_deref()
+    {
         let _ = service.link_orders_to_user(user.id, email).await;
     }
     let orders = service.get_user_orders(user.id).await?;
@@ -3393,13 +3590,14 @@ pub async fn apply_password_reset(
     State(service): State<AppService>,
     headers: HeaderMap,
     Json(body): Json<ApplyPasswordResetRequest>,
-) -> Result<StatusCode> {
+) -> Result<Json<ApplyPasswordResetResponse>> {
     let ip = extract_ip(&headers);
     service.check_rate_limit("reset", &ip, 10, 3600).await?;
-    service
-        .apply_password_reset(&body, client_ip(&ip), extract_user_agent(&headers))
-        .await?;
-    Ok(StatusCode::OK)
+    Ok(Json(
+        service
+            .apply_password_reset(&body, client_ip(&ip), extract_user_agent(&headers))
+            .await?,
+    ))
 }
 
 pub async fn forgot_password(
@@ -3470,7 +3668,7 @@ pub async fn get_figurine_comments(
     Path(handle): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<Vec<CommentDto>>> {
-    let figurine_id = service.resolve_figurine_uuid(&handle).await?;
+    let figurine_id = service.resolve_public_figurine_uuid(&handle).await?;
     let newest_first = params.get("sort").map(|v| v == "newest").unwrap_or(false);
     let comments = service
         .get_figurine_comments(figurine_id, newest_first)
@@ -3484,7 +3682,7 @@ pub async fn submit_comment(
     Path(handle): Path<String>,
     Json(body): Json<SubmitCommentRequest>,
 ) -> Result<StatusCode> {
-    let figurine_id = service.resolve_figurine_uuid(&handle).await?;
+    let figurine_id = service.resolve_public_figurine_uuid(&handle).await?;
     let user = if let Some(token) = bearer_token(&headers) {
         service.get_user_from_session(token).await.ok()
     } else {
@@ -3578,20 +3776,16 @@ pub async fn set_tale_vote(
     Path(id): Path<Uuid>,
     Json(req): Json<crate::models::TaleVoteRequest>,
 ) -> Result<Json<crate::models::TaleVoteResponse>> {
+    // Голос — только с именем. Метку «читателя» гость присылал сам, и сколько
+    // раз он называл новую, столько раз и голосовал: предел по адресу ставил
+    // потолок в час, а не в одного человека. Имя одно, и голос у него один.
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
     service
         .check_rate_limit("tale_vote", &extract_ip(&headers), 60, 3600)
         .await?;
-    let user_id = if let Some(token) = bearer_token(&headers) {
-        service
-            .get_user_from_session(token)
-            .await
-            .ok()
-            .map(|u| u.id)
-    } else {
-        None
-    };
     let (value, likes, dislikes) = service
-        .set_tale_vote(id, &req.visitor_token, user_id, req.value)
+        .set_tale_vote(id, &req.visitor_token, Some(user.id), req.value)
         .await?;
     Ok(Json(crate::models::TaleVoteResponse {
         value,
@@ -3631,10 +3825,6 @@ async fn reader_user(service: &AppService, headers: &HeaderMap) -> Option<crate:
     service.get_user_from_session(token).await.ok()
 }
 
-async fn reader_user_id(service: &AppService, headers: &HeaderMap) -> Option<Uuid> {
-    reader_user(service, headers).await.map(|u| u.id)
-}
-
 pub async fn get_tale_doors(
     State(service): State<AppService>,
 ) -> Json<crate::models::TaleDoorsDto> {
@@ -3668,11 +3858,15 @@ pub async fn vote_tale_poll(
     Path(id): Path<Uuid>,
     Json(req): Json<crate::models::TalePollVoteRequest>,
 ) -> Result<Json<crate::models::TalePollVoteResponse>> {
+    // Тот же закон, что у голоса за байку: голосует имя, а не выдуманная метка.
+    // Голосование решает, о ком писать следующую байку, и накрутить его
+    // выдуманными «читателями» с одного адреса было нечем остановить.
+    let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
+    let user = service.get_user_from_session(token).await?;
     service
         .check_rate_limit("tale_poll", &extract_ip(&headers), 60, 3600)
         .await?;
-    let user_id = reader_user_id(&service, &headers).await;
-    Ok(Json(service.vote_tale_poll(id, &req, user_id).await?))
+    Ok(Json(service.vote_tale_poll(id, &req, &user).await?))
 }
 
 pub async fn admin_tale_polls(
@@ -4026,6 +4220,22 @@ pub async fn user_update_profile(
     Ok(Json(updated))
 }
 
+/// Убрать файл прежнего аватара. Только собственные файлы дома по точному виду
+/// адреса (`/static/avatars/<uuid>.jpg`): чужой или повреждённый адрес не
+/// превращается в путь на диске.
+async fn remove_old_avatar(upload_dir: &str, old_url: Option<&str>) {
+    let Some(name) = old_url.and_then(|u| u.strip_prefix("/static/avatars/")) else {
+        return;
+    };
+    let Some(stem) = name.strip_suffix(".jpg") else {
+        return;
+    };
+    if Uuid::parse_str(stem).is_err() {
+        return;
+    }
+    let _ = fs::remove_file(format!("{upload_dir}/avatars/{name}")).await;
+}
+
 pub async fn user_upload_avatar(
     State(service): State<AppService>,
     State(config): State<Config>,
@@ -4034,6 +4244,10 @@ pub async fn user_upload_avatar(
 ) -> Result<Json<UserDto>> {
     let token = bearer_token(&headers).ok_or(AppError::Unauthorized)?;
     let user = service.get_user_from_session(token).await?;
+    // Смена аватара — дело редкое: десять в час на имя.
+    service
+        .check_rate_limit("user_avatar", &user.id.to_string(), 10, 3600)
+        .await?;
 
     while let Some(field) = multipart
         .next_field()
@@ -4079,6 +4293,9 @@ pub async fn user_upload_avatar(
 
             let url = format!("/static/avatars/{}.jpg", id);
             let updated = service.set_user_avatar(user.id, &url).await?;
+            // Прежний аватар больше никому не нужен. Раньше каждая замена
+            // оставляла на диске новый файл, а старый лежал там навсегда.
+            remove_old_avatar(&config.upload_dir, user.avatar_url.as_deref()).await;
             return Ok(Json(updated));
         }
     }
@@ -4341,6 +4558,44 @@ pub async fn subscribe(
     let ip = extract_ip(&headers);
     service.check_rate_limit("subscribe", &ip, 10, 3600).await?;
     Ok(Json(service.subscribe(body, Some(ip)).await?))
+}
+
+/// Подписка на книгу дома в Telegram. Вошедший через Telegram подписывается
+/// сразу; остальные получают ссылку на бота с кодом.
+pub async fn subscribe_via_telegram(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::TelegramSubscribeRequest>,
+) -> Result<Json<crate::models::TelegramSubscribeResponse>> {
+    let ip = extract_ip(&headers);
+    service.check_rate_limit("subscribe_telegram", &ip, 10, 3600).await?;
+    let user = match bearer_token(&headers) {
+        Some(token) => service.get_user_from_session(token).await.ok(),
+        None => None,
+    };
+    Ok(Json(
+        service
+            .subscribe_via_telegram(body, user.as_ref(), client_ip(&ip))
+            .await?,
+    ))
+}
+
+/// Ссылка из письма «подтвердите адрес». POST, а не GET: почтовые сканеры
+/// открывают все ссылки в письме, и подтверждение, сделанное чтением, давало бы
+/// подписку любому, кому письмо просто доставили.
+pub async fn confirm_subscription(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<StatusCode> {
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    if service.confirm_subscription(&token).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(AppError::NotFound("Confirmation link not found or expired".into()))
+    }
 }
 
 pub async fn get_subscription_by_token(
@@ -4647,19 +4902,38 @@ pub async fn watch_gazette_leaf(
     service
         .check_rate_limit("gazette_watch", &extract_ip(&headers), 15, 3600)
         .await?;
-    let (user_id, email, name) = if let Some(token) = bearer_token(&headers) {
+    let (user_id, email, confirmed, name) = if let Some(token) = bearer_token(&headers) {
         match service.get_user_from_session(token).await {
-            Ok(u) => (Some(u.id), u.email, Some(u.display_name)),
-            Err(_) => (None, None, None),
+            Ok(u) => {
+                let confirmed = u.email_confirmed();
+                (Some(u.id), u.email, confirmed, Some(u.display_name))
+            }
+            Err(_) => (None, None, false, None),
         }
     } else {
-        (None, None, None)
+        (None, None, false, None)
     };
     Ok(Json(
         service
-            .watch_gazette_leaf(&slug, body, user_id, email.as_deref(), name.as_deref())
+            .watch_gazette_leaf(&slug, body, user_id, email.as_deref(), confirmed, name.as_deref())
             .await?,
     ))
+}
+
+/// Ссылка из письма слежения. POST по той же причине, что и у книги дома.
+pub async fn confirm_gazette_watch(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<StatusCode> {
+    service
+        .check_rate_limit("token", &extract_ip(&headers), 60, 3600)
+        .await?;
+    if service.confirm_gazette_watch(&token).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(AppError::NotFound("Confirmation link not found or expired".into()))
+    }
 }
 
 pub async fn get_gazette_watch(
@@ -4708,6 +4982,12 @@ pub async fn list_battle_cards(
     State(service): State<AppService>,
 ) -> Result<Json<Vec<BattleCardDto>>> {
     Ok(Json(service.list_battle_cards_public().await?))
+}
+
+pub async fn list_battle_etude_cards(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<BattleCardDto>>> {
+    Ok(Json(service.list_battle_cards_etude_only().await?))
 }
 
 pub async fn get_battle_frames(
@@ -5150,6 +5430,27 @@ async fn current_user(service: &AppService, headers: &HeaderMap) -> Result<crate
     service.get_user_from_session(token).await
 }
 
+/// Игрок боя: вошедший или гость боя. Только ручки партий берут его, остальные —
+/// `current_user`, который гостя не пускает.
+async fn current_player(service: &AppService, headers: &HeaderMap) -> Result<crate::models::User> {
+    let token = bearer_token(headers).ok_or(AppError::Unauthorized)?;
+    service.get_player_from_session(token).await
+}
+
+/// Гость боя: имя без почты и дверей, чтобы первый бой обучения шёл без входа.
+pub async fn guest_player(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>> {
+    let token = service
+        .begin_guest_player(
+            client_ip_from_headers(&headers),
+            extract_user_agent_from_headers(&headers),
+        )
+        .await?;
+    Ok(Json(serde_json::json!({ "sessionToken": token })))
+}
+
 /// The shelf of challenges. Visible to a guest without an account — the room
 /// shows what is there and asks for a name only when something is at stake.
 pub async fn list_battle_challenges(
@@ -5158,7 +5459,7 @@ pub async fn list_battle_challenges(
 ) -> Result<Json<Vec<BattleChallengeDto>>> {
     let user_id = match bearer_token(&headers) {
         Some(token) => service
-            .get_user_from_session(token)
+            .get_player_from_session(token)
             .await
             .ok()
             .map(|u| u.id),
@@ -5240,7 +5541,7 @@ pub async fn grant_battle_attention(
         .await?;
     Ok(Json(
         service
-            .grant_attention_dust(user.id, &req.kind, req.id)
+            .grant_attention_dust(user.id, &req.kind, req.id, &service.attention_hashes(&headers))
             .await?,
     ))
 }
@@ -5444,8 +5745,8 @@ pub async fn package_studio_frame(
             // и заговорят, когда решение придёт — днём позже.
             "lang" => {
                 if let Ok(l) = field.text().await {
-                    if l.trim() == "en" {
-                        lang = "en".into();
+                    if let Some(parsed) = crate::lang::Lang::parse(&l) {
+                        lang = parsed.code().into();
                     }
                 }
             }
@@ -6318,12 +6619,36 @@ pub async fn admin_save_battle_dust_rates(
     Ok(Json(service.save_battle_dust_rates(req).await?))
 }
 
+/// Расстановка гостя на поле встречи.
+pub async fn get_battle_lineup(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(challenge_id): Path<Uuid>,
+) -> Result<Json<crate::models::BattleLineupDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(service.read_battle_lineup(user.id, challenge_id).await?))
+}
+
+pub async fn save_battle_lineup(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(challenge_id): Path<Uuid>,
+    Json(body): Json<crate::models::SaveBattleDeckRequest>,
+) -> Result<Json<crate::models::BattleLineupDto>> {
+    let user = current_user(&service, &headers).await?;
+    Ok(Json(
+        service
+            .save_battle_lineup(user.id, challenge_id, &body)
+            .await?,
+    ))
+}
+
 pub async fn begin_battle_match(
     State(service): State<AppService>,
     headers: HeaderMap,
     Path(challenge_id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<BattleMatchDto>)> {
-    let user = current_user(&service, &headers).await?;
+    let user = current_player(&service, &headers).await?;
     let dto = service.begin_battle_match(user.id, challenge_id).await?;
     Ok((StatusCode::CREATED, Json(dto)))
 }
@@ -6334,7 +6659,7 @@ pub async fn yield_battle_match(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<BattleMatchDto>> {
-    let user = current_user(&service, &headers).await?;
+    let user = current_player(&service, &headers).await?;
     Ok(Json(service.yield_battle_match(user.id, id).await?))
 }
 
@@ -6345,7 +6670,7 @@ pub async fn restart_battle_match(
     headers: HeaderMap,
     Path(challenge_id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<BattleMatchDto>)> {
-    let user = current_user(&service, &headers).await?;
+    let user = current_player(&service, &headers).await?;
     let dto = service.restart_battle_match(user.id, challenge_id).await?;
     Ok((StatusCode::CREATED, Json(dto)))
 }
@@ -6355,7 +6680,7 @@ pub async fn get_battle_match(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<BattleMatchDto>> {
-    let user = current_user(&service, &headers).await?;
+    let user = current_player(&service, &headers).await?;
     Ok(Json(service.read_battle_match(user.id, id).await?))
 }
 
@@ -6366,7 +6691,7 @@ pub async fn act_in_battle_match(
     Path(id): Path<Uuid>,
     Json(body): Json<BattleActRequest>,
 ) -> Result<Json<BattleMatchDto>> {
-    let user = current_user(&service, &headers).await?;
+    let user = current_player(&service, &headers).await?;
     Ok(Json(service.act_in_battle_match(user.id, id, body).await?))
 }
 
@@ -6381,7 +6706,7 @@ pub async fn foresee_battle_match(
     Path(id): Path<Uuid>,
     Json(body): Json<crate::models::ForeseeRequest>,
 ) -> Result<Json<crate::models::ForeseeDto>> {
-    let user = current_user(&service, &headers).await?;
+    let user = current_player(&service, &headers).await?;
     Ok(Json(service.foresee_battle_match(user.id, id, body).await?))
 }
 
@@ -6527,10 +6852,23 @@ pub async fn admin_reorder_battle_keywords(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Справочник рас несёт таблицу урона по расам, а она меняет урон в бою.
+/// Поэтому старую копию держат не десять минут, как прочие публичные чтения
+/// (`public_cache_middleware`), а одну: лист карты, показавший прошлое правило,
+/// врал бы игроку о бое.
 pub async fn list_battle_races(
     State(service): State<AppService>,
-) -> Result<Json<Vec<BattleRaceDto>>> {
-    Ok(Json(service.list_battle_races().await?))
+) -> Result<(
+    [(axum::http::header::HeaderName, &'static str); 1],
+    Json<Vec<BattleRaceDto>>,
+)> {
+    Ok((
+        [(
+            axum::http::header::CACHE_CONTROL,
+            "public, max-age=60, stale-while-revalidate=60",
+        )],
+        Json(service.list_battle_races().await?),
+    ))
 }
 
 pub async fn admin_create_battle_race(
@@ -6557,10 +6895,34 @@ pub async fn admin_delete_battle_race(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn admin_set_battle_cards_race(
+    State(service): State<AppService>,
+    Json(body): Json<crate::models::SetBattleCardsRaceRequest>,
+) -> Result<Json<serde_json::Value>> {
+    let changed = service
+        .admin_set_battle_cards_race(body.card_ids, body.race_id)
+        .await?;
+    Ok(Json(serde_json::json!({ "changed": changed })))
+}
+
 pub async fn admin_reorder_battle_races(
     State(service): State<AppService>,
     Json(body): Json<ReorderBattleCardsRequest>,
 ) -> Result<StatusCode> {
     service.admin_reorder_battle_races(body.ids).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_start_battle_probe(
+    State(service): State<AppService>,
+    Json(body): Json<crate::models::BattleProbeRequest>,
+) -> Result<Json<crate::models::BattleProbeStarted>> {
+    Ok(Json(service.admin_start_battle_probe(body).await?))
+}
+
+pub async fn admin_read_battle_probe(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::siege::ProbeState>> {
+    Ok(Json(service.admin_read_battle_probe(id)?))
 }

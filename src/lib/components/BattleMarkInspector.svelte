@@ -11,7 +11,7 @@
    * на столе рамок, свой наряд карты на листе карты. Текст и числа пишутся в
    * саму карту, то есть в те же поля, что и форма листа рядом.
    */
-  import { t } from '$lib/i18n';
+  import { t, LANG_META, type Lang } from '$lib/i18n';
   import { SITE_FONTS } from '$lib/fonts';
   import BattleGlyphControl from '$lib/components/BattleGlyphControl.svelte';
   import { selectOnFocus, blurOnWheel } from '$lib/utils/fields';
@@ -46,7 +46,7 @@
     /** Рама, какой её видит карта, — для чтения. */
     frame: BattleFrame;
     /** Язык, на котором набирается текст: тот же, что у листа. */
-    lang: 'en' | 'ru';
+    lang: Lang;
     /** Слова и числа карты правятся только на листе карты; на столе рамок
      *  карта — образец, и набирать в неё нечего. */
     textEditable?: boolean;
@@ -78,14 +78,14 @@
   /** Оба языка сразу, а не тот, что выбран на листе: имя и эффект
    *  обязательны на обоих, и панель, предлагавшая один, оставляла второй
    *  пустым — на полке другой локали карта стояла без имени. */
-  const SIDES = ['ru', 'en'] as const;
+  const SIDES = ['ru', 'en', 'uk'] as const;
   type Side = (typeof SIDES)[number];
 
   const FIELDS = {
-    title: { ru: 'titleRu', en: 'titleEn' },
-    kind: { ru: 'typeRu', en: 'typeEn' },
-    effect: { ru: 'effectRu', en: 'effectEn' },
-    lore: { ru: 'loreRu', en: 'loreEn' },
+    title: { ru: 'titleRu', en: 'titleEn', uk: 'titleUk' },
+    kind: { ru: 'typeRu', en: 'typeEn', uk: 'typeUk' },
+    effect: { ru: 'effectRu', en: 'effectEn', uk: 'effectUk' },
+    lore: { ru: 'loreRu', en: 'loreEn', uk: 'loreUk' },
   } as const;
 
   type TextSlot = keyof typeof FIELDS;
@@ -150,7 +150,7 @@
         {@const value = textOf(side)}
         <section class="mi-part">
           <span class="mi-label">
-            {side === 'ru' ? 'Русский' : 'English'}
+            {LANG_META[side].native}
             {#if side === lang}<em class="mi-now">{$t('adminBattlesReadyOnCard')}</em>{/if}
           </span>
           {#if textSlot === 'title' || textSlot === 'kind'}
@@ -176,7 +176,7 @@
           {/if}
           {#if side === 'en' && value.trim() && mostlyCyrillic(value)}
             <p class="mi-warn">{$t('adminBattlesReadyCyrillicHint')}</p>
-          {:else if !value.trim() && (textSlot === 'title' || textSlot === 'effect')}
+          {:else if !value.trim() && side !== 'uk' && (textSlot === 'title' || textSlot === 'effect')}
             <p class="mi-warn">{$t('adminBattlesReadyLangRequired')}</p>
           {/if}
         </section>

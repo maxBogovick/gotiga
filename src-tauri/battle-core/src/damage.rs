@@ -97,7 +97,12 @@ pub enum StepId {
     Cover,
     AttackerBless,
     AttackerCurse,
+    /// Бьющий сильнее против расы цели (таблица урона по расам).
+    RaceAttack,
     TargetVulnerable,
+    /// Цель защищена от расы бьющего. Стоит перед бронёй: это свойство цели,
+    /// как и броня, а пол в одно очко после них обоих.
+    RaceDefence,
     ChannelDefence,
     Floor,
     Shield,
@@ -155,7 +160,9 @@ type Step = (StepId, fn(i32, &Ctx) -> i32);
 const PIPELINE: &[Step] = &[
     (StepId::AttackerBless, step_attacker_bless),
     (StepId::AttackerCurse, step_attacker_curse),
+    (StepId::RaceAttack, step_race_attack),
     (StepId::TargetVulnerable, step_target_vulnerable),
+    (StepId::RaceDefence, step_race_defence),
     (StepId::ChannelDefence, step_channel_defence),
     (StepId::Floor, step_floor),
 ];
@@ -170,6 +177,20 @@ fn step_attacker_bless(amount: i32, ctx: &Ctx) -> i32 {
 fn step_attacker_curse(amount: i32, ctx: &Ctx) -> i32 {
     match ctx.attacker {
         Some(a) => amount + a.status_sum(Stat::Power).min(0),
+        None => amount,
+    }
+}
+
+fn step_race_attack(amount: i32, ctx: &Ctx) -> i32 {
+    match ctx.attacker {
+        Some(a) => amount + a.card.race_damage.attack_on(ctx.target.card.race.as_deref()),
+        None => amount,
+    }
+}
+
+fn step_race_defence(amount: i32, ctx: &Ctx) -> i32 {
+    match ctx.attacker {
+        Some(a) => amount - ctx.target.card.race_damage.defence_from(a.card.race.as_deref()),
         None => amount,
     }
 }

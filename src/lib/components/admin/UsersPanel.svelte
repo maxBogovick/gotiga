@@ -200,6 +200,12 @@
             Telegram: {detail.telegramUsername ? `@${detail.telegramUsername}` : $t('adminUsersTelegramLinked')}
           </span>
         {/if}
+        {#if detail.googleLinked}
+          <span class="detail-tg">Google: {detail.googleEmail ?? $t('adminUsersTelegramLinked')}</span>
+        {/if}
+        {#if detail.appleLinked}
+          <span class="detail-tg">Apple: {detail.appleEmail ?? $t('adminUsersTelegramLinked')}</span>
+        {/if}
         <span class="detail-date">{$t('adminUsersRegistered')}: {new Date(detail.createdAt).toLocaleDateString()}</span>
         {#if detail.signupIp || detail.signupCity || detail.signupCountryCode}
           <span class="detail-origin">

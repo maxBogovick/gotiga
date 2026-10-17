@@ -11,9 +11,14 @@
    *
    * Работает с ТЕМ ЖЕ этюдом, что и стол хранителя (`benchBoard`,
    * `benchTerrain`, `etudeSide` — общие): этюд один, и два его редактора
-   * обязаны видеть одно и то же. Руки сторон и правила остаются на «Столе».
+   * обязаны видеть одно и то же. Руки сторон, правила, записка и пробная
+   * партия стоят под доской той же страницей (`BattlesPanel`, вид «Поле
+   * боя»): хранитель не бегает по вкладкам, чтобы собрать один этюд. Сюда
+   * они приходят фрагментами (`tools`, `cardTools`).
    */
-  import { t, lang, type TranslationKey } from '$lib/i18n';
+  import type { Snippet } from 'svelte';
+  import { t, lang, type TranslationKey, localized } from '$lib/i18n';
+  import { api, resolveMediaUrl } from '$lib/api';
   import BattleGroundMark from '$lib/components/BattleGroundMark.svelte';
   import {
     FIELD_DEPTHS,
@@ -37,8 +42,10 @@
     etudeId,
     titleRu = $bindable(),
     titleEn = $bindable(),
+    titleUk = $bindable(''),
     board = $bindable(),
     terrain = $bindable(),
+    background = $bindable(),
     side = $bindable(),
     field,
     cards,
@@ -47,15 +54,21 @@
     onopen,
     onsave,
     onresize,
+    changed: changedOutside,
+    tools,
+    cardTools,
   }: {
     challenges: BattleChallenge[];
     etudeId: string | null;
     /** Название этюда на двух языках — то же, что на столе: этюд один. */
     titleRu: string;
     titleEn: string;
+    titleUk?: string;
     /** Тела расстановки по клетке, слагами. */
     board: Record<string, string>;
     terrain: Record<string, BattleGround>;
+    /** Фон поля: путь `/static/…` или `null`. Только вид — партии не меняет. */
+    background: string | null;
     /** Кто ставит половину гостя: этюд (`scripted`) или колода гостя (`deck`). */
     side: BattlePlayerSide;
     /** Величина поля этюда: клеток поперёк и вглубь у половины. */
@@ -68,6 +81,13 @@
     onsave: () => void;
     /** Сменить величину. Перекладывает и тела, и землю у шва. */
     onresize: (next: BattleField) => void;
+    /** Отличается ли этюд целиком от записанного — с правилами, руками,
+     *  запиской. Не названо — считается по тому, что видно на доске. */
+    changed?: boolean;
+    /** Инструменты над доской: город, предупреждения штурма, проверка. */
+    tools?: Snippet;
+    /** Что можно сделать с выбранной картой, не уходя со страницы. */
+    cardTools?: Snippet<[BattleCard]>;
   } = $props();
 
   // ── Доска ─────────────────────────────────────────────────────────────────
@@ -84,7 +104,7 @@
 
   // ── Карты ─────────────────────────────────────────────────────────────────
 
-  const nameOf = (c: BattleCard) => ($lang === 'ru' ? c.titleRu || c.titleEn : c.titleEn || c.titleRu);
+  const nameOf = (c: BattleCard) => localized(c, 'title', $lang);
   let bySlug = $derived(new Map(cards.map((c) => [c.slug, c])));
   const cardTitle = (slug: string) => {
     const c = bySlug.get(slug);
@@ -96,11 +116,20 @@
   };
 
   let search = $state('');
+  /** Снаряжение этюдов (стены, башни, таран) — первым: им строят город, и
+   *  искать его среди работ автора незачем. */
   let shown = $derived(
-    cards.filter((c) => {
-      const q = search.trim().toLowerCase();
-      return !q || c.titleRu.toLowerCase().includes(q) || c.titleEn.toLowerCase().includes(q);
-    }),
+    cards
+      .filter((c) => {
+        const q = search.trim().toLowerCase();
+        return (
+          !q ||
+          c.titleRu.toLowerCase().includes(q) ||
+          c.titleEn.toLowerCase().includes(q) ||
+          (c.titleUk ?? '').toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => Number(b.status === 'etude') - Number(a.status === 'etude')),
   );
 
   // ── Что делаем ────────────────────────────────────────────────────────────
@@ -141,7 +170,7 @@
 
   /** Отличается ли то, что на столе, от записанного: что угодно — название,
    *  тела, земля, величина, кто ставит половину гостя. Новый этюд — всегда. */
-  let changed = $derived.by(() => {
+  let changedOnBoard = $derived.by(() => {
     if (!kept) return true;
     const keyed = (list: { card: string; x: number; y: number }[]) =>
       Object.fromEntries(list.map((p) => [`${p.x},${p.y}`, p.card]));
@@ -155,13 +184,43 @@
     return (
       titleRu !== kept.titleRu ||
       titleEn !== kept.titleEn ||
+      titleUk !== (kept.titleUk ?? '') ||
       side !== kept.playerSide ||
       field.width !== keptField.width ||
       field.depth !== keptField.depth ||
+      (background ?? null) !== (kept.setup.background ?? null) ||
       sorted(board) !== sorted(keptBoard) ||
       sorted(terrain) !== sorted(keptGround)
     );
   });
+  let changed = $derived(changedOutside ?? changedOnBoard);
+
+  // ── Фон ───────────────────────────────────────────────────────────────────
+
+  let uploading = $state(false);
+  let backdropUrl = $derived.by(() => {
+    const url = resolveMediaUrl(background);
+    return url && !/["')\\\s]/.test(url) ? url : null;
+  });
+
+  async function loadBackground(e: Event & { currentTarget: HTMLInputElement }) {
+    const file = e.currentTarget.files?.[0];
+    e.currentTarget.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      complaint = $t('adminBattlesFieldBackgroundNotImage');
+      return;
+    }
+    uploading = true;
+    complaint = null;
+    try {
+      background = (await api.adminUploadBattleFrameArt(file)).path;
+    } catch {
+      complaint = $t('adminBattlesFieldBackgroundFailed');
+    } finally {
+      uploading = false;
+    }
+  }
 
   // ── Нажатия на доску ──────────────────────────────────────────────────────
 
@@ -338,6 +397,10 @@
       <span class="label">{$t('adminBattlesEtudeTitle')} · EN</span>
       <input bind:value={titleEn} class="title-input" />
     </label>
+    <label class="flex flex-col gap-1">
+      <span class="label">{$t('adminBattlesEtudeTitle')} · UK</span>
+      <input bind:value={titleUk} class="title-input" />
+    </label>
     <span class="ml-auto flex items-center gap-3">
       {#if kept && changed}
         <span class="text-[11px] text-[#c65f3c]">{$t('adminBattlesFieldUnsaved')}</span>
@@ -382,6 +445,10 @@
     </div>
   {/if}
 
+  {#if tools}
+    {@render tools()}
+  {/if}
+
   <!-- 3. Поле: величина и кто ставит половину гостя. -->
   <div class="flex flex-wrap items-center gap-x-8 gap-y-2 mt-4">
     <span class="flex items-center gap-2">
@@ -404,6 +471,19 @@
         >
       {/each}
       <span class="text-[11px] tabular-nums text-[#8a6a55]">= {field.width} × {rows}</span>
+    </span>
+    <span class="flex items-center gap-2">
+      <span class="label">{$t('adminBattlesFieldBackground')}</span>
+      {#if backdropUrl}
+        <img src={backdropUrl} alt="" class="backdrop-thumb" />
+      {/if}
+      <label class="seg seg--wide cursor-pointer" class:opacity-50={uploading}>
+        {uploading ? $t('adminBattlesFieldBackgroundLoading') : backdropUrl ? $t('adminBattlesFieldBackgroundChange') : $t('adminBattlesFieldBackgroundLoad')}
+        <input type="file" accept="image/*" class="sr-only" disabled={uploading} onchange={loadBackground} />
+      </label>
+      {#if background}
+        <button class="seg seg--wide" onclick={() => (background = null)}>{$t('adminBattlesFieldBackgroundRemove')}</button>
+      {/if}
     </span>
     <span class="flex items-center gap-2">
       <span class="label">{$t('adminBattlesFieldGuestSide')}</span>
@@ -451,10 +531,24 @@
                   <span class="block text-[10px] text-[#8a6a55] tabular-nums">
                     {$t('adminBattlesFieldTier')} {c.tier} · ♥ {c.health} · ⚔ {c.power}
                   </span>
+                  {#if c.kind === 'structure' || c.shoots || c.status === 'etude'}
+                    <span class="block text-[10px] text-[#6f3b24]">
+                      {[
+                        c.kind === 'structure' ? $t('adminBattlesKindStructure') : '',
+                        c.shoots ? $t('battlesShoots') : '',
+                        c.status === 'etude' ? $t('adminBattlesGearShort') : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  {/if}
                 </span>
               </button>
             {/each}
           </div>
+          {#if pick && cardTools && bySlug.get(pick)}
+            {@render cardTools(bySlug.get(pick)!)}
+          {/if}
           <p class="mt-2 text-[11px] leading-snug text-[#8a6a55]">{$t('adminBattlesFieldPickHint')}</p>
         {:else}
           {#each GROUNDS as g (g)}
@@ -485,7 +579,15 @@
         <span>← {$t('adminBattlesBenchGuestHalf')}{side === 'deck' ? ` · ${$t('adminBattlesFieldGuestByDeck')}` : ''}</span>
         <span>{$t('adminBattlesBenchKeeperHalf')} →</span>
       </p>
-      <div class="field" class:field--ground={mode === 'ground'} role="grid" aria-label={$t('adminBattlesFieldView')} style="--cols:{rows}">
+      <div
+        class="field"
+        class:field--ground={mode === 'ground'}
+        class:field--pictured={!!backdropUrl}
+        role="grid"
+        aria-label={$t('adminBattlesFieldView')}
+        style="--cols:{rows}"
+        style:--backdrop={backdropUrl ? `url("${backdropUrl}")` : undefined}
+      >
         {#each lines as x (x)}
           <div class="row" role="row">
             {#each columns as y (y)}
@@ -493,6 +595,7 @@
               {@const ground = terrain[key]}
               {@const body = board[key]}
               {@const art = body ? cardArt(body) : null}
+              {@const structure = !!body && bySlug.get(body)?.kind === 'structure'}
               <button
                 type="button"
                 role="gridcell"
@@ -500,6 +603,7 @@
                 class:tile--keeper={y < field.depth}
                 class:tile--seam={y === field.depth - 1}
                 class:tile--deck={side === 'deck' && guestHalf(y)}
+                class:tile--structure={structure}
                 aria-label={`${key}${ground ? ` — ${$t(GROUND_NAME[ground])}` : ''}${body ? ` — ${cardTitle(body)}` : ''}`}
                 onpointerdown={(e) => press(key, e)}
                 onpointerenter={() => enter(key)}
@@ -507,7 +611,19 @@
                 {#if ground}
                   <BattleGroundMark {ground} occupied={!!body} />
                 {/if}
-                {#if body}
+                {#if body && structure && art}
+                  <!-- Строение — кусок одной стены: во всю клетку и с заходом в
+                       промежуток к соседу, без подписи, иначе ряд стен читался
+                       бы столбиком карточек. Зубцы смотрят на врага: у гостя
+                       кусок отражён. -->
+                  <img
+                    class="structure-art"
+                    class:structure-art--guest={guestHalf(y)}
+                    src={art}
+                    alt=""
+                    draggable="false"
+                  />
+                {:else if body}
                   {#if art}<img class="body-art" src={art} alt="" draggable="false" />{/if}
                   <span class="body">{cardTitle(body)}</span>
                 {/if}
@@ -838,6 +954,20 @@
     gap: 4px;
   }
 
+  /* Фон лежит под всей доской: клетки полупрозрачны, картинка читается сквозь
+     них, а размер клетки от неё не зависит. */
+  .field--pictured {
+    background: var(--backdrop) center / cover no-repeat;
+    padding: 6px;
+  }
+
+  .backdrop-thumb {
+    width: 40px;
+    height: 28px;
+    object-fit: cover;
+    border: 1px solid rgba(52, 37, 28, 0.2);
+  }
+
   /* Клетка — доля ширины доски за вычетом промежутков и шва, но не крупнее 104px:
      поле 3 × 6 на широком окне не должно раздуваться в плакат. */
   .tile {
@@ -884,6 +1014,26 @@
   .tile:focus-visible {
     outline: 1px solid #c65f3c;
     outline-offset: 1px;
+  }
+
+  /* Строение: кусок стены. Заходит в промежуток между рядами (4px) и в рамку
+     клетки, чтобы соседние куски сходились в одну стену. */
+  .tile--structure {
+    border-color: transparent;
+  }
+
+  .structure-art {
+    position: absolute;
+    inset: -3px -1px;
+    z-index: 1;
+    width: calc(100% + 2px);
+    height: calc(100% + 6px);
+    object-fit: fill;
+    pointer-events: none;
+  }
+
+  .structure-art--guest {
+    transform: scaleX(-1);
   }
 
   /* Карта на доске — её картинка во всю клетку и имя внизу: узнают по лицу. */

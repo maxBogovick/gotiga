@@ -6,7 +6,7 @@
   // Кошелёк принадлежит всем трём и стоит в этой строке, не в теле полки.
   // Задания висят на нём одним счётом; список открывается здесь же, чтобы
   // возврат в комнату не начинался с формы поручений.
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import { slide } from 'svelte/transition';
   import { page } from '$app/state';
   import { t, type TranslationKey } from '$lib/i18n';
@@ -23,16 +23,21 @@
     me = null,
     settled = null,
     errands,
+    children,
   }: {
     me?: BattleMe | null;
     settled?: number | null;
     /** Не передали — дверь читает сама. Пустой список — заданий нет. */
     errands?: BattleErrand[];
+    /** Второй уровень навигации комнаты (режимы этюдов) — в той же строке,
+     *  а не отдельной полосой над содержимым. */
+    children?: Snippet;
   } = $props();
 
   const ROOMS: { id: Room; href: string; key: TranslationKey }[] = [
     { id: 'shelf', href: '/battles', key: 'battlesRoomShelf' },
-    { id: 'table', href: '/battles/table', key: 'battlesRoomTable' },
+    // Колода собирается перед встречей, на поле этюда (`BattleLineup`), и
+    // отдельной двери у неё пока нет: `/battles/table` скрыт.
     { id: 'etude', href: '/battles/etude', key: 'battlesRoomEtude' },
   ];
 
@@ -118,6 +123,8 @@
         aria-current={here === room.id ? 'page' : undefined}>{$t(room.key)}</a
       >
     {/each}
+
+    {@render children?.()}
 
     {#if book}
       <span class="grow"></span>

@@ -9,7 +9,7 @@
 use gotiga_server::config::Config;
 use gotiga_server::db::Repository;
 use gotiga_server::error::AppError;
-use gotiga_server::models::{TalePollVoteRequest, TaleSequelWishRequest};
+use gotiga_server::models::{TalePollVoteRequest, TaleSequelWishRequest, User};
 use gotiga_server::services::AppService;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -41,6 +41,12 @@ fn config() -> Config {
         admin_log_db_path: format!("/tmp/gotiga-tales-logs-{}.sqlite", Uuid::new_v4()),
         analytics_hash_secret: "test-analytics-secret-0123456789".into(),
         auth_pepper: "pepper-for-tests-0123456789".into(),
+        google_client_id: None,
+        google_client_secret: None,
+        apple_client_id: None,
+        apple_team_id: None,
+        apple_key_id: None,
+        apple_private_key: None,
         auth_pepper_old: None,
     }
 }
@@ -88,14 +94,38 @@ async fn seed_tale(
 
 async fn sign_the_book(pool: &PgPool, email: &str) {
     sqlx::query(
-        "INSERT INTO newsletter_subscribers (email, source, lang, unsubscribe_token)
-         VALUES ($1, 'home', 'ru', $2)",
+        "INSERT INTO newsletter_subscribers (email, source, lang, unsubscribe_token, confirmed_at)
+         VALUES ($1, 'home', 'ru', $2, NOW())",
     )
     .bind(email)
     .bind(format!("door-{}", Uuid::new_v4().simple()))
     .execute(pool)
     .await
     .expect("вписать в книгу");
+}
+
+
+/// Читатель с живой сессией. С почтой — подтверждённой: письма о байках уходят
+/// только на такие адреса, и голосуют теперь только вошедшие.
+async fn reader(pool: &PgPool, svc: &AppService, email: Option<&str>) -> User {
+    use sha2::{Digest, Sha256};
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (email, display_name, visual_password_hash, email_confirmed_at)
+         VALUES ($1, 'Читатель', 'x', CASE WHEN $1::text IS NULL THEN NULL ELSE NOW() END)
+         RETURNING id",
+    )
+    .bind(email)
+    .fetch_one(pool)
+    .await
+    .expect("завести читателя");
+    let token = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO user_sessions (user_id, token, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 day')")
+        .bind(id)
+        .bind(hex::encode(Sha256::digest(token.as_bytes())))
+        .execute(pool)
+        .await
+        .expect("сессия");
+    svc.get_user_from_session(&token).await.expect("читатель по сессии")
 }
 
 fn wish(token: &str, want: bool, email: Option<&str>, age: bool) -> TaleSequelWishRequest {
@@ -161,18 +191,20 @@ async fn the_poll_takes_one_voice_per_reader(pool: PgPool) {
         Err(AppError::BadRequest(_))
     ));
     let poll = open_poll_id(&svc).await;
+    let ra = reader(&pool, &svc, None).await;
+    let rb = reader(&pool, &svc, None).await;
 
-    svc.vote_tale_poll(poll, &vote("reader-a", witch, None), None)
+    svc.vote_tale_poll(poll, &vote("reader-a", witch, None), &ra)
         .await
         .expect("голос");
     let changed = svc
-        .vote_tale_poll(poll, &vote("reader-a", wizard, None), None)
+        .vote_tale_poll(poll, &vote("reader-a", wizard, None), &ra)
         .await
         .expect("передумал");
     assert_eq!(changed.my_choice, wizard.to_string());
     assert!(!changed.my_letter);
     assert!(matches!(
-        svc.vote_tale_poll(poll, &vote("reader-b", granny, None), None).await,
+        svc.vote_tale_poll(poll, &vote("reader-b", granny, None), &rb).await,
         Err(AppError::NotFound(_))
     ));
 
@@ -199,17 +231,19 @@ async fn a_closed_poll_keeps_its_choices_and_still_takes_an_address(pool: PgPool
     let wizard = seed_work(&pool, "Wizard").await;
     svc.admin_open_tale_poll(vec![witch, wizard]).await.expect("открыть");
     let poll = open_poll_id(&svc).await;
-    svc.vote_tale_poll(poll, &vote("reader-a", witch, None), None)
+    let ra = reader(&pool, &svc, Some("a@x.io")).await;
+    let rb = reader(&pool, &svc, None).await;
+    svc.vote_tale_poll(poll, &vote("reader-a", witch, None), &ra)
         .await
         .expect("голос");
 
     svc.admin_close_tale_poll(poll, wizard).await.expect("закрыть");
     assert!(matches!(
-        svc.vote_tale_poll(poll, &vote("reader-b", wizard, None), None).await,
+        svc.vote_tale_poll(poll, &vote("reader-b", wizard, None), &rb).await,
         Err(AppError::BadRequest(_))
     ));
     let kept = svc
-        .vote_tale_poll(poll, &vote("reader-a", wizard, Some("a@x.io")), None)
+        .vote_tale_poll(poll, &vote("reader-a", wizard, Some("a@x.io")), &ra)
         .await
         .expect("адрес к прежнему голосу");
     assert_eq!(kept.my_choice, witch.to_string(), "выбор после закрытия не меняется");
@@ -230,6 +264,7 @@ async fn a_closed_poll_keeps_its_choices_and_still_takes_an_address(pool: PgPool
 async fn a_sequel_wish_is_one_per_reader(pool: PgPool) {
     let svc = service(&pool);
     let tale = seed_tale(&pool, "Лесник", None, None, 60).await;
+    let ra = reader(&pool, &svc, Some("a@x.io")).await;
 
     let first = svc
         .set_tale_sequel_wish(tale, &wish("reader-a", true, None, false), None)
@@ -237,12 +272,12 @@ async fn a_sequel_wish_is_one_per_reader(pool: PgPool) {
         .expect("просьба без адреса");
     assert!(first.wants && !first.letter);
     assert!(matches!(
-        svc.set_tale_sequel_wish(tale, &wish("reader-a", true, Some("a@x.io"), false), None)
+        svc.set_tale_sequel_wish(tale, &wish("reader-a", true, Some("a@x.io"), false), Some(&ra))
             .await,
         Err(AppError::BadRequest(_))
     ));
     let with_letter = svc
-        .set_tale_sequel_wish(tale, &wish("reader-a", true, Some("a@x.io"), true), None)
+        .set_tale_sequel_wish(tale, &wish("reader-a", true, Some("a@x.io"), true), Some(&ra))
         .await
         .expect("просьба с адресом");
     assert!(with_letter.wants && with_letter.letter);
@@ -290,7 +325,8 @@ async fn a_new_tale_writes_once_to_whoever_asked(pool: PgPool) {
     svc.send_tale_letters().await.expect("первый проход");
     sign_the_book(&pool, "book@x.io").await;
     sign_the_book(&pool, "both@x.io").await;
-    svc.set_tale_sequel_wish(beginning, &wish("w1", true, Some("wish@x.io"), true), None)
+    let w1 = reader(&pool, &svc, Some("wish@x.io")).await;
+    svc.set_tale_sequel_wish(beginning, &wish("w1", true, Some("wish@x.io"), true), Some(&w1))
         .await
         .expect("просьба");
     svc.set_tale_sequel_wish(beginning, &wish("w2", true, Some("BOTH@x.io"), true), None)
@@ -300,7 +336,8 @@ async fn a_new_tale_writes_once_to_whoever_asked(pool: PgPool) {
     // Голосование закрыто на Ведьме.
     svc.admin_open_tale_poll(vec![witch, wizard]).await.expect("открыть");
     let poll = open_poll_id(&svc).await;
-    svc.vote_tale_poll(poll, &vote("v1", wizard, Some("voter@x.io")), None)
+    let v1 = reader(&pool, &svc, Some("voter@x.io")).await;
+    svc.vote_tale_poll(poll, &vote("v1", wizard, Some("voter@x.io")), &v1)
         .await
         .expect("голос");
     svc.admin_close_tale_poll(poll, witch).await.expect("закрыть");
@@ -348,7 +385,8 @@ async fn the_order_of_the_keepers_hands_does_not_lose_a_letter(pool: PgPool) {
     let wizard = seed_work(&pool, "Wizard").await;
     let beginning = seed_tale(&pool, "Начало", None, None, 600).await;
     svc.send_tale_letters().await.expect("первый проход");
-    svc.set_tale_sequel_wish(beginning, &wish("w1", true, Some("wish@x.io"), true), None)
+    let w1 = reader(&pool, &svc, Some("wish@x.io")).await;
+    svc.set_tale_sequel_wish(beginning, &wish("w1", true, Some("wish@x.io"), true), Some(&w1))
         .await
         .expect("просьба");
     svc.admin_open_tale_poll(vec![witch, wizard]).await.expect("открыть");
@@ -358,7 +396,8 @@ async fn the_order_of_the_keepers_hands_does_not_lose_a_letter(pool: PgPool) {
         .execute(&pool)
         .await
         .expect("сдвинуть время");
-    svc.vote_tale_poll(poll, &vote("v1", witch, Some("voter@x.io")), None)
+    let v1 = reader(&pool, &svc, Some("voter@x.io")).await;
+    svc.vote_tale_poll(poll, &vote("v1", witch, Some("voter@x.io")), &v1)
         .await
         .expect("голос");
 
@@ -411,19 +450,19 @@ async fn seed_user(pool: &PgPool) -> Uuid {
 #[sqlx::test]
 async fn a_closed_poll_never_loses_a_signed_in_readers_vote(pool: PgPool) {
     let svc = service(&pool);
-    let reader = seed_user(&pool).await;
+    let reader = self::reader(&pool, &svc, Some("a@x.io")).await;
     let witch = seed_work(&pool, "Witch").await;
     let wizard = seed_work(&pool, "Wizard").await;
     svc.admin_open_tale_poll(vec![witch, wizard]).await.expect("открыть");
     let poll = open_poll_id(&svc).await;
-    svc.vote_tale_poll(poll, &vote("device-a", witch, Some("a@x.io")), Some(reader))
+    svc.vote_tale_poll(poll, &vote("device-a", witch, Some("a@x.io")), &reader)
         .await
         .expect("голос с первого устройства");
     svc.admin_close_tale_poll(poll, witch).await.expect("закрыть");
 
     // Устаревшая вкладка на втором устройстве.
     assert!(matches!(
-        svc.vote_tale_poll(poll, &vote("device-b", wizard, None), Some(reader)).await,
+        svc.vote_tale_poll(poll, &vote("device-b", wizard, None), &reader).await,
         Err(AppError::BadRequest(_))
     ));
     let kept: Vec<(String, Uuid, Option<String>)> = sqlx::query_as(
@@ -439,11 +478,11 @@ async fn a_closed_poll_never_loses_a_signed_in_readers_vote(pool: PgPool) {
     // устройство вместе с адресом — это правило осталось прежним.
     svc.admin_open_tale_poll(vec![witch, wizard]).await.expect("открыть второе");
     let second = open_poll_id(&svc).await;
-    svc.vote_tale_poll(second, &vote("device-a", witch, Some("a@x.io")), Some(reader))
+    svc.vote_tale_poll(second, &vote("device-a", witch, Some("a@x.io")), &reader)
         .await
         .expect("голос");
     let moved = svc
-        .vote_tale_poll(second, &vote("device-b", wizard, None), Some(reader))
+        .vote_tale_poll(second, &vote("device-b", wizard, None), &reader)
         .await
         .expect("голос со второго устройства");
     assert!(moved.my_letter, "адрес переехал вместе с голосом");
@@ -598,6 +637,7 @@ async fn a_telegram_reader_is_told_by_a_note(pool: PgPool) {
     let stats = svc.get_tale_stats(beginning, Some("tg-device"), false).await.expect("числа");
     assert_eq!(stats.sequel_telegram, Some(true));
 
+    sign_the_book(&pool, "guest@x.io").await;
     svc.set_tale_sequel_wish(beginning, &wish("guest", true, Some("guest@x.io"), true), None)
         .await
         .expect("просьба с письмом");
@@ -674,7 +714,8 @@ async fn the_letter_forecast_matches_the_lay_out(pool: PgPool) {
     svc.set_tale_sequel_wish(beginning, &wish("w1", true, Some("Asked@x.io"), true), None)
         .await
         .expect("просьба");
-    svc.set_tale_sequel_wish(beginning, &wish("w2", true, Some("only-asked@x.io"), true), None)
+    let only = reader(&pool, &svc, Some("only-asked@x.io")).await;
+    svc.set_tale_sequel_wish(beginning, &wish("w2", true, Some("only-asked@x.io"), true), Some(&only))
         .await
         .expect("вторая просьба");
 

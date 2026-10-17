@@ -16,7 +16,7 @@
    * transition; this component only paints.
    */
   import { cubicInOut } from 'svelte/easing';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, LANG_META } from '$lib/i18n';
   import { formatMinutes, minutesUntilOpen, openingHeadline, type ShowingWindow } from '$lib/showing-window';
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -88,7 +88,7 @@
       : ''
   );
 
-  let locale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+  let locale = $derived(LANG_META[$lang].locale);
   // The one concrete fact on the plate — relative day + exact clock time.
   let headline = $derived(openingHeadline(win, $t, locale, now ?? houseClock.nowDate));
   // 2024-01-01 was a Monday → index 0..6 maps Mon..Sun (matches the bitmask).

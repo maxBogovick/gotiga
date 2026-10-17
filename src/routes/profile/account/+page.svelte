@@ -14,9 +14,11 @@
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { userDesk } from '$lib/stores/user-desk.svelte';
+  import { onMount } from 'svelte';
   import TelegramDoor from '$lib/components/auth/TelegramDoor.svelte';
+  import { beginOauth } from '$lib/oauth';
   import { claimKindLabel, formatDate } from '$lib/profile-labels';
-  import type { OwnSessionDto, LinkClaimResponse, LinkClaimKind } from '$lib/types/api';
+  import type { OwnSessionDto, LinkClaimResponse, LinkClaimKind, OauthConfig, OauthProvider } from '$lib/types/api';
 
   // ── Двери ──
   let doors = $state<OwnSessionDto[]>([]);
@@ -25,7 +27,16 @@
   let doorsError = $state('');
 
   let canAskForSigns = $derived(!!authStore.user?.emailConfirmed || !!authStore.user?.telegramLinked);
-  let canUnlink = $derived(!!authStore.user?.emailConfirmed && !!authStore.user?.hasSigns);
+  // Сколько дверей у имени. Считается тем же списком, что и на сервере
+  // (`User::doors_besides`): подтверждённая почта со знаками, Telegram, Google,
+  // Apple. Отвязать можно только то, что не последнее.
+  let doorCount = $derived(
+    (authStore.user?.emailConfirmed && authStore.user?.hasSigns ? 1 : 0) +
+      (authStore.user?.telegramLinked ? 1 : 0) +
+      (authStore.user?.googleLinked ? 1 : 0) +
+      (authStore.user?.appleLinked ? 1 : 0)
+  );
+  let canUnlink = $derived(doorCount > 1);
 
   $effect(() => {
     if (!authStore.token) return;
@@ -91,6 +102,56 @@
       tgError = $t('profileActionError');
     } finally {
       tgBusy = false;
+    }
+  }
+
+  // ── Google и Apple ──
+  const providers: { id: OauthProvider; label: string }[] = [
+    { id: 'google', label: 'Google' },
+    { id: 'apple', label: 'Apple' }
+  ];
+  let oauthConf = $state<OauthConfig>({ google: false, apple: false });
+  let oBusy = $state<OauthProvider | null>(null);
+  let oDone = $state('');
+  let oError = $state('');
+
+  onMount(() => {
+    api.oauthConfig().then((c) => { oauthConf = c; }).catch(() => {});
+  });
+
+  const isLinked = (p: OauthProvider) =>
+    p === 'google' ? !!authStore.user?.googleLinked : !!authStore.user?.appleLinked;
+  const linkedAs = (p: OauthProvider) =>
+    p === 'google' ? authStore.user?.googleEmail : authStore.user?.appleEmail;
+
+  async function linkOauth(p: OauthProvider) {
+    const token = authStore.token;
+    if (!token || oBusy) return;
+    oBusy = p;
+    oError = '';
+    oDone = '';
+    try {
+      // Уходим к провайдеру; вернётся человек на /auth/oauth и оттуда сюда.
+      await beginOauth(p, { mode: 'link', sessionToken: token, from: '/profile/account' });
+    } catch {
+      oError = $t('profileActionError');
+      oBusy = null;
+    }
+  }
+
+  async function unlinkOauth(p: OauthProvider) {
+    const token = authStore.token;
+    if (!token || oBusy) return;
+    oBusy = p;
+    oError = '';
+    oDone = '';
+    try {
+      authStore.setSession(token, await api.oauthUnlink(p, token));
+      oDone = $t('profileOauthUnlinked');
+    } catch {
+      oError = $t('profileActionError');
+    } finally {
+      oBusy = null;
     }
   }
 
@@ -226,6 +287,35 @@
   </div>
 
   {#if tgError}<p class="pf-error" role="alert">{tgError}</p>{:else if tgDone}<p class="pf-said" role="status">{tgDone}</p>{/if}
+
+  {#each providers as p (p.id)}
+    <!-- Строка есть, если дверь включена на сервере или уже привязана:
+         привязанную, но выключенную надо уметь снять. -->
+    {#if oauthConf[p.id] || isLinked(p.id)}
+      <div class="door">
+        <span class="door-name">{p.label}</span>
+        <div class="door-state">
+          {#if isLinked(p.id)}
+            <span class="ok">{linkedAs(p.id) ?? $t('profileOauthYours')}</span>
+            {#if canUnlink}
+              <button class="pf-btn" onclick={() => unlinkOauth(p.id)} disabled={oBusy !== null}>
+                {oBusy === p.id ? '…' : $t('profileOauthUnlink')}
+              </button>
+            {:else}
+              <span class="pf-quiet">{$t('profileOauthOnlyDoor')}</span>
+            {/if}
+          {:else}
+            <span class="pf-quiet">{$t('profileOauthNone')}</span>
+            <button class="pf-btn" onclick={() => linkOauth(p.id)} disabled={oBusy !== null}>
+              {oBusy === p.id ? '…' : $t('profileOauthLink')}
+            </button>
+          {/if}
+        </div>
+      </div>
+    {/if}
+  {/each}
+
+  {#if oError}<p class="pf-error" role="alert">{oError}</p>{:else if oDone}<p class="pf-said" role="status">{oDone}</p>{/if}
 
   <div class="door door--wide">
     <span class="door-name">{$t('profileSessionsTitle')}</span>

@@ -10,7 +10,7 @@
   // взвешивает карту хозяин: второй счёт однажды разошёлся бы с первым.
   import { page as routePage } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { cardFromRequest } from '$lib/battles';
@@ -131,7 +131,7 @@
 
   function addTrait() {
     if (!body) return;
-    body.traits = [...body.traits, { nameEn: '', nameRu: '', textEn: '', textRu: '' }];
+    body.traits = [...body.traits, { nameEn: '', nameRu: '', textEn: '', textRu: '', nameUk: '', textUk: '' }];
   }
 
   function dropTrait(at: number) {
@@ -306,6 +306,22 @@
                 
               />
             </label>
+            <label class="field">
+              {$t('studioCardTitleUk')}
+              <input bind:value={body.titleUk} />
+            </label>
+            <label class="field">
+              {$t('studioCardEffectUk')}
+              <textarea bind:value={body.effectUk} rows="2"></textarea>
+            </label>
+            <label class="field">
+              {$t('studioCardLoreUk')}
+              <textarea bind:value={body.loreUk} rows="2"></textarea>
+            </label>
+            <label class="field">
+              {$t('studioCardTypeUk')}
+              <input bind:value={body.typeUk} />
+            </label>
           </div>
         </section>
 
@@ -323,7 +339,7 @@
               >
                 <option value={null}>—</option>
                 {#each races as race (race.id)}
-                  <option value={race.id}>{$lang === 'en' ? race.nameEn : race.nameRu}</option>
+                  <option value={race.id}>{localized(race, 'name', $lang)}</option>
                 {/each}
               </select>
             </label>
@@ -414,6 +430,16 @@
               <input
                 bind:value={trait.textEn}
                 placeholder={$t('studioCardTraitTextEn')}
+                class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+              />
+              <input
+                bind:value={trait.nameUk}
+                placeholder={$t('studioCardTraitNameUk')}
+                class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+              />
+              <input
+                bind:value={trait.textUk}
+                placeholder={$t('studioCardTraitTextUk')}
                 class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
               />
               <button

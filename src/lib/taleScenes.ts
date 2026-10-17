@@ -49,8 +49,11 @@ export interface TaleScene {
    * Номер блока текста, после которого стоит сцена (как `after` у
    * `TaleProse`), — свой на каждый язык: версии байки не обязаны совпадать
    * абзац в абзац, и номер одной уронил бы сцену в середину другой.
+   * `uk` необязателен: пока украинского перевода нет или он идёт абзац в абзац
+   * за русским, берётся русский номер. Переведённой иначе байке номер
+   * называют здесь.
    */
-  after?: { ru: number; en: number };
+  after?: { ru: number; en: number; uk?: number };
   figure: string;
   /** Слой жара или жил; плитам не нужен. */
   glow?: string;
@@ -173,4 +176,15 @@ export function sceneFromData(d: TaleSceneData): TaleScene {
     frames: d.frames.map((f) => ({ url: f.url, position: f.position || undefined })),
     transitions: d.transitions.map((t) => ({ type: t.type, at: t.at, span: t.span })),
   };
+}
+
+
+/** Номер блока, после которого стоит встроенная сцена, на языке читателя. */
+export function sceneAfter(
+  after: NonNullable<TaleScene['after']>,
+  lang: 'en' | 'ru' | 'uk',
+): number {
+  if (lang === 'en') return after.en;
+  if (lang === 'uk') return after.uk ?? after.ru;
+  return after.ru;
 }

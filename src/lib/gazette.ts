@@ -1,6 +1,9 @@
 import { figurineHref } from '$lib/figurineHref';
 import type { FigurineListItem, GazetteCutting, GazetteKind, GazetteLeaf } from '$lib/types/api';
-import type { Lang, TranslationKey } from '$lib/i18n';
+import { localized, pick, type Lang, type TranslationKey } from '$lib/i18n';
+
+/** Dates in the gazette read in British order in English, as they always have. */
+const gazetteLocale = (lang: Lang) => pick(lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA' });
 
 export const TITLE_MAX = 200;
 export const DEK_MAX = 500;
@@ -55,25 +58,18 @@ export function decodeEntities(s: string): string {
   });
 }
 
-/** Pick the language the visitor is reading, falling back to English. */
+/** Pick the language the visitor is reading. The reader's own language wins;
+ *  an empty one must not blank the page, so the next language written is
+ *  shown instead (English first, then the other). */
 export function leafCopy(
-  leaf: Pick<GazetteLeaf, 'titleEn' | 'titleRu' | 'dekEn' | 'dekRu' | 'bodyEn' | 'bodyRu'>,
+  leaf: Pick<GazetteLeaf, 'titleEn' | 'titleRu' | 'dekEn' | 'dekRu' | 'bodyEn' | 'bodyRu'> &
+    Partial<Pick<GazetteLeaf, 'titleUk' | 'dekUk' | 'bodyUk'>>,
   lang: Lang,
 ): { title: string; dek: string; body: string } {
-  const ru = lang === 'ru';
-  const titleEn = (leaf.titleEn ?? '').trim();
-  const titleRu = (leaf.titleRu ?? '').trim();
-  const title = (ru && titleRu ? titleRu : titleEn) || titleRu;
-  // Fall back to whichever language was actually written, in both directions.
-  // The reader's own language wins; an empty one must not blank the page. This
-  // used to be asymmetric — a leaf written only in Russian showed nothing at
-  // all to an English reader, while the reverse read fine.
-  const dek = (ru ? leaf.dekRu?.trim() || leaf.dekEn?.trim() : leaf.dekEn?.trim() || leaf.dekRu?.trim()) ?? '';
-  const body = (ru ? leaf.bodyRu?.trim() || leaf.bodyEn?.trim() : leaf.bodyEn?.trim() || leaf.bodyRu?.trim()) ?? '';
   return {
-    title: decodeEntities(title),
-    dek: decodeEntities(dek),
-    body: decodeEntities(body),
+    title: decodeEntities(localized(leaf, 'title', lang)),
+    dek: decodeEntities(localized(leaf, 'dek', lang)),
+    body: decodeEntities(localized(leaf, 'body', lang)),
   };
 }
 
@@ -168,8 +164,10 @@ export function plateSlips(
 export interface GazetteTemplateFill {
   titleEn: string;
   titleRu: string;
+  titleUk: string;
   dekEn: string;
   dekRu: string;
+  dekUk: string;
 }
 
 function dateOnlyIso(value: string): string {
@@ -256,6 +254,8 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
         titleRu: n || 'Новая работа',
         dekEn: n ? `${n} has been added to the catalogue.` : 'A new work has been added to the catalogue.',
         dekRu: n ? `«${n}» появилась в каталоге.` : 'Новая работа появилась в каталоге.',
+        titleUk: n || 'Нова робота',
+        dekUk: n ? `«${n}» з’явилася в каталозі.` : 'Нова робота з’явилася в каталозі.',
       };
     case 'showing':
       return {
@@ -263,6 +263,8 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
         titleRu: n ? `Показ: ${n}` : 'Анонс показа',
         dekEn: 'Dates and details of the showing.',
         dekRu: 'Даты и детали показа.',
+        titleUk: n ? `Показ: ${n}` : 'Анонс показу',
+        dekUk: 'Дати й подробиці показу.',
       };
     case 'sketch':
       return {
@@ -270,6 +272,8 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
         titleRu: n || 'В работе',
         dekEn: n ? `${n} is still in the making.` : 'Sketches from the workshop.',
         dekRu: n ? `«${n}» ещё в работе.` : 'Наброски из мастерской.',
+        titleUk: n || 'У роботі',
+        dekUk: n ? `«${n}» ще в роботі.` : 'Начерки з майстерні.',
       };
     case 'collage':
     case 'guest_story':
@@ -278,18 +282,22 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
       return {
         titleEn: n ? n : '',
         titleRu: n ? n : '',
+        titleUk: n ? n : '',
         dekEn: '',
         dekRu: '',
+        dekUk: '',
       };
     case 'world':
       return {
         titleEn: n,
         titleRu: n,
+        titleUk: n,
         dekEn: '',
         dekRu: '',
+        dekUk: '',
       };
     default:
-      return { titleEn: '', titleRu: '', dekEn: '', dekRu: '' };
+      return { titleEn: '', titleRu: '', titleUk: '', dekEn: '', dekRu: '', dekUk: '' };
   }
 }
 
@@ -329,7 +337,7 @@ export function quietDate(iso: string | null | undefined, lang: Lang): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-GB', {
+  return d.toLocaleDateString(gazetteLocale(lang), {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -386,7 +394,7 @@ export function sketchLaidOut(leaf: { kind: string; figurineStatus?: string | nu
 export function monthLabel(iso: string, lang: Lang): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-GB', {
+  return d.toLocaleDateString(gazetteLocale(lang), {
     month: 'long',
     year: 'numeric',
   });
@@ -419,9 +427,11 @@ export function roomDateline(
   return monthLabel(iso, lang);
 }
 
-export function neighborTitle(n: { titleEn: string; titleRu: string }, lang: Lang): string {
-  const raw = (lang === 'ru' && n.titleRu.trim() ? n.titleRu : n.titleEn).trim();
-  return decodeEntities(raw);
+export function neighborTitle(
+  n: { titleEn: string; titleRu: string; titleUk?: string | null },
+  lang: Lang,
+): string {
+  return decodeEntities(localized(n, 'title', lang));
 }
 
 export function yearHref(year: number, latestYear: number | undefined): string {

@@ -18,7 +18,7 @@
   // Повод на записи — подсказка, не замок: карта вешает вид на любой повод.
   import { onMount, untrack } from 'svelte';
   import { resolveMediaUrl } from '$lib/api';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleMotionStage from '$lib/components/BattleMotionStage.svelte';
   import {
@@ -139,6 +139,7 @@
         id: `stock-${stockAt}`,
         nameEn: ready.nameEn,
         nameRu: ready.nameRu,
+        nameUk: ready.nameUk,
         occasion: ready.occasion,
         gestures: ready.gestures.map((g) => ({ ...g })),
       };
@@ -283,6 +284,7 @@
       id: 'taste',
       nameEn: '',
       nameRu: '',
+      nameUk: '',
       occasion: held?.occasion ?? 'blow',
       gestures: [{ ...newGesture(whom), body: tasting, at: 0, dur: 420, fade: 'hold' }],
     };
@@ -446,6 +448,7 @@
     const born = newMotion('blow');
     born.nameRu = $t('adminMotionsUntitled');
     born.nameEn = 'New motion';
+    born.nameUk = 'Новий рух';
     motions = [...motions, born];
     faceKind = 'mine';
     heldId = born.id;
@@ -461,6 +464,7 @@
       id: newMotion().id,
       nameRu: `${src.nameRu} ·`,
       nameEn: `${src.nameEn} ·`,
+      nameUk: src.nameUk ? `${src.nameUk} ·` : '',
     };
     motions = [...motions, twin];
     heldId = twin.id;
@@ -1368,18 +1372,18 @@
   let wearers = $derived.by(() => {
     if (faceKind !== 'mine' || !heldId) return [];
     const out: { name: string; occasion: MotionOccasion }[] = [];
-    const nameOf = (ru: string, en: string) => ($lang === 'ru' ? ru : en);
+    const nameOf = (rec: object) => localized(rec, 'title', $lang);
     for (const c of cards) {
       const w = parseMotionWear(c.motionWear);
       for (const o of MOTION_OCCASIONS) {
-        if (w[o] === heldId) out.push({ name: nameOf(c.titleRu, c.titleEn), occasion: o });
+        if (w[o] === heldId) out.push({ name: nameOf(c), occasion: o });
       }
     }
     for (const r of races) {
       const w = parseMotionWear(r.motionWear);
       for (const o of MOTION_OCCASIONS) {
         if (w[o] === heldId)
-          out.push({ name: nameOf(r.nameRu, r.nameEn), occasion: o });
+          out.push({ name: localized(r, 'name', $lang), occasion: o });
       }
     }
     return out;
@@ -1622,7 +1626,7 @@
               {#if img}
                 <span class="chip-art" style="background-image:url('{img}')"></span>
               {/if}
-              {$lang === 'ru' ? ready.nameRu : ready.nameEn}
+              {localized(ready, 'name', $lang)}
             </button>
           {/each}
         </div>
@@ -1744,7 +1748,7 @@
                   {$t('adminMotionsStrikerCard')}
                   <select bind:value={strikerCard}>
                     {#each cards as c (c.id)}
-                      <option value={c.id}>{$lang === 'ru' ? c.titleRu : c.titleEn}</option>
+                      <option value={c.id}>{localized(c, 'title', $lang)}</option>
                     {/each}
                   </select>
                 </label>
@@ -1752,7 +1756,7 @@
                   {$t('adminMotionsTargetCard')}
                   <select bind:value={targetCard}>
                     {#each cards as c (c.id)}
-                      <option value={c.id}>{$lang === 'ru' ? c.titleRu : c.titleEn}</option>
+                      <option value={c.id}>{localized(c, 'title', $lang)}</option>
                     {/each}
                   </select>
                 </label>
@@ -2360,6 +2364,10 @@
                 <label>
                   <span class="kicker">{$t('adminMotionsNameEn')}</span>
                   <input bind:value={held.nameEn} />
+                </label>
+                <label>
+                  <span class="kicker">{$t('adminMotionsNameUk')}</span>
+                  <input bind:value={held.nameUk} />
                 </label>
                 <label>
                   <span class="kicker">{$t('adminMotionsOccasion')}</span>

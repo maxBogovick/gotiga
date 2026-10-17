@@ -107,7 +107,7 @@ export type SiteRefInfo =
       room: 'tale' | 'leaf';
       id: string;
       figurineId: string | null;
-      leaf: Pick<GazetteLeaf, 'titleEn' | 'titleRu' | 'dekEn' | 'dekRu' | 'bodyEn' | 'bodyRu'>;
+      leaf: Pick<GazetteLeaf, 'titleEn' | 'titleRu' | 'titleUk' | 'dekEn' | 'dekRu' | 'dekUk' | 'bodyEn' | 'bodyRu' | 'bodyUk'>;
       image: string;
     };
 
@@ -154,10 +154,13 @@ export async function resolveSiteRefs(
             leaf: {
               titleEn: leaf.titleEn,
               titleRu: leaf.titleRu,
+              titleUk: leaf.titleUk,
               dekEn: leaf.dekEn,
               dekRu: leaf.dekRu,
+              dekUk: leaf.dekUk,
               bodyEn: null,
               bodyRu: null,
+              bodyUk: null,
             },
             image: leafCoverUrl(leaf),
           };

@@ -100,6 +100,47 @@
         <i class="fx wave wave-4"></i>
         <i class="blip"></i>
       {/if}
+    {:else if ground === 'embers'}
+      <i class="fx film film-fire"></i>
+    {:else if ground === 'storm'}
+      <i class="fx film film-sky"></i>
+      <i class="fx film film-bolt"></i>
+    {:else if ground === 'grave'}
+      <i class="fx film film-spirit"></i>
+    {:else if ground === 'crystal'}
+      <i class="fx film film-light"></i>
+    {:else if ground === 'glass'}
+      <i class="fx film film-glass"></i>
+    {:else if ground === 'rift'}
+      <i class="fx film film-rift"></i>
+    {:else if ground === 'maelstrom'}
+      <i class="fx film film-water"></i>
+    {:else if ground === 'altar'}
+      <i class="fx a-pillar"></i>
+      <i class="fx a-ring"></i>
+      <i class="fx a-runes a-runes-a"></i>
+      <i class="fx a-runes a-runes-b"></i>
+      {#if level !== 'soft'}
+        <i class="mote gleam gleam-1"></i>
+        <i class="mote gleam gleam-2"></i>
+      {/if}
+      {#if level === 'vivid'}
+        <i class="mote gleam gleam-3"></i>
+        <i class="mote gleam gleam-4"></i>
+      {/if}
+    {:else if ground === 'ice'}
+      <i class="fx i-mist"></i>
+      <i class="fx i-sheen"></i>
+      <i class="fx i-spark i-spark-a"></i>
+      <i class="fx i-spark i-spark-b"></i>
+      {#if level !== 'soft'}
+        <i class="mote flake flake-1"></i>
+        <i class="mote flake flake-2"></i>
+      {/if}
+      {#if level === 'vivid'}
+        <i class="mote flake flake-3"></i>
+        <i class="mote flake flake-4"></i>
+      {/if}
     {/if}
     <span class="corner"><BattleGroundSigil {ground} size="100%" /></span>
   </i>
@@ -131,6 +172,7 @@
     --breathe-lo: 0.35; --breathe-hi: 0.9;
     --wave-pk: 0.8;
     --vapor-pk: 0.25; --rise: 6px;
+    --strip: 0.7; --glow-lo: 0.2; --glow-hi: 0.55; --rune-lo: 0.3;
   }
   .tile.m-bold {
     --tempo: 0.7;
@@ -141,6 +183,7 @@
     --breathe-lo: 0.45; --breathe-hi: 1;
     --wave-pk: 1;
     --vapor-pk: 0.4; --rise: 14px;
+    --strip: 0.88; --glow-lo: 0.3; --glow-hi: 0.8; --rune-lo: 0.2;
   }
   .tile.m-vivid {
     --tempo: 0.5;
@@ -151,6 +194,7 @@
     --breathe-lo: 0.55; --breathe-hi: 1;
     --wave-pk: 1;
     --vapor-pk: 0.55; --rise: 24px;
+    --strip: 1; --glow-lo: 0.35; --glow-hi: 1; --rune-lo: 0.12;
   }
 
   .fx {
@@ -183,6 +227,62 @@
   .reeds-r { background-image: url('/battles/ground/mire-reeds-r.webp'); transform-origin: 50% 92%; }
   .spring-glint { background-image: url('/battles/ground/spring-glint.webp'); opacity: 0.7; }
   .wave { background-image: url('/battles/ground/spring-ring.webp'); transform-origin: 50% 52%; opacity: 0; }
+
+  /* Покадровые земли (`tools/ground_fx.py`): жар, гроза, могила, хрусталь.
+     Не слои, которые CSS качает, а полосы из 16 кадров, которые он листает
+     ступенчато: огонь горит, молния бьёт, души поднимаются — каждый кадр
+     другой, а полоса замкнута, и шва между последним кадром и первым нет.
+     Положение `p%` при ширине полосы в 16 ширин коробки ставит кадр
+     `k = p·15/100`, а `steps(16)` от нуля до `E` выдаёт `k·E/16`, значит
+     `E = 100·16/15` — то же рассуждение, что у `stripEnd` в `battles.ts`.
+     Под `prefers-reduced-motion` полоса стоит на нулевом кадре: он нарочно
+     спокойный (огонь тлеет, молнии нет). */
+  .film {
+    --n: 16;
+    --end: 106.6667%;
+    background-size: calc(var(--n) * 100%) 100%;
+    background-position: 0 0;
+    opacity: var(--strip, 1);
+  }
+  /* Медленному свету нужно больше кадров: при шестнадцати он ходил бы
+     ступеньками. Конец — `100·n/(n−1) %`, как у шестнадцати. */
+  .film-light,
+  .film-glass,
+  .film-rift {
+    --n: 32;
+    --end: 103.2258%;
+  }
+  .film-fire { background-image: url('/battles/ground/embers-fire.webp'); }
+  .film-sky { background-image: url('/battles/ground/storm-sky.webp'); }
+  .film-bolt { background-image: url('/battles/ground/storm-bolt.webp'); mix-blend-mode: screen; }
+  .film-spirit { background-image: url('/battles/ground/grave-spirit.webp'); }
+  .film-light { background-image: url('/battles/ground/crystal-light.webp'); }
+  .film-glass { background-image: url('/battles/ground/glass-light.webp'); }
+  .film-rift { background-image: url('/battles/ground/rift-portal.webp'); }
+  .film-water { background-image: url('/battles/ground/maelstrom-water.webp'); }
+
+  /* Алтарь. В покое руны еле теплятся, круг и столб гаснут. */
+  .a-pillar { background-image: url('/battles/ground/altar-pillar.webp'); opacity: 0.18; transform-origin: 50% 55%; }
+  .a-ring { background-image: url('/battles/ground/altar-ring.webp'); transform-origin: 50% 55%; opacity: 0; }
+  .a-runes-a { background-image: url('/battles/ground/altar-runes-a.webp'); opacity: 0.45; }
+  .a-runes-b { background-image: url('/battles/ground/altar-runes-b.webp'); opacity: 0.2; }
+  .mote.gleam { background: #f4e6b8; box-shadow: 0 0 5px 1px rgba(233, 214, 255, 0.85); --fall: -78px; }
+  .mote.gleam-1 { left: 47%; top: 58%; }
+  .mote.gleam-2 { left: 53%; top: 55%; }
+  .mote.gleam-3 { left: 43%; top: 60%; }
+  .mote.gleam-4 { left: 57%; top: 61%; }
+
+  /* Лёд. Блик скользит маской (как порыв ветра на холме), искры мигают
+     по очереди, холодный пар стелется. */
+  .i-mist { background-image: url('/battles/ground/ice-mist.webp'); opacity: 0.35; }
+  .i-sheen { background-image: url('/battles/ground/ice-sheen.webp'); opacity: 0; }
+  .i-spark-a { background-image: url('/battles/ground/ice-spark-a.webp'); opacity: 0.8; }
+  .i-spark-b { background-image: url('/battles/ground/ice-spark-b.webp'); opacity: 0; }
+  .mote.flake { width: 4px; height: 4px; background: #f3fbff; box-shadow: 0 0 4px 1px rgba(214, 240, 252, 0.9); --fall: 62px; }
+  .mote.flake-1 { left: 30%; top: 24%; }
+  .mote.flake-2 { left: 62%; top: 20%; }
+  .mote.flake-3 { left: 46%; top: 30%; }
+  .mote.flake-4 { left: 74%; top: 34%; }
 
   /* Детали только уровня `vivid`: они не слои, а CSS-фигуры. */
   .drop {
@@ -254,6 +354,40 @@
     .wave-3 { animation-delay: calc(-4.8s * var(--tempo)); }
     .wave-4 { animation-delay: calc(-6s * var(--tempo)); }
     .blip { animation: gm-blip calc(3.2s * var(--tempo)) ease-out infinite; }
+    .film { animation: gm-film var(--film-dur, 1.4s) steps(var(--n)) infinite; }
+    .film-fire { --film-dur: 1.35s; }
+    .film-sky { --film-dur: 1.8s; }
+    .film-bolt { --film-dur: 2.4s; }
+    .film-spirit { --film-dur: 3s; }
+    .film-light { --film-dur: 4.4s; }
+    .film-glass { --film-dur: 4.8s; }
+    .film-rift { --film-dur: 3.6s; }
+    .film-water { --film-dur: 2.8s; }
+    .a-pillar { animation: gm-pillar calc(5.2s * var(--tempo)) ease-in-out infinite; }
+    .a-ring { animation: gm-ring calc(6.4s * var(--tempo)) ease-out infinite; }
+    .a-runes-a { animation: gm-rune calc(4.4s * var(--tempo)) ease-in-out infinite; }
+    .a-runes-b { animation: gm-rune calc(4.4s * var(--tempo)) ease-in-out calc(-2.2s * var(--tempo)) infinite; }
+    .mote.gleam { animation: gm-mote calc(5.4s * var(--tempo)) ease-out infinite; }
+    .mote.gleam-2 { animation-delay: calc(-1.8s * var(--tempo)); }
+    .mote.gleam-3 { animation-delay: calc(-3.1s * var(--tempo)); }
+    .mote.gleam-4 { animation-delay: calc(-4.3s * var(--tempo)); }
+    .i-mist { animation: gm-drift calc(12s * var(--tempo)) ease-in-out infinite; }
+    .i-sheen {
+      opacity: 0.95;
+      -webkit-mask-image: linear-gradient(105deg, transparent 38%, #000 50%, transparent 62%);
+      mask-image: linear-gradient(105deg, transparent 38%, #000 50%, transparent 62%);
+      -webkit-mask-size: 300% 100%;
+      mask-size: 300% 100%;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      animation: gm-glide calc(7s * var(--tempo)) ease-in-out infinite;
+    }
+    .i-spark-a { animation: gm-twinkle calc(3.6s * var(--tempo)) ease-in-out infinite; }
+    .i-spark-b { animation: gm-twinkle calc(3.6s * var(--tempo)) ease-in-out calc(-1.8s * var(--tempo)) infinite; }
+    .mote.flake { animation: gm-mote calc(6.5s * var(--tempo)) linear infinite; }
+    .mote.flake-2 { animation-delay: calc(-2.2s * var(--tempo)); }
+    .mote.flake-3 { animation-delay: calc(-4.1s * var(--tempo)); }
+    .mote.flake-4 { animation-delay: calc(-5.3s * var(--tempo)); }
     .drop { animation: gm-drop calc(6s * var(--tempo)) ease-out infinite; }
     .drop-2 { animation-delay: calc(-2s * var(--tempo)); }
     .drop-3 { animation-delay: calc(-4s * var(--tempo)); }
@@ -323,6 +457,26 @@
     0% { transform: translate(-50%, -50%) scale(0.1); opacity: 0.9; }
     80% { opacity: 0.2; }
     100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+  }
+  @keyframes gm-film {
+    to { background-position-x: var(--end); }
+  }
+  /* Столб света дышит  /* Руны вспыхивают и успокаиваются; соседние половины перекликаются. */
+  @keyframes gm-rune {
+    0%, 100% { opacity: var(--rune-lo); }
+    45% { opacity: 1; }
+    70% { opacity: 0.55; }
+  }
+  /* Блик ходит по плите и отдыхает: маска проходит и стоит на краю. */
+  @keyframes gm-glide {
+    0% { -webkit-mask-position: 100% 0; mask-position: 100% 0; }
+    45%, 100% { -webkit-mask-position: 0% 0; mask-position: 0% 0; }
+  }
+  /* Иней вспыхивает один раз за круг, остальное время молчит. */
+  @keyframes gm-twinkle {
+    0%, 100% { opacity: 0; }
+    14% { opacity: 1; }
+    34% { opacity: 0; }
   }
   @keyframes gm-mote {
     0% { transform: translateY(0); opacity: 0; }

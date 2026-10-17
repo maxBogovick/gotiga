@@ -14,7 +14,7 @@
   //      кнопки получения: они просто названы, чтобы игрок видел, за что
   //      бывает вторая валюта.
   import { fade } from 'svelte/transition';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { errandHref } from '$lib/battles';
   import type { BattleErrand } from '$lib/types/api';
 
@@ -60,8 +60,8 @@
   let onceDone = $derived(once.filter((e) => e.done).length);
   let dailyLeft = $derived(daily.filter((e) => !e.done).length);
 
-  const titleOf = (e: BattleErrand) => ($lang === 'ru' ? e.titleRu : e.titleEn);
-  const noteOf = (e: BattleErrand) => ($lang === 'ru' ? e.noteRu : e.noteEn);
+  const titleOf = (e: BattleErrand) => localized(e, 'title', $lang);
+  const noteOf = (e: BattleErrand) => localized(e, 'note', $lang);
   const coinOf = (e: BattleErrand) =>
     e.currency === 'dust' ? $t('battleGreetDust') : $t('battleGreetFeed');
   const linkOf = (e: BattleErrand) => (preview || e.done ? null : errandHref(e.rule));

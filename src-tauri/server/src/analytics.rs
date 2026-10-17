@@ -272,6 +272,7 @@ fn normalize_lang(raw: &str) -> Option<String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "en" => Some("en".into()),
         "ru" => Some("ru".into()),
+        "uk" => Some("uk".into()),
         _ => None,
     }
 }
@@ -661,6 +662,30 @@ fn normalized_ip_prefix(ip: Option<&str>) -> String {
             format!("{:x}:{:x}:{:x}:0:0:0:0:0/48", s[0], s[1], s[2])
         }
     }
+}
+
+/// Отпечатки, под которыми этого посетителя могли записать сегодня и вчера.
+///
+/// Нужны не аналитике, а выдаче пыли за внимание: она спрашивает, видел ли
+/// сервер этого посетителя на этой странице. Хеш меняется каждые сутки, поэтому
+/// берётся и вчерашний — читатель мог открыть байку до полуночи. Пусто, когда
+/// аналитика этого посетителя не пишет (бот, DNT, сам хозяин): подтвердить его
+/// просмотр нечем.
+pub fn visitor_hashes_for_attention(
+    headers: &axum::http::HeaderMap,
+    hash_secret: &str,
+    admin_api_key: &str,
+) -> Vec<String> {
+    if skip_reason(headers, admin_api_key).is_some() {
+        return Vec::new();
+    }
+    let ip_prefix = normalized_ip_prefix(client_ip(headers).as_deref());
+    let hints = client_hints(headers);
+    let today = Utc::now().date_naive();
+    [today, today - ChronoDuration::days(1)]
+        .into_iter()
+        .map(|day| visitor_hash(hash_secret, &ip_prefix, &hints, day))
+        .collect()
 }
 
 fn client_hints(headers: &axum::http::HeaderMap) -> String {

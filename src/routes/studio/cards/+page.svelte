@@ -6,7 +6,7 @@
   // человек по нему решает, что отдавать хозяину.
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { cardFromRequest, emptyCardRequest } from '$lib/battles';
@@ -118,9 +118,7 @@
   function nameOf(card: StudioCard): string {
     const body = card.body;
     return (
-      ($lang === 'en' ? body.titleEn : body.titleRu) ||
-      body.titleRu ||
-      body.titleEn ||
+      localized(body, 'title', $lang) ||
       ''
     ).trim();
   }

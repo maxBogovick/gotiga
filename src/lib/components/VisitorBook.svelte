@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TelegramBookButton from './TelegramBookButton.svelte';
   import { trackForm } from '$lib/analytics';
   /**
    * VisitorBook — the house guest book at the museum's exit.
@@ -21,7 +22,7 @@
   import { fly, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { api } from '$lib/api';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, LANG_META } from '$lib/i18n';
   import { visitorBook } from '$lib/stores/visitor-book.svelte';
   import type { FigurineListItem } from '$lib/types/api';
 
@@ -36,13 +37,17 @@
   let leaving = $state(false);
   let error = $state('');
   let justLeft = $state(false);
+  // Только что вписались: письмо с просьбой подтвердить адрес уже в пути.
+  let justSigned = $state<'email' | 'telegram' | false>(false);
+  // Ссылка на бота, пока человек не нажал «Запустить»; пусто — подписка уже оформлена.
+  let tgLink = $state<string | null>(null);
 
   onMount(() => visitorBook.load());
 
   // Show the recognition spread once signed, except during the brief seal press.
   let showSigned = $derived(visitorBook.signed && !sealing);
 
-  let locale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+  let locale = $derived(LANG_META[$lang].locale);
   let signedDate = $derived(
     visitorBook.signedAt
       ? new Date(visitorBook.signedAt).toLocaleDateString(locale, {
@@ -91,6 +96,8 @@
       });
       visitorBook.sign(res.unsubscribeToken, addr, name);
       justLeft = false;
+      justSigned = 'email';
+      tgLink = null;
       // brief "pressing the seal" beat, then the recognition spread
       sealing = true;
       setTimeout(() => { sealing = false; }, 900);
@@ -99,6 +106,16 @@
     } finally {
       submitting = false;
     }
+  }
+
+  /** Подписка через Telegram запрошена: бот ждёт «Запустить» или уже подписал. */
+  function signedViaTelegram(res: { link: string | null; unsubscribeToken: string }) {
+    visitorBook.sign(res.unsubscribeToken, 'Telegram', name);
+    justLeft = false;
+    justSigned = 'telegram';
+    tgLink = res.link;
+    sealing = true;
+    setTimeout(() => { sealing = false; }, 900);
   }
 
   async function leave() {
@@ -111,6 +128,8 @@
       /* idempotent on the server; treat as left either way */
     } finally {
       visitorBook.leave();
+      justSigned = false;
+      tgLink = null;
       email = '';
       name = '';
       ageConfirmed = false;
@@ -130,6 +149,14 @@
           {$t('visitorBookWelcomeBack')}{#if visitorBook.name}, {visitorBook.name}{/if}
         </h2>
         <p class="book-lead">{$t('visitorBookSignedLead')}</p>
+        {#if justSigned === 'email'}
+          <p class="book-lead" aria-live="polite">{$t('visitorBookCheckMail')}</p>
+        {:else if justSigned === 'telegram'}
+          <p class="book-lead" aria-live="polite">{tgLink ? $t('bookTelegramStart') : $t('bookTelegramDone')}</p>
+          {#if tgLink}
+            <a class="sign-btn" href={tgLink} target="_blank" rel="noopener noreferrer">{$t('bookTelegramOpen')}</a>
+          {/if}
+        {/if}
 
         <dl class="standing">
           {#if signedDate}
@@ -214,6 +241,7 @@
               aria-invalid={Boolean(error)}
               disabled={submitting || sealing}
             />
+            <span class="field-hint">{$t('visitorBookSpamHint')}</span>
           </label>
 
           <!-- honeypot: visually hidden, off-screen; real users never fill it -->
@@ -237,6 +265,13 @@
           </button>
 
           <p class="privacy">{$t('visitorBookPrivacy')}</p>
+
+          <TelegramBookButton
+            source="home_visitor_book_tg"
+            bind:age={ageConfirmed}
+            showAge={false}
+            onrequested={signedViaTelegram}
+          />
         </form>
       </div>
     {/if}
@@ -617,5 +652,15 @@
   @media (prefers-reduced-motion: reduce) {
     .wax-pressing { animation: none; }
     .sign-btn svg, .first-look-cta svg { transition: none; }
+  }
+  .field-hint {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--ink-soft, #5a4638);
+  }
+  a.sign-btn {
+    display: inline-flex;
+    text-decoration: none;
   }
 </style>

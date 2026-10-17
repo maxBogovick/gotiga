@@ -14,7 +14,7 @@
   // ящик не клали, молча уступил бы умолчанию — то есть выбор был бы сделан и
   // не сыгран. Но и молчать нельзя: хранитель видит короткий список и решает,
   // что сглаза в доме нет вовсе, — а он есть, одной вкладкой левее.
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import {
     MOTION_OCCASIONS,
     STOCK_MOTIONS,
@@ -129,7 +129,7 @@
       {$t('adminMotionsWearStock')}
       <span class="text-[#34251c]/75"
         >{notTaken
-          .map((s) => ($lang === 'ru' ? s.nameRu : s.nameEn))
+          .map((s) => localized(s, 'name', $lang))
           .join(', ')}.</span
       >
       {#if onOpenBox}

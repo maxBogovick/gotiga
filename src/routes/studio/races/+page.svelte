@@ -8,7 +8,7 @@
   // словаря дома, и править его больше нельзя, потому что его уже носят чужие
   // карты.
   import { onMount } from 'svelte';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import StudioAsk from '$lib/components/studio/StudioAsk.svelte';
@@ -32,7 +32,7 @@
   let token = $derived(authStore.token);
 
   function empty(): SaveStudioRaceRequest {
-    return { nameEn: '', nameRu: '', noteEn: '', noteRu: '', iconUrl: null };
+    return { nameEn: '', nameRu: '', nameUk: '', noteEn: '', noteRu: '', noteUk: '', iconUrl: null };
   }
 
   onMount(reload);
@@ -68,8 +68,10 @@
     draft = {
       nameEn: race.nameEn,
       nameRu: race.nameRu,
+      nameUk: race.nameUk ?? '',
       noteEn: race.noteEn ?? '',
       noteRu: race.noteRu ?? '',
+      noteUk: race.noteUk ?? '',
       iconUrl: race.iconUrl ?? null,
     };
   }
@@ -186,6 +188,14 @@
               {$t('studioRaceNoteEn')}
               <textarea bind:value={draft.noteEn} rows="2" maxlength="200"></textarea>
             </label>
+            <label class="field">
+              {$t('studioRaceNameUk')}
+              <input bind:value={draft.nameUk} maxlength="60" />
+            </label>
+            <label class="field">
+              {$t('studioRaceNoteUk')}
+              <textarea bind:value={draft.noteUk} rows="2" maxlength="200"></textarea>
+            </label>
           </div>
 
           <!-- Значок — из своего ящика: второго склада для этого нет. -->
@@ -238,14 +248,14 @@
               {/if}
               <div class="row-words">
                 <p class="name" style="margin:0">
-                  {$lang === 'en' ? race.nameEn : race.nameRu}
-                  <span style="opacity:.45">· {$lang === 'en' ? race.nameRu : race.nameEn}</span>
+                  {localized(race, 'name', $lang)}
+                  <span style="opacity:.45">· {localized(race, 'name', $lang === 'en' ? 'ru' : 'en')}</span>
                 </p>
                 <p class="mark" class:mark--lit={race.status === 'taken' || !!race.approvedAt}>
                   {markOf(race)}
                 </p>
                 {#if race.noteRu || race.noteEn}
-                  <p class="word">{$lang === 'en' ? race.noteEn : race.noteRu}</p>
+                  <p class="word">{localized(race, 'note', $lang)}</p>
                 {/if}
                 {#if race.keeperWord}
                   <p class="word">{race.keeperWord}</p>

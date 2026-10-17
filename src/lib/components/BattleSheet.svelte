@@ -9,8 +9,9 @@
   // девятью кусками (`border-image`), потому что разворот шире, чем высок, а
   // растянутая целиком картинка увела бы резьбу по одной оси.
   import { onMount } from 'svelte';
+  import { api } from '$lib/api';
   import { fade } from 'svelte/transition';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleIcon from '$lib/components/BattleIcon.svelte';
   import {
@@ -35,6 +36,7 @@
     AbilityVerb,
     BattleCard as BattleCardDto,
     BattleFrame,
+    BattleRace,
     CardAbility,
   } from '$lib/types/api';
   import type { TranslationKey } from '$lib/i18n';
@@ -125,7 +127,10 @@
   let rank = $derived(frameName(frameForCard(card, frames), $lang));
   let kindWord = $derived($t(kindLabelKey(card.kind)));
   let channelWord = $derived(
-    $t(channelLabelKey(card.attackChannel) ?? 'battlesChannelPhysical'),
+    [
+      $t(channelLabelKey(card.attackChannel) ?? 'battlesChannelPhysical'),
+      ...(card.shoots ? [$t('battlesShoots')] : []),
+    ].join(' · '),
   );
   let printRules = $derived((card.abilities?.length ?? 0) > 0);
   let traits = $derived(
@@ -196,6 +201,39 @@
 
   onMount(() => {
     leaf?.focus();
+  });
+
+  // ── Раса в бою ──
+  // Таблица урона по расам меняет урон, поэтому на листе она названа словами:
+  // правило, которого не видно, читается как обман. Справочник рас нужен ради
+  // имён и ради обратной стороны — кто сильнее против этой расы; он публичный
+  // и кэшируется, а спрашивается только у карты, раса которой вообще есть.
+  let raceList = $state<BattleRace[]>([]);
+  onMount(() => {
+    if (!card.raceId) return;
+    void api.getBattleRaces().then((all) => (raceList = all));
+  });
+  const raceWord = (id: string) => {
+    const r = raceList.find((one) => one.id === id);
+    return r ? localized(r, 'name', $lang) : '';
+  };
+  let raceFight = $derived.by(() => {
+    const own = card.raceId;
+    if (!own || !raceList.length) return [];
+    // Обе половины — из одного справочника: своё правило из карты и «кто
+    // сильнее против» из справочника могли быть разных минут и противоречить.
+    const mine = raceList.find((r) => r.id === own)?.raceDamage ?? card.raceDamage;
+    const lines: string[] = [];
+    const names = (ids: string[]) => ids.map(raceWord).filter(Boolean).join(', ');
+    if (mine && mine.attack > 0 && names(mine.against))
+      lines.push(`+${mine.attack} ${$t('battlesSheetRaceAttack')}: ${names(mine.against)}`);
+    if (mine && mine.defence > 0 && names(mine.from))
+      lines.push(`−${mine.defence} ${$t('battlesSheetRaceDefence')}: ${names(mine.from)}`);
+    const threats = raceList
+      .filter((r) => r.raceDamage && r.raceDamage.attack > 0 && r.raceDamage.against.includes(own))
+      .map((r) => `${localized(r, 'name', $lang)} +${r.raceDamage!.attack}`);
+    if (threats.length) lines.push(`${$t('battlesSheetRaceThreat')}: ${threats.join(', ')}`);
+    return lines;
   });
 
   function onkey(e: KeyboardEvent) {
@@ -383,6 +421,17 @@
                     <span class="gift-text">{trait.text}</span>
                   {/if}
                 </li>
+              {/each}
+            </ul>
+          </section>
+        {/if}
+
+        {#if raceFight.length}
+          <section class="block">
+            <h3 class="block-title">{$t('battlesSheetRaceFight')}</h3>
+            <ul class="gifts">
+              {#each raceFight as line (line)}
+                <li class="gift"><span class="gift-text">{line}</span></li>
               {/each}
             </ul>
           </section>

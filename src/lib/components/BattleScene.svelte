@@ -11,8 +11,10 @@
   import { onMount, untrack } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { t, lang, type TranslationKey } from '$lib/i18n';
+  import { resolveMediaUrl } from '$lib/api';
   import BattleGroundMark from './BattleGroundMark.svelte';
   import BattleGroundSigil from './BattleGroundSigil.svelte';
+  import BattleGroundNote from './BattleGroundNote.svelte';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleIcon from '$lib/components/BattleIcon.svelte';
   import BattleSheet from '$lib/components/BattleSheet.svelte';
@@ -32,18 +34,22 @@
     type MarkedStat,
     bodyPassport,
     cardCopy,
-    channelLabelKey,
+    blowWordKeys,
     cellPrints,
     frameForCard,
     kindLabelKey,
     MOTION_MS_MAX,
     motionFor,
+    farBlowKind,
     motionSpan,
     motionWound,
     occasionOf,
     rulesInForce,
     terrainLines,
+    siegeLines,
     GROUND_KEY,
+    GROUND_KIND_KEY,
+    GROUND_KIND,
     GROUNDS,
     GROUND_NAME,
     GROUND_SHORT,
@@ -63,6 +69,7 @@
     BattleCell,
     BattleEvent,
     BattleFrame,
+    BattleGround,
     BattleMatch,
     BattleMatchState,
     BattleUnit,
@@ -82,8 +89,11 @@
     onforesee,
     onreplay,
     onleave,
+    onnext,
     onexit,
+    guestLoginHref,
     fill = false,
+    backdrop = null,
   }: {
     match: BattleMatch;
     cards?: BattleCardDto[];
@@ -107,6 +117,11 @@
     /** Под печатью. Обе необязательны: у стола хранителя их нет. */
     onreplay?: () => void;
     onleave?: () => void;
+    /** Играет гость без входа: под печатью сказано, что награда ему не платится,
+     *  и стоит ссылка ко входу. */
+    guestLoginHref?: string;
+    /** Перейти к следующему бою списка. Нет следующего — кнопки нет. */
+    onnext?: () => void;
     /** Шапка комнаты: спросить, уйти. Не `onleave` — тот уже «назад к списку» под печатью. */
     onexit?: () => void;
     /**
@@ -115,7 +130,18 @@
      * складывается в колонку и меряет себя содержимым.
      */
     fill?: boolean;
+    /** Фон поля: путь `/static/…`, заданный этюдом. Только вид — на ход и
+     *  правила не влияет, поэтому приходит отдельно от партии. */
+    backdrop?: string | null;
   } = $props();
+
+  /** Адрес фона, который умеет загрузить браузер (на сайте и в сборке он
+   *  разный, поэтому путь со склада проходит тем же разбором, что и всякая
+   *  картинка дома). Кавычки и скобки в адресе недопустимы: он встаёт в `url()`. */
+  let backdropUrl = $derived.by(() => {
+    const url = resolveMediaUrl(backdrop);
+    return url && !/["')\\\s]/.test(url) ? url : null;
+  });
 
   /** Величина поля этой партии: клеток поперёк и рядов от края до края.
    *  Партия, начатая до ручки, приходит без поля — это 3 × 3 на половину. */
@@ -230,6 +256,29 @@
       const u = position.units[id];
       const at = position.board.find((s) => s.unit === id)?.cell;
       if (u && u.owner === o && at?.y === goal) return id;
+    }
+    return null;
+  });
+  /** Почему партия проиграна — одной строкой, из доски, без правил: сколько
+   *  тел осталось у каждой стороны. Печатается только у партии, доигранной до
+   *  конца (`marks` приходит с последним ходом): отданное поле, партия,
+   *  открытая заново после перезагрузки, и прорыв (его называет своя строка)
+   *  причины не получают. Строения не считаются телами — сторона с одними
+   *  строениями побеждена, и «в живых 4 у противника» было бы про стены. Что не
+   *  сводится к «выбиты все» или «круги вышли», остаётся без строки: лучше
+   *  промолчать, чем назвать чужую причину. */
+  let lossReason = $derived.by<string | null>(() => {
+    if (position.outcome !== 'keeper' || breachedBy !== null || !match.marks) return null;
+    const standing = (side: 'player' | 'keeper') =>
+      position.board.filter((s) => {
+        const u = position.units[s.unit];
+        return u?.owner === side && !u.card.structure;
+      }).length;
+    const mine = standing('player');
+    if (mine === 0) return $t('battleLostAllBodies').replace('{n}', String(position.round));
+    const theirs = standing('keeper');
+    if (theirs > 0 && position.round >= position.rules.maxRounds) {
+      return $t('battleLostOnTime').replace('{a}', String(mine)).replace('{b}', String(theirs));
     }
     return null;
   });
@@ -792,8 +841,9 @@
   let chosenChannel = $derived(
     chosenDto
       ? (() => {
-          const key = channelLabelKey(chosenDto.attackChannel);
-          return key ? $t(key) : '';
+          return blowWordKeys(chosenDto)
+            .map((key) => $t(key))
+            .join(' · ');
         })()
       : '',
   );
@@ -1033,12 +1083,28 @@
     return play;
   }
 
+  /** Удар издалека у стрелка или мага: выстрел или молния вместо выпада
+   *  (`motionFor`). Длинное оружие (дальность 2 без отметки «стреляет») бьёт
+   *  выпадом и издалека — стрела у копейщика сказала бы, что он стреляет. */
+  const farBlow = (
+    pos: BattleMatchState,
+    event: BattleEvent,
+    dto: BattleCardDto | null | undefined,
+  ): { magic: boolean } | null => {
+    if (!('damaged' in event) || event.damaged.by == null) return null;
+    const { by, target } = event.damaged;
+    const from = pos.board.find((s) => s.unit === by)?.cell;
+    const to = pos.board.find((s) => s.unit === target)?.cell;
+    if (!from || !to) return null;
+    return farBlowKind(from, to, dto);
+  };
+
   /** Какое движение играет это тело на этом поводе. Цепочка — в `battles.ts`. */
   const motionOf = (pos: BattleMatchState, unit: number | null, event: BattleEvent) => {
     const occasion = occasionOf(event);
     if (!occasion) return null;
     const dto = unit == null ? null : dtoOf(pos.units[unit]?.card.name ?? '');
-    return motionFor(occasion, dto, motions);
+    return motionFor(occasion, dto, motions, farBlow(pos, event, dto));
   };
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -1353,7 +1419,9 @@
     cover: 'battleStepCover',
     attackerBless: 'battleStepAttackerBless',
     attackerCurse: 'battleStepAttackerCurse',
+    raceAttack: 'battleStepRaceAttack',
     targetVulnerable: 'battleStepTargetVulnerable',
+    raceDefence: 'battleStepRaceDefence',
     channelDefence: 'battleStepChannelDefence',
     floor: 'battleStepFloor',
     shield: 'battleStepShield',
@@ -1501,6 +1569,32 @@
 
   /** Листок правил: открыт ли, и спрашивали ли его в этой партии. */
   let leafOpen = $state(false);
+
+  /**
+   * Листок земли, открытый нажатием на знак. Один на доску: открыть другой
+   * знак — значит переехать, а не открыть второй. `key` называет, КАКОЙ знак
+   * держит листок (клетка или строка легенды), чтобы повторное нажатие на тот
+   * же знак закрывало, а не открывало заново.
+   */
+  let groundNote = $state<{
+    ground: BattleGround;
+    key: string;
+    rect: { left: number; top: number; width: number; height: number };
+  } | null>(null);
+
+  function openGroundNote(e: MouseEvent, ground: BattleGround, key: string) {
+    if (groundNote?.key === key) {
+      groundNote = null;
+      return;
+    }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    groundNote = { ground, key, rect: { left: r.left, top: r.top, width: r.width, height: r.height } };
+  }
+
+  /** Колонка и ряд клетки в сетке — те же, что у подноса (`trayAt`). */
+  function gridPlace(x: number, y: number) {
+    return along ? { col: DEPTH - y, row: x + 1 } : { col: x + 1, row: y + 1 };
+  }
   let leafRead = $state(false);
   /**
    * Печать зовёт ровно один раз — в тот миг, когда правило впервые укусило:
@@ -1509,7 +1603,11 @@
    * со второго раза.
    */
   let leafCalls = $derived(openingLeft === 0 && !leafRead);
-  let leafLines = $derived([...rulesInForce(position.rules), ...terrainLines(position.terrain)]);
+  let leafLines = $derived([
+    ...rulesInForce(position.rules),
+    ...terrainLines(position.terrain),
+    ...siegeLines(position.units.some((u) => u.card.structure)),
+  ]);
   function openLeaf() {
     leafOpen = !leafOpen;
     if (leafOpen) leafRead = true;
@@ -1658,6 +1756,14 @@
 </script>
 
 <svelte:window onkeydown={onkey} onpointerdown={offLeaf} />
+
+{#if groundNote}
+  <BattleGroundNote
+    ground={groundNote.ground}
+    anchor={groundNote.rect}
+    onclose={() => (groundNote = null)}
+  />
+{/if}
 
 <!-- Руки пишутся один раз и ставятся дважды: на широком экране — в боковую
      колонку, на узком — по краям доски. Не два куска разметки, а один снипет
@@ -1923,7 +2029,7 @@
       bind:this={fieldEl}
       style="--cols:{along ? DEPTH : WIDTH}; --rows:{along ? WIDTH : DEPTH}"
     >
-      <div class="cloth">
+      <div class="cloth" class:cloth--pictured={!!backdropUrl} style:--backdrop={backdropUrl ? `url("${backdropUrl}")` : undefined}>
       <div class="face">
       <div class="grid">
         {#each spots as { x, y } (`${x},${y}`)}
@@ -1936,6 +2042,7 @@
           {@const dto = here ? dtoOf(here.card.name) : null}
           {@const willTake = here ? toldMine.get(here.id) : undefined}
           {@const willGet = here ? toldTheirs.get(here.id) : undefined}
+          {@const structure = !!here?.card.structure}
           <button
             type="button"
             disabled={playing}
@@ -1989,6 +2096,7 @@
                      потому что для сцены они одно и то же, движение из свода. -->
                 <span
                   class="figure"
+                  class:figure--structure={structure}
                   style:--fit={dto ? aspectOf(dto) : DEFAULT_ASPECT}
                   class:figure--spent={here.owner === me
                     && (here.acted || (mine && !ready.has(here.id)))}
@@ -1996,7 +2104,31 @@
                   style={stirOf(here.id)}
                 >
                   <span class="figure-body">
-                  {#if dto}
+                  {#if structure && dto?.artUrl}
+                    <!-- Строение — кусок одной стены, а не карта в раме: во всю
+                         клетку и с заходом в промежуток к соседу, чтобы ряд
+                         стен сходился в одну стену. Зубцы смотрят на врага —
+                         кусок повёрнут по виду поля и стороне хозяина.
+                         Ранение темнит камень; число здоровья — ниже. -->
+                    <span
+                      class="structure"
+                      class:structure--along={along}
+                      style:--hurt={here.health.max > 0 ? here.health.current / here.health.max : 1}
+                    >
+                      <img
+                        class="structure-art structure-art--{along
+                          ? here.owner === 'keeper'
+                            ? 'left'
+                            : 'right'
+                          : here.owner === 'keeper'
+                            ? 'down'
+                            : 'up'}"
+                        src={resolveMediaUrl(dto.artUrl) ?? dto.artUrl}
+                        alt=""
+                        draggable="false"
+                      />
+                    </span>
+                  {:else if dto}
                     <!-- transition off: two copies of one work share a card id,
                          and two `view-transition-name`s abort the morph. -->
                     <BattleCard
@@ -2023,12 +2155,12 @@
                        побеждал тот, что нарисован позже. Спрашиваем опись ТОЙ
                        рамы, которую носит это тело; нет карты — печатаем оба,
                        иначе на доске не осталось бы чисел вовсе. -->
-                  {#if !cardSays(dto, 'healthMark') || !cardSays(dto, 'power')}
+                  {#if structure || !cardSays(dto, 'healthMark') || !cardSays(dto, 'power')}
                     <span class="tally">
                       <!-- Знак ВОЗЛЕ цифры — тот же, что карта ставит на своей
                            плашке (`.corner-glyph`): кружок доски встаёт вместо
                            её значка и обязан говорить то же самое. -->
-                      {#if !cardSays(dto, 'healthMark')}
+                      {#if structure || !cardSays(dto, 'healthMark')}
                         <i class="tally-pip tally-pip--health">
                           <span class="tally-glyph" aria-hidden="true"
                             ><BattleIcon name={statMark('health')} size="100%" weight={1.35} /></span
@@ -2036,7 +2168,7 @@
                           <span class="tally-num">{here.health.current}</span>
                         </i>
                       {/if}
-                      {#if !cardSays(dto, 'power')}
+                      {#if structure ? here.power > 0 : !cardSays(dto, 'power')}
                         <i class="tally-pip tally-pip--power">
                           <span class="tally-glyph" aria-hidden="true"
                             ><BattleIcon name={statMark('power')} size="100%" weight={1.35} /></span
@@ -2090,6 +2222,27 @@
                 {/if}
               {/if}
             </button>
+            {#if ground}
+              <!-- Знак земли — отдельная кнопка РЯДОМ с клеткой, а не в ней:
+                   кнопка внутри кнопки не нажимается ни в одном браузере. Стоит
+                   членом сетки на месте клетки (как поднос) и лежит ровно там,
+                   где рисуется знак: в углу пустой клетки, а у занятой — на
+                   медальоне над картой. Открывает листок с правилом земли. -->
+              {@const at = gridPlace(x, y)}
+              {@const noteKey = `cell:${x},${y}`}
+              <span class="key-slot" style="grid-column:{at.col}/{at.col + 1}; grid-row:{at.row}/{at.row + 1}">
+                <button
+                  type="button"
+                  class="ground-key"
+                  class:ground-key--over={!!here}
+                  class:ground-key--on={groundNote?.key === noteKey}
+                  aria-label={`${$t(GROUND_NAME[ground])} — ${$t(GROUND_KIND_KEY[GROUND_KIND[ground]])}`}
+                  aria-haspopup="dialog"
+                  aria-expanded={groundNote?.key === noteKey}
+                  onclick={(e) => openGroundNote(e, ground, noteKey)}
+                ></button>
+              </span>
+            {/if}
           {/each}
         <!-- ── Поднос ──────────────────────────────────────────────────────
              Чем заняться телу, взятому в руку: по печати на способ, и подпись
@@ -2248,8 +2401,19 @@
           <ul class="ground-legend-list">
             {#each legend as g (g)}
               <li>
-                <BattleGroundSigil ground={g} size="1.15em" />
-                <span><b>{$t(GROUND_NAME[g])}</b> — {$t(GROUND_SHORT[g])}</span>
+                <!-- Строка легенды открывает тот же листок, что и знак в углу
+                     клетки: на телефоне знак в клетке мелок, а легенда стоит
+                     рядом с полем всегда. -->
+                <button
+                  type="button"
+                  class="legend-row"
+                  aria-haspopup="dialog"
+                  aria-expanded={groundNote?.key === `legend:${g}`}
+                  onclick={(e) => openGroundNote(e, g, `legend:${g}`)}
+                >
+                  <BattleGroundSigil ground={g} size="1.15em" />
+                  <span><b>{$t(GROUND_NAME[g])}</b> — {$t(GROUND_SHORT[g])}</span>
+                </button>
               </li>
             {/each}
           </ul>
@@ -2517,6 +2681,15 @@
           {#if breachedBy !== null}
             <p class="seal-line">{$t('battleSealBreached')} — {nameOf(breachedBy)}</p>
           {/if}
+          {#if lossReason}
+            <p class="seal-line">{lossReason}</p>
+          {/if}
+          {#if guestLoginHref}
+            <p class="seal-line">
+              {$t('battleGuestSealNote')}
+              <a class="seal-link" href={guestLoginHref}>{$t('battleGuestSealLink')}</a>
+            </p>
+          {/if}
           {#if match.rewardDust > 0}
             <p class="seal-dust">{match.rewardDust} {$t('battleDustGranted')}</p>
           {/if}
@@ -2539,8 +2712,9 @@
               </p>
             {/if}
           {/if}
-          {#if onleave || onreplay}
+          {#if onleave || onreplay || onnext}
             <p class="seal-doors">
+              {#if onnext && position.outcome === 'player'}<button type="button" class="door door--next" onclick={onnext}>{$t('battleNextStudy')}</button>{/if}
               {#if onleave}<button type="button" class="door" onclick={onleave}>{$t('battleBackToStudies')}</button>{/if}
               {#if onreplay}<button type="button" class="door" onclick={onreplay}>{$t('battleReplay')}</button>{/if}
             </p>
@@ -3085,8 +3259,78 @@
 
   .ground-legend-list li {
     display: flex;
+  }
+
+  .legend-row {
+    display: flex;
     gap: 0.4rem;
     align-items: flex-start;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    background: none;
+    border: 0;
+    border-bottom: 1px dotted rgba(111, 59, 36, 0.35);
+    cursor: pointer;
+  }
+
+  .legend-row:hover,
+  .legend-row[aria-expanded='true'] {
+    border-bottom-color: #c65f3c;
+  }
+
+  /* Слой знаков земли: член сетки на месте клетки, сам нажатий не берёт, —
+     берёт только кнопка-знак внутри него. Выше фигур, ниже подноса. */
+  .key-slot {
+    position: absolute;
+    inset: 0;
+    z-index: 12;
+    pointer-events: none;
+  }
+
+  /* Кнопка точно под нарисованным знаком (`BattleGroundMark`, `.corner`): у
+     пустой клетки — угол, у занятой — медальон над картой. Сама прозрачна,
+     рисунок под ней; запас вокруг — для пальца, а не для глаза. */
+  .ground-key {
+    position: absolute;
+    top: 6%;
+    left: 7%;
+    width: clamp(14px, 22%, 26px);
+    aspect-ratio: 1;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .ground-key::before {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+
+  .ground-key--over {
+    top: -9px;
+    left: 50%;
+    width: clamp(18px, 26%, 30px);
+    transform: translateX(-50%);
+  }
+
+  .ground-key--over::before {
+    inset: -6px -16px -8px -6px;
+  }
+
+  .ground-key:hover,
+  .ground-key--on {
+    box-shadow: 0 0 0 2px rgba(243, 231, 207, 0.9), 0 0 0 3px rgba(111, 59, 36, 0.7);
+  }
+
+  .ground-key:focus-visible {
+    outline: 2px solid #c65f3c;
+    outline-offset: 2px;
   }
 
   .ground-legend-list b {
@@ -3258,6 +3502,62 @@
     font-family: 'Cormorant Garamond', Georgia, serif;
     font-size: 12px;
     line-height: 1.2;
+  }
+
+  /* Строение: кусок стены во всю клетку. Заходит в промежуток сетки (5px) и в
+     рамку клетки по оси, вдоль которой стоят соседи по ряду: на поле вдоль
+     это вертикаль, на поле стоймя — горизонталь. Картинка нарисована полосой
+     сверху вниз с зубцами слева; поворот и отражение ставят зубцы к врагу. */
+  .figure--structure {
+    position: absolute;
+    inset: 0;
+    padding: 0;
+  }
+
+  .figure--structure .figure-body {
+    width: 100%;
+    height: 100%;
+  }
+
+  .structure {
+    position: absolute;
+    inset: 0 -3.5px;
+    container-type: size;
+    pointer-events: none;
+    filter: brightness(calc(0.55 + 0.45 * var(--hurt, 1)));
+  }
+
+  .structure--along {
+    inset: -3.5px 0;
+  }
+
+  .structure-art {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 100cqw;
+    height: 100cqh;
+    object-fit: fill;
+    transform: translate(-50%, -50%);
+  }
+
+  .structure-art--right {
+    transform: translate(-50%, -50%) scaleX(-1);
+  }
+
+  /* Поле стоймя: ряд стен идёт поперёк экрана, кусок лежит на боку. */
+  .structure-art--down,
+  .structure-art--up {
+    width: 100cqh;
+    height: 100cqw;
+  }
+
+  .structure-art--down {
+    transform: translate(-50%, -50%) rotate(-90deg);
+  }
+
+  .structure-art--up {
+    transform: translate(-50%, -50%) rotate(90deg);
   }
 
   .tally {
@@ -4826,6 +5126,19 @@
     background: #3a2818;
   }
 
+  .seal-link {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
+  /* Следующий бой — то, ради чего человек дошёл до печати: светлее соседей. */
+  .scene.scene--fill .door--next {
+    color: #f6e7c1;
+    border-color: #ffe08a;
+    background: #4a3219;
+  }
+
   /* Обязательство, а не украшение. `stage()` при этой настройке не отдаёт ни
      одного жеста и ни одной копии, так что гасить здесь нечего — кроме того,
      что сцена рисует сама. */
@@ -4855,5 +5168,11 @@
 
   .face {
     position: relative;
+  }
+
+  /* Фон этюда лежит на сукне, а не на клетках: клетки остаются прозрачными, и
+     картинка читается целиком, как её нарисовали. */
+  .cloth--pictured {
+    background: var(--backdrop) center / cover no-repeat, #f3e6d4;
   }
 </style>

@@ -13,7 +13,7 @@
   // однажды переименует поручение и заплатит за него второй раз всем, кто его
   // уже прошёл.
   import { onMount } from 'svelte';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, localized } from '$lib/i18n';
   import { api } from '$lib/api';
   import BattleErrandList from '$lib/components/BattleErrandList.svelte';
   import type {
@@ -88,8 +88,10 @@
       slug: '',
       titleEn: '',
       titleRu: '',
+      titleUk: '',
       noteEn: '',
       noteRu: '',
+      noteUk: '',
       rule: 'works_seen',
       threshold: 1,
       currency: 'dust',
@@ -113,8 +115,10 @@
           slug: row.slug,
           titleEn: row.titleEn,
           titleRu: row.titleRu,
+          titleUk: row.titleUk ?? '',
           noteEn: row.noteEn ?? '',
           noteRu: row.noteRu ?? '',
+          noteUk: row.noteUk ?? '',
           rule: row.rule,
           threshold: row.threshold,
           currency: row.currency,
@@ -191,7 +195,7 @@
     }
   }
 
-  const titleOf = (r: AdminBattleErrand) => ($lang === 'ru' ? r.titleRu : r.titleEn) || r.slug;
+  const titleOf = (r: AdminBattleErrand) => localized(r, 'title', $lang) || r.slug;
 
   /**
    * Предпросмотр — глазами гостя, у которого ещё ничего не сделано.
@@ -207,8 +211,10 @@
         slug: r.slug,
         titleEn: r.titleEn,
         titleRu: r.titleRu,
+        titleUk: r.titleUk,
         noteEn: r.noteEn,
         noteRu: r.noteRu,
+        noteUk: r.noteUk,
         rule: r.rule,
         threshold: r.threshold,
         currency: r.currency,
@@ -370,6 +376,14 @@
           <label class="block">
             <span class={label}>{$t('adminErrandNoteEn')}</span>
             <input bind:value={draft.noteEn} class={field} />
+          </label>
+          <label class="block">
+            <span class={label}>{$t('adminErrandTitleUk')}</span>
+            <input bind:value={draft.titleUk} class={field} />
+          </label>
+          <label class="block">
+            <span class={label}>{$t('adminErrandNoteUk')}</span>
+            <input bind:value={draft.noteUk} class={field} />
           </label>
         </div>
 

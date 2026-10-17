@@ -103,6 +103,15 @@ pub struct Rules {
     /// чинить ли счётчик или то, ради чего он поставлен.
     #[serde(default = "max_rounds_default")]
     pub max_rounds: u8,
+    /// Кому достаётся партия, дошедшая до лимита кругов: обороне, а не тому,
+    /// у кого больше здоровья на поле.
+    ///
+    /// Для штурма. Нападающий, не взявший город за отведённые круги, город не
+    /// взял — сколько бы здоровья у него ни осталось. Подсчёт здоровья отдавал
+    /// ему победу, не взяв ничего (замер штурма, `BATTLE-GENRE-RESEARCH.md`
+    /// § 7.5). Оборона — сторона хранителя: город ставит этюд.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keeper_holds_on_time: bool,
     /// Какую долю силы сохраняет стрелок, бьющий ДАЛЬШЕ своей дальности.
     /// Ноль — не достаёт вовсе, как было.
     ///
@@ -338,6 +347,7 @@ impl Default for Rules {
             long_shot_power: 25,
             max_rounds: MAX_ROUNDS,
             breakthrough: false,
+            keeper_holds_on_time: false,
         }
     }
 }
@@ -393,6 +403,41 @@ pub enum Ground {
     /// Родник: тело, стоящее здесь, в начале своего хода восстанавливает
     /// `SPRING_MEND` здоровья. Повод держать клетку, а не уходить от боя.
     Spring,
+    /// Жар: тлеющая земля. Тело, стоящее здесь в начале своего хода, получает
+    /// `EMBERS_HARM` урона от земли. Родник наоборот: он держит на месте тех,
+    /// кто хочет уйти, а не тех, кто хочет остаться, — стоять на жаре дорого.
+    Embers,
+    /// Алтарь: сторона, у которой на алтаре стоит тело, в начале своего хода
+    /// получает `ALTAR_COIN` маны сверх положенного — один раз за ход, сколько
+    /// бы тел на алтарях ни стояло, иначе два алтаря удваивали бы ману.
+    Altar,
+    /// Лёд: стоящий на нём ходит на `ICE_GLIDE` клетку дальше. Выигрыш
+    /// получает тот, кто уходит с льда, а не тот, кто на него приходит, —
+    /// поэтому лёд повод занять клетку, а не пробежать через неё.
+    Ice,
+    /// Гроза: тело, стоящее на грозовой плите, бьёт на `STORM_POWER` сильнее.
+    /// Это не событие, а состояние (аура земли, как у благословения): сошло с
+    /// плиты — прибавка снята в тот же миг, потому что она держится местом, а
+    /// не ходами.
+    Storm,
+    /// Могила: проклятая земля. Стоящий на ней бьёт на `GRAVE_CURSE` слабее,
+    /// пока стоит; тем же устройством, что и гроза, с обратным знаком.
+    Grave,
+    /// Хрусталь: стоящий на друзе получает `CRYSTAL_ARMOR` брони (от телесного
+    /// урона), пока стоит. Чары хрусталь не гасит — для этого есть оберег.
+    Crystal,
+    /// Витраж: пятно цветного света на плитах. Стоящий на нём получает
+    /// `GLASS_WARD` оберега (от чар), пока стоит. Узкая подмога, поэтому
+    /// щедрее хрусталя: чары встречаются реже ударов.
+    Glass,
+    /// Разлом: щель между мирами. Стоящий в ней бьёт на `RIFT_POWER` сильнее —
+    /// и принимает на `RIFT_FRAGILE` больше любого удара. Стеклянная пушка:
+    /// ни подмога, ни вред, а выбор, оттого знак у неё предупреждающий.
+    Rift,
+    /// Омут: тёмная вода, размывающая защиту. Стоящий в нём теряет
+    /// `MAELSTROM_SOAK` брони и оберега, пока стоит. Защита зажата снизу нулём,
+    /// поэтому омут отнимает только то, что у тела есть.
+    Maelstrom,
 }
 
 /// Сколько ранит яма при входе.
@@ -400,6 +445,55 @@ pub const PIT_HARM: i32 = 2;
 
 /// Сколько возвращает родник в начале своего хода.
 pub const SPRING_MEND: i32 = 1;
+
+/// Сколько отнимает жар в начале хода стоящего на нём.
+pub const EMBERS_HARM: i32 = 1;
+
+/// Сколько маны даёт алтарь в начале хода своей стороны.
+pub const ALTAR_COIN: i32 = 1;
+
+/// На сколько клеток дальше ходит стоящий на льду.
+pub const ICE_GLIDE: u8 = 1;
+
+/// Сколько силы прибавляет гроза стоящему на ней.
+pub const STORM_POWER: i32 = 1;
+
+/// Сколько силы отнимает могила у стоящего на ней.
+pub const GRAVE_CURSE: i32 = 1;
+
+/// Сколько брони даёт хрусталь стоящему на нём.
+pub const CRYSTAL_ARMOR: i32 = 1;
+
+/// Сколько оберега даёт витраж стоящему на нём.
+pub const GLASS_WARD: i32 = 2;
+
+/// Сколько силы прибавляет разлом и сколько уязвимости навязывает.
+pub const RIFT_POWER: i32 = 1;
+pub const RIFT_FRAGILE: i32 = 1;
+
+/// Сколько брони и оберега смывает омут.
+pub const MAELSTROM_SOAK: i32 = 1;
+
+/// Что земля кладёт на того, кто на ней стоит: (имя, показатель, число).
+/// Одно место на все земли-ауры — `breathe` не знает ни одной по имени.
+fn earth_riders(ground: Option<Ground>) -> Vec<(&'static str, crate::unit::Stat, i32)> {
+    use crate::unit::Stat;
+    match ground {
+        Some(Ground::Storm) => vec![("storm", Stat::Power, STORM_POWER)],
+        Some(Ground::Grave) => vec![("grave", Stat::Power, -GRAVE_CURSE)],
+        Some(Ground::Crystal) => vec![("crystal", Stat::Armor, CRYSTAL_ARMOR)],
+        Some(Ground::Glass) => vec![("glass", Stat::Ward, GLASS_WARD)],
+        Some(Ground::Rift) => vec![
+            ("rift", Stat::Power, RIFT_POWER),
+            ("rift-fragile", Stat::Vulnerable, RIFT_FRAGILE),
+        ],
+        Some(Ground::Maelstrom) => vec![
+            ("maelstrom", Stat::Armor, -MAELSTROM_SOAK),
+            ("maelstrom-ward", Stat::Ward, -MAELSTROM_SOAK),
+        ],
+        _ => Vec::new(),
+    }
+}
 
 /// Одна клетка местности.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -572,6 +666,10 @@ pub enum Illegal {
     Rested,
     /// Сюда встать нельзя: занято или такой клетки нет.
     NoRoom,
+    /// Клетка снаружи своих стен: карту выставляют внутри города.
+    BeyondTheWalls,
+    /// На пути удара строение, а бьющий не стрелок и удар не магический.
+    WallInTheWay,
 }
 
 impl MatchState {
@@ -700,7 +798,49 @@ impl MatchState {
 
     /// Свободные клетки стороны, куда можно выставить тело, — в порядке обхода.
     pub fn free_cells(&self, side: Side) -> Vec<Cell> {
-        self.board.free_cells(&self.field, side).filter(|c| !self.unstandable(*c)).collect()
+        let inside = self.inside_the_walls(side);
+        self.board
+            .free_cells(&self.field, side)
+            .filter(|c| !self.unstandable(*c) && inside[c.index()])
+            .collect()
+    }
+
+    /// Клетки, до которых от своего заднего края можно дойти, не проходя
+    /// через строение, — то есть внутри своих стен. Только туда сторона и
+    /// выставляет карты: подкрепление выходит из города, а не появляется во
+    /// рву перед стеной (жалоба на первый город: «карты проходят через
+    /// стену», `BATTLE-GENRE-RESEARCH.md` § 7.8). Проломили стену — через
+    /// пролом выход открыт. Строений нет — открыто всё, как было.
+    ///
+    /// Шаги короля по всему полю: стена, не доходящая до края, город не
+    /// запирает — её обходят.
+    pub(crate) fn inside_the_walls(&self, side: Side) -> [bool; crate::board::MAX_CELLS] {
+        let mut seen = [false; crate::board::MAX_CELLS];
+        let walled = |c: Cell| {
+            self.board
+                .at(c)
+                .is_some_and(|id| self.units[id as usize].card.structure && !self.units[id as usize].health.is_dead())
+        };
+        let back = match side {
+            Side::Keeper => 0,
+            Side::Player => self.field.rows() - 1,
+        };
+        let mut queue: Vec<Cell> = (0..self.field.width)
+            .filter_map(|x| self.field.cell(x, back))
+            .filter(|c| !walled(*c))
+            .collect();
+        for c in &queue {
+            seen[c.index()] = true;
+        }
+        while let Some(c) = queue.pop() {
+            for n in self.field.neighbours(c) {
+                if !seen[n.index()] && !walled(n) {
+                    seen[n.index()] = true;
+                    queue.push(n);
+                }
+            }
+        }
+        seen
     }
 
     /// Дальность удара с учётом земли: стрелок на холме бьёт на клетку дальше.
@@ -739,7 +879,11 @@ impl MatchState {
         if self.terrain.is_empty() {
             return self.board.reachable(&self.field, from, step);
         }
-        let step = if self.ground(from) == Some(Ground::Mire) { step.min(1) } else { step };
+        let step = match self.ground(from) {
+            Some(Ground::Mire) => step.min(1),
+            Some(Ground::Ice) => step.saturating_add(ICE_GLIDE),
+            _ => step,
+        };
         let mut seen: Vec<Cell> = vec![from];
         let mut frontier = vec![from];
         for _ in 0..step {
@@ -835,8 +979,129 @@ impl MatchState {
     /// Ближний бой (дальность 1) достаёт только до соседней клетки: стрелять
     /// ему нечем, и штраф за дальний выстрел к нему не относится.
     pub fn can_reach(&self, attacker: &Unit, from: Cell, to: Cell) -> bool {
+        self.within_reach(attacker, from, to) && self.blow_clears_walls(attacker, from, to)
+    }
+
+    /// Достаёт ли удар по одной дальности, не спрашивая о стенах.
+    fn within_reach(&self, attacker: &Unit, from: Cell, to: Cell) -> bool {
         from.distance(to) <= self.reach_of(attacker)
             || (attacker.reach > 1 && self.rules.long_shot_power > 0)
+    }
+
+    /// Проходит ли удар этого тела над строениями на пути.
+    fn blow_clears_walls(&self, attacker: &Unit, from: Cell, to: Cell) -> bool {
+        Self::fires_over_walls(attacker) || !self.over_a_structure(from, to)
+    }
+
+    /// То же для умения: над строением проходит умение стрелка и всякое
+    /// магическое умение. Без этого правило «через стену — только стрелки и
+    /// маги» обходилось бы способностью с физическим уроном: ведьма, которой
+    /// нельзя ударить через стену, «наводила» бы тот же удар чарой.
+    ///
+    /// Призыв устроен иначе: призванное тело ВЫСТАВЛЯЕТСЯ, и встаёт оно там
+    /// же, где выставленное с руки, — внутри своих стен (`inside_the_walls`).
+    pub fn ability_clears_walls(
+        &self,
+        caster: &Unit,
+        ability: &crate::card::AbilitySnapshot,
+        from: Cell,
+        to: Cell,
+    ) -> bool {
+        Self::fires_over_walls(caster)
+            || ability.channel == crate::damage::Channel::Magic
+            || !self.over_a_structure(from, to)
+    }
+
+    /// Бьёт ли тело над строением: стрелок с отметкой или маг.
+    pub fn fires_over_walls(unit: &Unit) -> bool {
+        unit.card.shoots || unit.channel == crate::damage::Channel::Magic
+    }
+
+    /// Куда тела стороны достают ударом за свой ход — с места или после шага.
+    ///
+    /// Для расстановки перед боем: человек ставит карты, видя, какие клетки
+    /// противник накрывает. Считается теми же правилами, что и ход: шаг по
+    /// местности (`walkable`), дальность с холма той клетки, с которой бьют,
+    /// дальний выстрел (`long_shot_power`) и строения на пути. При
+    /// `walk_spends_turn` тело либо идёт, либо бьёт, и бьёт тогда только с
+    /// места. Чары и толчки сюда не входят: это ответ на вопрос «куда
+    /// достанет удар», а не прогноз хода.
+    pub fn strike_zones(&self, side: Side) -> Vec<(Cell, Vec<Cell>)> {
+        let mut out = Vec::new();
+        for id in self.standing(side) {
+            let u = &self.units[id as usize];
+            if !u.strikes || u.disarmed() {
+                continue;
+            }
+            let Some(from) = self.board.cell_of(id) else { continue };
+            let mut origins = vec![from];
+            if u.step > 0 && !u.bound() && !self.rules.walk_spends_turn {
+                origins.extend(self.walkable(from, u.step));
+            }
+            let reached: Vec<Cell> = self
+                .field
+                .cells()
+                .filter(|to| self.field.side_of(*to) != side && !self.unstandable(*to))
+                .filter(|to| origins.iter().any(|o| o != to && self.strikes_from(u, *o, *to)))
+                .collect();
+            if !reached.is_empty() {
+                out.push((from, reached));
+            }
+        }
+        out
+    }
+
+    /// Достанет ли удар тела, вставшего на клетку `from`. Отличается от
+    /// `can_reach` только тем, что холм берётся под `from`, а не под тем
+    /// местом, где тело стоит сейчас: `can_reach` спрашивают о стоящем теле.
+    fn strikes_from(&self, attacker: &Unit, from: Cell, to: Cell) -> bool {
+        let on_hill = self.ground(from) == Some(Ground::Hill) && attacker.reach > 1;
+        let reach = if on_hill { attacker.reach + 1 } else { attacker.reach };
+        let within = from.distance(to) <= reach
+            || (attacker.reach > 1 && self.rules.long_shot_power > 0);
+        within && self.blow_clears_walls(attacker, from, to)
+    }
+
+    /// Стоит ли на пути удара строение — так, что удар обязан пройти над ним.
+    ///
+    /// Путь — клетки между двумя, взятые шагами короля вдоль прямой: на шаге
+    /// `k` из `n` — ближайшая к точке `from + (to − from)·k/n`. Когда прямая
+    /// идёт ровно по стыку двух клеток, удар проскальзывает между ними и
+    /// закрыт, только если строения стоят на обеих: щель в стене — это щель.
+    /// Соседняя клетка путей не имеет: стену бьют вплотную.
+    pub fn over_a_structure(&self, from: Cell, to: Cell) -> bool {
+        let n = from.distance(to) as i32;
+        if n < 2 {
+            return false;
+        }
+        // Где на шаге стоит одна координата: одна клетка или две на стыке.
+        let at = |start: u8, delta: i32, k: i32| -> [Option<i32>; 2] {
+            let num = delta * k;
+            if (2 * num).rem_euclid(n) == 0 && (2 * num / n).rem_euclid(2) == 1 {
+                let low = start as i32 + num.div_euclid(n);
+                [Some(low), Some(low + 1)]
+            } else {
+                [Some(start as i32 + (2 * num + n).div_euclid(2 * n)), None]
+            }
+        };
+        let walled = |x: i32, y: i32| -> bool {
+            if x < 0 || y < 0 {
+                return false;
+            }
+            let Some(cell) = self.field.cell(x as u8, y as u8) else { return false };
+            self.board
+                .at(cell)
+                .map(|id| &self.units[id as usize])
+                .is_some_and(|u| u.card.structure && !u.health.is_dead())
+        };
+        let (dx, dy) = (to.x as i32 - from.x as i32, to.y as i32 - from.y as i32);
+        (1..n).any(|k| {
+            let xs = at(from.x, dx, k);
+            let ys = at(from.y, dy, k);
+            xs.iter()
+                .flatten()
+                .all(|&x| ys.iter().flatten().all(|&y| walled(x, y)))
+        })
     }
 
     /// Стрелок ли это, к которому подошли вплотную.
@@ -1022,6 +1287,11 @@ impl MatchState {
             }
             let body = self.units[bearer as usize].clone();
             let Some(from) = self.board.cell_of(bearer) else { continue };
+            // Земля дышит на того, кто на ней стоит, — тем же списком, что и
+            // ауры карт: конвейеру урона разницы нет, а снимается она там же.
+            for (earth, stat, amount) in earth_riders(self.ground(from)) {
+                self.units[bearer as usize].aura.push(crate::unit::Status::new(earth, stat, amount, 1));
+            }
             for (i, a) in body.card.abilities.iter().enumerate() {
                 if a.trigger != "aura" || a.amount <= 0 {
                     continue;
@@ -1149,10 +1419,10 @@ impl MatchState {
                         let u = &self.units[*id as usize];
                         !u.health.is_dead()
                             && (u.side() != side) == wants_foe
-                            && self
-                                .board
-                                .cell_of(*id)
-                                .is_some_and(|c| c.distance(from) <= a.range)
+                            && self.board.cell_of(*id).is_some_and(|c| {
+                                c.distance(from) <= a.range
+                                    && self.ability_clears_walls(&self.units[bearer as usize], a, from, c)
+                            })
                     });
                     named.or_else(|| {
                         // Повод ни о ком — берём ближайшего, кого этот глагол
@@ -1166,6 +1436,7 @@ impl MatchState {
                                     && u.side() == want
                                     && (*id != bearer || !wants_foe)
                                     && cell.distance(from) <= a.range
+                                    && self.ability_clears_walls(&self.units[bearer as usize], a, from, *cell)
                             })
                             .min_by_key(|(cell, _)| cell.distance(from))
                             .map(|(_, id)| id)
@@ -1736,7 +2007,11 @@ impl MatchState {
         // По ХОЗЯИНУ. Сторона, у которой увели последнее тело, не проиграла:
         // §4 запрещает массовое подчинение как «конец партии одной картой», и
         // одиночное не должно кончать её тихо. Смута вернётся — поражение нет.
-        self.owned_standing(side).is_empty()
+        // Строения не держат сторону: город, в котором остались одни стены,
+        // взят (`CardSnapshot::structure`).
+        self.owned_standing(side)
+            .iter()
+            .all(|id| self.units[*id as usize].card.structure)
     }
 
     fn settle(&mut self, events: &mut Vec<Event>) {
@@ -1758,6 +2033,11 @@ impl MatchState {
     }
 
     fn settle_on_time(&mut self, events: &mut Vec<Event>) {
+        if self.rules.keeper_holds_on_time {
+            self.outcome = Some(Outcome::Keeper);
+            events.push(Event::Finished { outcome: Outcome::Keeper });
+            return;
+        }
         let p = self.standing_health(Side::Player);
         let k = self.standing_health(Side::Keeper);
         let o = if p > k {
@@ -1814,6 +2094,9 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
             }
             if !st.open(*cell) {
                 return Err(Illegal::CellTaken);
+            }
+            if !st.inside_the_walls(side)[cell.index()] {
+                return Err(Illegal::BeyondTheWalls);
             }
             if st.side_state(side).mana < card.cost {
                 return Err(Illegal::NotEnoughMana);
@@ -1985,8 +2268,11 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
 
             let from = st.board.cell_of(a.id).ok_or(Illegal::UnitIsDown)?;
             let to = st.board.cell_of(t.id).ok_or(Illegal::TargetIsDown)?;
-            if !st.can_reach(&a, from, to) {
+            if !st.within_reach(&a, from, to) {
                 return Err(Illegal::OutOfReach);
+            }
+            if !st.blow_clears_walls(&a, from, to) {
+                return Err(Illegal::WallInTheWay);
             }
 
             // Стража принимает на себя то, что летит в соседа. Счёт удара при
@@ -2019,6 +2305,7 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                 && !st.units[t.id as usize].bound()
                 && st.units[t.id as usize].strikes
                 && to.distance(from) <= st.reach_of(&st.units[t.id as usize])
+                && (MatchState::fires_over_walls(&st.units[t.id as usize]) || !st.over_a_structure(to, from))
             {
                 let defender = st.units[t.id as usize].clone();
                 let back = crate::damage::resolve(
@@ -2087,6 +2374,13 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
             .ok_or(Illegal::UnitIsDown)?;
             if from.distance(spot) > a.range {
                 return Err(Illegal::OutOfReach);
+            }
+            if matches!(what, crate::spell::Casting::Summon) {
+                if !st.inside_the_walls(side)[spot.index()] {
+                    return Err(Illegal::BeyondTheWalls);
+                }
+            } else if !st.ability_clears_walls(&c, &a, from, spot) {
+                return Err(Illegal::WallInTheWay);
             }
 
             // Кого взяли. У клеточных чар тела нет вовсе, и это не «цель не
@@ -2352,6 +2646,39 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                     events.extend(crate::heal::apply_mend(None, &mut st.units[id as usize], &mending));
                 }
             }
+            // Жар жжёт тех, кто стоит на нём, а алтарь платит стороне, у которой
+            // на нём кто-то стоит. Оба — до поводов начала хода, по той же
+            // причине, что и родник.
+            let mut altar_held = false;
+            for id in st.standing(st.active) {
+                match st.board.cell_of(id).and_then(|c| st.ground(c)) {
+                    Some(Ground::Embers) => {
+                        let body = st.units[id as usize].clone();
+                        let res = crate::damage::resolve(
+                            None,
+                            &body,
+                            crate::damage::DamagePacket::new(
+                                EMBERS_HARM,
+                                crate::damage::Channel::Physical,
+                                crate::damage::Source::Zone,
+                            ),
+                        );
+                        events.extend(apply(&mut st.units[id as usize], &res));
+                    }
+                    Some(Ground::Altar) => altar_held = true,
+                    _ => {}
+                }
+            }
+            if altar_held {
+                let active = st.active;
+                let s = st.side_state_mut(active);
+                let before = s.mana;
+                s.mana = (s.mana + ALTAR_COIN).min(MANA_CAP);
+                let got = s.mana - before;
+                if got > 0 {
+                    events.push(Event::Mana { side: active, amount: got });
+                }
+            }
             // Начало своего хода — повод. Стоящие берутся после того, как ход
             // уже перешёл: «свой ход» у тела то, в котором оно ходит.
             for id in st.standing(st.active) {
@@ -2495,7 +2822,17 @@ pub fn legal_actions(state: &MatchState) -> Vec<Action> {
                     target,
                 });
             };
-            let reaches = |cell: Cell| from.distance(cell) <= a.range;
+            // Призыв встаёт внутри своих стен; прочее не проходит над
+            // строением, если это не стрелок и не магия.
+            let inside = matches!(what, crate::spell::Casting::Summon)
+                .then(|| state.inside_the_walls(side));
+            let reaches = |cell: Cell| {
+                from.distance(cell) <= a.range
+                    && match &inside {
+                        Some(ins) => ins[cell.index()],
+                        None => state.ability_clears_walls(c, &a, from, cell),
+                    }
+            };
             let body_at = |target: UnitId| -> Option<Cell> { state.board.cell_of(target) };
 
             match what.aim(&a.shape) {

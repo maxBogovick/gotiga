@@ -12,7 +12,7 @@
    * No backend of its own (load() reuses showing-rooms + the figurine list).
    */
   import { onMount } from 'svelte';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META } from '$lib/i18n';
   import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import {
@@ -25,7 +25,7 @@
 
   let { data } = $props();
 
-  let locale = $derived($lang === 'ru' ? 'ru-RU' : 'en-US');
+  let locale = $derived(LANG_META[$lang].locale);
   let win = $derived(data.room ? roomToWindow(data.room) : null);
   let gated = $derived(!!win && isGated(win));
   let openNow = $derived(!win || isShowingOpen(win, houseClock.nowDate));

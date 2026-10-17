@@ -17,19 +17,13 @@ use base64::Engine as _;
 use uuid::Uuid;
 
 mod insights;
+mod oauth_login;
 pub use insights::{BattleReport, BehaviourReport, HealthReport, PipelineHealth};
-
-type RateLimiter = Arc<Mutex<HashMap<String, Vec<Instant>>>>;
 
 #[derive(Clone)]
 pub struct AppService {
     repo: Repository,
     config: Config,
-    comment_rate_limiter: RateLimiter,
-    commission_rate_limiter: RateLimiter,
-    /// Shared limiter for assorted public endpoints (auth, bookings, orders,
-    /// waitlist, token lookups), keyed by "bucket|ip".
-    general_rate_limiter: RateLimiter,
     /// Offline IP → country/city resolver (best-effort; may be a no-op).
     geoip: Arc<crate::geo::GeoIp>,
     observability: ObservabilityState,
@@ -40,17 +34,37 @@ pub struct AppService {
     /// essentially every public read. The value is a percentile over the WHOLE collection:
     /// it moves slowly by construction, and a minute of staleness is invisible.
     favorite_tiers_cache: Arc<Mutex<Option<(Instant, crate::db::FavoriteTiers)>>>,
+    /// Пределы для горячих ручек (замер, поиск) — в памяти, окном в минуту. Базе
+    /// их доверять нельзя: это самые частые запросы сайта, и счёт в базе на каждый
+    /// из них при наплыве давал бы наплыву ещё и нагрузку на базу. Перезапуск
+    /// обнуляет — для защиты от потока этого достаточно.
+    hot_limits: Arc<Mutex<HashMap<String, (Instant, u32)>>>,
+    /// Ответы поиска на минуту: один и тот же вопрос (его задают подряд при
+    /// каждом нажатии клавиши и при каждой перезагрузке) не должен каждый раз
+    /// гонять кодировщик.
+    search_cache: Arc<Mutex<HashMap<String, (Instant, Vec<SemanticHit>)>>>,
     /// One reused HTTP client for all outbound notifications (Telegram). Reqwest's
     /// Client holds a connection pool and is meant to be created once and cloned —
     /// building a fresh one per notification threw away connection/TLS reuse. It
     /// also carries a request timeout so a hung endpoint can't stall a caller.
     http_client: Client,
+    /// Протокол входа через Google и Apple (`crate::oauth`). Ключи провайдеров
+    /// кэшируются внутри, поэтому он один на сервис, а не строится на запрос.
+    oauth: crate::oauth::Oauth,
 }
 
-/// Widest rate-limit window in use anywhere; the GC keeps timestamps at least this
-/// fresh, so a swept key can never wrongly reject (its data was already expired for
-/// every bucket).
-const RATE_LIMIT_WIDEST_WINDOW: Duration = Duration::from_secs(3600);
+/// Widest rate-limit window in use anywhere (the daily upload cap); the GC keeps
+/// hits at least this fresh, so a swept key can never wrongly reject (its data
+/// was already expired for every bucket).
+const RATE_LIMIT_WIDEST_WINDOW: Duration = Duration::from_secs(86_400);
+
+/// Сколько живёт ответ поиска и сколько ответов держим.
+const SEARCH_CACHE_TTL: Duration = Duration::from_secs(60);
+const SEARCH_CACHE_MAX: usize = 200;
+
+/// Начало кода в ссылке подписки на книгу дома в Telegram (`?start=sub_…`):
+/// по нему бот отличает подписку от входа.
+const TG_SUBSCRIBE_PREFIX: &str = "sub_";
 
 /// How long a computed set of favorite tiers stays good.
 const FAVORITE_TIERS_TTL: Duration = Duration::from_secs(60);
@@ -63,18 +77,54 @@ impl AppService {
             .timeout(Duration::from_secs(10))
             .build()
             .unwrap_or_default();
+        // Настройки проверены при запуске (`Config::validate`), поэтому здесь
+        // ошибка означает только одно: в код попало то, чего проверка не знает.
+        let oauth = crate::oauth::Oauth::new(
+            http_client.clone(),
+            crate::oauth::Settings {
+                public_url: &config.public_url,
+                google: config
+                    .google_client_id
+                    .as_deref()
+                    .zip(config.google_client_secret.as_deref()),
+                // Apple принимает только https на настоящем домене: на своей
+                // машине кнопка остаётся выключенной (об этом уже сказано при
+                // запуске), а не ведёт к отказу провайдера.
+                apple: match (
+                    config.apple_client_id.as_deref(),
+                    config.apple_team_id.as_deref(),
+                    config.apple_key_id.as_deref(),
+                    config.apple_private_key.as_deref(),
+                ) {
+                    (Some(client_id), Some(team_id), Some(key_id), Some(private_key))
+                        if !config.public_url_is_local() =>
+                    {
+                        Some(crate::oauth::AppleSettings { client_id, team_id, key_id, private_key })
+                    }
+                    _ => None,
+                },
+            },
+        )
+        .expect("OAuth settings were validated at startup");
         Self {
             repo,
             config,
-            comment_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
-            commission_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
-            general_rate_limiter: Arc::new(Mutex::new(HashMap::new())),
             geoip,
             observability: ObservabilityState::default(),
             analytics,
             favorite_tiers_cache: Arc::new(Mutex::new(None)),
+            hot_limits: Arc::new(Mutex::new(HashMap::new())),
+            search_cache: Arc::new(Mutex::new(HashMap::new())),
             http_client,
+            oauth,
         }
+    }
+
+    /// Только для проверок: сервис с другим протоколом входа (поддельный
+    /// провайдер на своём порту). В работе протокол собирается из окружения.
+    pub fn with_oauth(mut self, oauth: crate::oauth::Oauth) -> Self {
+        self.oauth = oauth;
+        self
     }
 
     pub fn observability(&self) -> ObservabilityState {
@@ -128,9 +178,9 @@ impl AppService {
         }
     }
 
-    /// Generic in-memory rate limit: at most `max` requests per `window_secs`
-    /// for a given (bucket, ip). Best-effort (in-process, resets on restart) —
-    /// a coarse abuse brake, not a hard quota.
+    /// Предел «не более `max` обращений за `window_secs`» под ключом
+    /// «корзина|адрес». Счёт лежит в базе (`rate_limit_hits`), а не в памяти:
+    /// перезапуск сервера его не обнуляет.
     pub async fn check_rate_limit(
         &self,
         bucket: &str,
@@ -138,60 +188,84 @@ impl AppService {
         max: usize,
         window_secs: u64,
     ) -> Result<()> {
+        if self
+            .repo
+            .rate_limit_take(&format!("{bucket}|{ip}"), max as i64, window_secs as i64)
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::BadRequest(
+                "Too many requests from this address. Please wait and try again.".into(),
+            ))
+        }
+    }
+
+    /// Предел для горячих ручек: не более `max` обращений за окно в `window_secs`
+    /// секунд (окно фиксированное, счёт в памяти). Для ручек, которые зовут
+    /// чаще всего: счёт в базе на каждое такое обращение сам был бы нагрузкой.
+    pub async fn check_hot_limit(
+        &self,
+        bucket: &str,
+        ip: &str,
+        max: u32,
+        window_secs: u64,
+    ) -> Result<()> {
         let now = Instant::now();
         let window = Duration::from_secs(window_secs);
-        let key = format!("{bucket}|{ip}");
-        let mut map = self.general_rate_limiter.lock().await;
-        let entry = map.entry(key).or_default();
-        entry.retain(|t: &Instant| now.duration_since(*t) < window);
-        if entry.len() >= max {
+        let mut map = self.hot_limits.lock().await;
+        let entry = map
+            .entry(format!("{bucket}|{ip}"))
+            .or_insert((now, 0));
+        if now.duration_since(entry.0) >= window {
+            *entry = (now, 0);
+        }
+        if entry.1 >= max {
             return Err(AppError::BadRequest(
                 "Too many requests from this address. Please wait and try again.".into(),
             ));
         }
-        entry.push(now);
+        entry.1 += 1;
         Ok(())
     }
 
     pub async fn check_commission_rate_limit(&self, ip: &str) -> Result<()> {
-        const MAX_PER_HOUR: usize = 6;
-        let now = Instant::now();
-        let cutoff_secs = Duration::from_secs(3600);
-        let mut map = self.commission_rate_limiter.lock().await;
-        let entry = map.entry(ip.to_string()).or_default();
-        entry.retain(|t: &Instant| now.duration_since(*t) < cutoff_secs);
-        if entry.len() >= MAX_PER_HOUR {
-            return Err(AppError::BadRequest(
+        if self
+            .repo
+            .rate_limit_take(&format!("commission|{ip}"), 6, 3600)
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(AppError::BadRequest(
                 "Too many requests from this address. Please wait before submitting again.".into(),
-            ));
+            ))
         }
-        entry.push(now);
-        Ok(())
     }
 
-    /// Periodic sweep so the in-memory limiters can't grow without bound. The
-    /// per-request `check_*` paths only prune the single key they touch, so a key
-    /// for an IP that never returns would otherwise live forever. This drops stale
-    /// timestamps across every key and removes the now-empty ones. Safe to run on
-    /// any interval — it only ever removes already-expired data. Spawned on a timer
-    /// from main.rs.
+    /// Периодическая уборка: стирает обращения старше самого широкого окна.
+    /// Безопасна на любом интервале — трогает только уже истёкшее. Запускается
+    /// по таймеру из main.rs.
     pub async fn prune_rate_limiters(&self) -> usize {
         let now = Instant::now();
-        let mut removed = 0usize;
-        for limiter in [
-            &self.comment_rate_limiter,
-            &self.commission_rate_limiter,
-            &self.general_rate_limiter,
-        ] {
-            let mut map = limiter.lock().await;
-            let before = map.len();
-            map.retain(|_, times| {
-                times.retain(|t| now.duration_since(*t) < RATE_LIMIT_WIDEST_WINDOW);
-                !times.is_empty()
-            });
-            removed += before - map.len();
+        {
+            let mut hot = self.hot_limits.lock().await;
+            // Самое длинное окно горячих ручек — минута.
+            hot.retain(|_, (start, _)| now.duration_since(*start) < Duration::from_secs(120));
+            let mut cache = self.search_cache.lock().await;
+            cache.retain(|_, (at, _)| now.duration_since(*at) < SEARCH_CACHE_TTL);
         }
-        removed
+        match self
+            .repo
+            .prune_rate_limit_hits(RATE_LIMIT_WIDEST_WINDOW.as_secs() as i64)
+            .await
+        {
+            Ok(n) => n as usize,
+            Err(e) => {
+                tracing::warn!("rate-limit prune failed: {e}");
+                0
+            }
+        }
     }
 
     pub async fn initialize(&self) -> Result<()> {
@@ -203,6 +277,16 @@ impl AppService {
     }
 
     // === FIGURINE ANALYTICS ===
+
+    /// Отпечатки посетителя, под которыми замер мог его записать: по ним пыль за
+    /// внимание сверяет, видел ли сервер человека на странице.
+    pub fn attention_hashes(&self, headers: &axum::http::HeaderMap) -> Vec<String> {
+        crate::analytics::visitor_hashes_for_attention(
+            headers,
+            &self.config.analytics_hash_secret,
+            &self.config.admin_api_key,
+        )
+    }
 
     pub async fn enqueue_analytics_event(
         &self,
@@ -1001,6 +1085,18 @@ impl AppService {
     /// slug or the raw UUID. A UUID passes straight through (no DB hit); anything else is
     /// looked up as a slug. Keeps every entity keyed on the same UUID regardless of which
     /// URL the visitor arrived by.
+    /// То же, но только для работ на людях. Всё, что посетитель делает с
+    /// работой по адресу (расписание, отклик, бронь, очередь), отвечает на
+    /// скрытую работу так же, как на несуществующую: она не вышла, и знать о
+    /// ней посетителю нечего.
+    pub async fn resolve_public_figurine_uuid(&self, handle: &str) -> Result<Uuid> {
+        let uuid = self.resolve_figurine_uuid(handle).await?;
+        if !self.repo.figurine_is_visible(uuid).await? {
+            return Err(AppError::NotFound(format!("Figurine {} not found", handle)));
+        }
+        Ok(uuid)
+    }
+
     pub async fn resolve_figurine_uuid(&self, handle: &str) -> Result<Uuid> {
         match Uuid::parse_str(handle) {
             Ok(uuid) => Ok(uuid),
@@ -1174,7 +1270,7 @@ impl AppService {
             .collect())
     }
 
-    pub async fn get_figurine_details(&self, id: String) -> Result<FigurineDto> {
+    pub async fn get_figurine_details(&self, id: String, is_admin: bool) -> Result<FigurineDto> {
         // `id` is a handle: a UUID for legacy/canonical links, or a transliterated
         // slug for the pretty URL. Try UUID first (cheap parse); anything else is a
         // slug lookup. Either resolves to the same work.
@@ -1183,6 +1279,12 @@ impl AppService {
             Err(_) => self.repo.get_figurine_by_slug(&id).await?,
         }
         .ok_or_else(|| crate::error::AppError::NotFound(format!("Figurine {} not found", id)))?;
+
+        // Не на людях — нет и для того, кто знает адрес. Ответ тот же, что и на
+        // несуществующую: по нему нельзя узнать, что такая работа заведена.
+        if !figurine.is_visible && !is_admin {
+            return Err(crate::error::AppError::NotFound(format!("Figurine {} not found", id)));
+        }
 
         let uuid = figurine.id;
 
@@ -1583,6 +1685,22 @@ impl AppService {
     /// with RRF. Empty when the query is blank. Degrades to BM25+trigrams
     /// when embeddings are absent.
     pub async fn semantic_search(&self, query: &str, limit: usize) -> Result<Vec<SemanticHit>> {
+        let key = format!("{limit}|{}", query.trim().to_lowercase());
+        if let Some((at, hits)) = self.search_cache.lock().await.get(&key)
+            && at.elapsed() < SEARCH_CACHE_TTL
+        {
+            return Ok(hits.clone());
+        }
+        let hits = self.semantic_search_uncached(query, limit).await?;
+        let mut cache = self.search_cache.lock().await;
+        if cache.len() >= SEARCH_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(key, (Instant::now(), hits.clone()));
+        Ok(hits)
+    }
+
+    async fn semantic_search_uncached(&self, query: &str, limit: usize) -> Result<Vec<SemanticHit>> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -2620,10 +2738,15 @@ impl AppService {
         {
             let subject = if !commission.title.trim().is_empty() {
                 commission.title.clone()
-            } else if commission.lang == "en" {
-                "A petition for a new figurine".to_string()
             } else {
-                "Прошение о новой фигурке".to_string()
+                crate::lang::Lang::parse(&commission.lang)
+                    .unwrap_or_default()
+                    .pick(
+                        "A petition for a new figurine",
+                        "Прошение о новой фигурке",
+                        "Прохання про нову фігурку",
+                    )
+                    .to_string()
             };
             let _ = self
                 .repo
@@ -2701,29 +2824,25 @@ impl AppService {
         if owner.is_none()
             && let Some(user_id) = existing.user_id
         {
-            let en = existing.lang == "en";
+            let lang = crate::lang::Lang::parse(&existing.lang).unwrap_or_default();
             let titled = !existing.title.trim().is_empty();
-            let subject = if en {
-                "Petition removed"
-            } else {
-                "Прошение снято"
-            };
-            let body = if en {
-                if titled {
-                    format!(
-                        "Your petition “{}” has been removed by the archive keeper. You are welcome to send a new one.",
-                        existing.title
-                    )
-                } else {
-                    "Your petition has been removed by the archive keeper. You are welcome to send a new one.".to_string()
-                }
-            } else if titled {
-                format!(
+            let subject = lang.pick("Petition removed", "Прошение снято", "Прохання знято");
+            let body = match (lang, titled) {
+                (crate::lang::Lang::En, true) => format!(
+                    "Your petition “{}” has been removed by the archive keeper. You are welcome to send a new one.",
+                    existing.title
+                ),
+                (crate::lang::Lang::En, false) => "Your petition has been removed by the archive keeper. You are welcome to send a new one.".to_string(),
+                (crate::lang::Lang::Ru, true) => format!(
                     "Ваше прошение «{}» снято хранителем архива. Вы можете отправить новое.",
                     existing.title
-                )
-            } else {
-                "Ваше прошение снято хранителем архива. Вы можете отправить новое.".to_string()
+                ),
+                (crate::lang::Lang::Ru, false) => "Ваше прошение снято хранителем архива. Вы можете отправить новое.".to_string(),
+                (crate::lang::Lang::Uk, true) => format!(
+                    "Ваше прохання «{}» знято зберігачем архіву. Ви можете надіслати нове.",
+                    existing.title
+                ),
+                (crate::lang::Lang::Uk, false) => "Ваше прохання знято зберігачем архіву. Ви можете надіслати нове.".to_string(),
             };
             let _ = self
                 .repo
@@ -2799,28 +2918,28 @@ impl AppService {
             // If the petitioner has an account, drop a note into their conversation,
             // in the language they wrote the petition in.
             if let Some(user_id) = c.user_id {
-                let en = c.lang == "en";
+                let lang = crate::lang::Lang::parse(&c.lang).unwrap_or_default();
                 let label = match status {
-                    CommissionStatus::Accepted => Some(if en {
-                        "Your petition is accepted — the master takes up the work."
-                    } else {
-                        "Ваше прошение принято — мастер берётся за работу."
-                    }),
-                    CommissionStatus::InProgress => Some(if en {
-                        "The master has begun your figurine."
-                    } else {
-                        "Мастер приступил к вашей фигурке."
-                    }),
-                    CommissionStatus::Completed => Some(if en {
-                        "Your figurine is finished."
-                    } else {
-                        "Ваша фигурка завершена."
-                    }),
-                    CommissionStatus::Declined => Some(if en {
-                        "Regrettably, the master will not take up this petition."
-                    } else {
-                        "К сожалению, мастер не возьмётся за это прошение."
-                    }),
+                    CommissionStatus::Accepted => Some(lang.pick(
+                        "Your petition is accepted — the master takes up the work.",
+                        "Ваше прошение принято — мастер берётся за работу.",
+                        "Ваше прохання прийнято — майстер береться за роботу.",
+                    )),
+                    CommissionStatus::InProgress => Some(lang.pick(
+                        "The master has begun your figurine.",
+                        "Мастер приступил к вашей фигурке.",
+                        "Майстер приступив до вашої фігурки.",
+                    )),
+                    CommissionStatus::Completed => Some(lang.pick(
+                        "Your figurine is finished.",
+                        "Ваша фигурка завершена.",
+                        "Вашу фігурку завершено.",
+                    )),
+                    CommissionStatus::Declined => Some(lang.pick(
+                        "Regrettably, the master will not take up this petition.",
+                        "К сожалению, мастер не возьмётся за это прошение.",
+                        "На жаль, майстер не візьметься за це прохання.",
+                    )),
                     _ => None,
                 };
                 if let Some(text) = label {
@@ -2840,10 +2959,9 @@ impl AppService {
                     } else {
                         let subject = if !c.title.trim().is_empty() {
                             c.title.clone()
-                        } else if en {
-                            "Your petition".to_string()
                         } else {
-                            "Ваше прошение".to_string()
+                            lang.pick("Your petition", "Ваше прошение", "Ваше прохання")
+                                .to_string()
                         };
                         let _ = self
                             .repo
@@ -2914,7 +3032,7 @@ impl AppService {
     // === SHOWINGS & BOOKINGS (PUBLIC) ===
 
     pub async fn get_figurine_schedule(&self, figurine_id: String) -> Result<FigurineScheduleDto> {
-        let uuid = self.resolve_figurine_uuid(&figurine_id).await?;
+        let uuid = self.resolve_public_figurine_uuid(&figurine_id).await?;
         let (showings, confirmed, pending) = self.repo.get_figurine_schedule(uuid).await?;
 
         let mut entries: Vec<ScheduleEntryDto> = Vec::new();
@@ -3083,6 +3201,7 @@ impl AppService {
         visitor_token: &str,
         user_id: Option<Uuid>,
         liked: bool,
+        visitor_hashes: &[String],
     ) -> Result<(bool, i64)> {
         let token = visitor_token.trim();
         if token.is_empty() || token.len() > 64 {
@@ -3114,7 +3233,7 @@ impl AppService {
         // а не пополнить книгу, и споткнувшаяся пыль не должна выглядеть как
         // «не удалось поставить отметку».
         if liked && let Some(uid) = user_id {
-            if let Err(e) = self.grant_attention_dust(uid, "liked", figurine_id).await {
+            if let Err(e) = self.grant_attention_dust(uid, "liked", figurine_id, visitor_hashes).await {
                 tracing::warn!(%figurine_id, "пыль за сердечко не осела: {e}");
             }
         }
@@ -3222,7 +3341,7 @@ impl AppService {
         // (slug or UUID). Normalise to the canonical UUID before create_booking_atomic,
         // which binds figurine_id straight into SQL and cannot resolve a slug itself.
         req.figurine_id = self
-            .resolve_figurine_uuid(&req.figurine_id)
+            .resolve_public_figurine_uuid(&req.figurine_id)
             .await?
             .to_string();
 
@@ -5000,20 +5119,21 @@ impl AppService {
     /// Отказ, когда другой двери нет: первая дверь — это почта И знаки вместе
     /// (вход по знакам начинается с почты), и без любой из половин человек,
     /// отвязавший Telegram, запер бы себя снаружи собственной дверью. Проверка
-    /// стоит здесь, а не в базе: там она молча зависела бы от того, кто позвал.
+    /// и снятие — одна операция (`unlink_door`), а не «прочитал, потом записал».
     pub async fn telegram_unlink(&self, user: &User) -> Result<UserDto> {
         if user.telegram_id.is_none() {
             return Ok(UserDto::from(user));
         }
-        // Дверью считается ПОДТВЕРЖДЁННАЯ почта со знаками: по названному, но
-        // не открытому адресу войти нельзя, и считать его дверью значило бы
-        // выпустить человека наружу через ту, которой нет.
-        if !user.email_confirmed() || user.visual_password_hash.is_none() {
+        // Дверью считается ПОДТВЕРЖДЁННАЯ почта со знаками (по названному, но
+        // не открытому адресу войти нельзя), привязанный Google или привязанный
+        // Apple. Список один на все отвязки (`User::doors_besides`), а подсчёт и
+        // снятие идут под одной блокировкой строки: две отвязки разом иначе
+        // видели бы друг у друга вторую дверь и обе проходили.
+        if !self.repo.unlink_door(user.id, Door::Telegram).await? {
             return Err(AppError::BadRequest(
-                "Telegram is the only way in — add an email and signs first".into(),
+                "Telegram is the only way in — add another way in first".into(),
             ));
         }
-        self.repo.unlink_telegram(user.id).await?;
         Self::log_domain_event("telegram_unlinked", "user", user.id, "ok");
         let fresh = self
             .repo
@@ -5021,6 +5141,11 @@ impl AppService {
             .await?
             .ok_or(AppError::Unauthorized)?;
         Ok(UserDto::from(&fresh))
+    }
+
+    /// Суточная уборка: все просроченные сессии.
+    pub async fn prune_expired_sessions(&self) -> Result<u64> {
+        self.repo.prune_all_expired_sessions().await
     }
 
     /// Уборка за входом: отработавшие и остывшие слова.
@@ -5321,6 +5446,7 @@ impl AppService {
     pub async fn telegram_start_login(
         &self,
         bind_user: Option<Uuid>,
+        age_confirmed: bool,
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<crate::models::TelegramCodeResponse> {
@@ -5337,7 +5463,7 @@ impl AppService {
         let ctx = self.client_context(ip, user_agent.clone());
         let row = self
             .repo
-            .create_telegram_login_code(&code, &word, bind_user, user_agent.as_deref(), &ctx)
+            .create_telegram_login_code(&code, &word, age_confirmed, bind_user, user_agent.as_deref(), &ctx)
             .await?;
 
         // На своей машине бот до нас не достучится — webhook принадлежит
@@ -5458,6 +5584,12 @@ impl AppService {
                 session_token: None,
                 user: None,
             }),
+            // Имени ещё нет, а возраст не подтверждён.
+            "age" => Ok(crate::models::TelegramCodeStatus {
+                state: "age".into(),
+                session_token: None,
+                user: None,
+            }),
             "confirmed" => {
                 // Забирается самим UPDATE: два опроса, пришедшие разом, иначе
                 // унесли бы одну сессию дважды.
@@ -5490,28 +5622,273 @@ impl AppService {
         Ok(())
     }
 
+    /// `/start sub_…` — человек нажал «Запустить» по ссылке подписки. Чат
+    /// берётся из самого сообщения Telegram: это и есть доказательство, что
+    /// канал его.
+    async fn telegram_subscribed(
+        &self,
+        bot: &crate::telegram::Bot,
+        chat: i64,
+        from: &crate::telegram::TgUser,
+        code: &str,
+    ) {
+        let lang = from.lang();
+        let joined = self
+            .repo
+            .activate_telegram_subscriber(&fingerprint(code), chat, from.username.as_deref(), lang.code())
+            .await;
+        match joined {
+            Ok(crate::db::TelegramJoin::Joined(sub)) => {
+                self.observability
+                    .record_business_event("newsletter_subscribed_telegram", "ok");
+                Self::log_domain_event("newsletter_subscribed_telegram", "subscriber", sub.id, "ok");
+                bot.say(chat, &self.telegram_welcome(&sub, lang)).await;
+            }
+            Ok(crate::db::TelegramJoin::Already(sub)) => {
+                bot.say(chat, &self.telegram_welcome(&sub, lang)).await;
+            }
+            Ok(crate::db::TelegramJoin::Cold) => {
+                bot.say(
+                    chat,
+                    lang.pick(
+                        "That link has gone cold. Sign up again on the site.",
+                        "Ссылка остыла. Оформите подписку на сайте заново.",
+                        "Посилання охололо. Оформіть підписку на сайті заново.",
+                    ),
+                )
+                .await;
+            }
+            Err(e) => {
+                tracing::warn!("Telegram subscription failed: {e}");
+            }
+        }
+    }
+
+    /// Приветствие подписчика: что будет приходить и как выйти. Выход есть в
+    /// двух видах — командой и ссылкой, — чтобы не зависеть ни от сайта, ни от
+    /// бота.
+    fn telegram_welcome(
+        &self,
+        sub: &crate::models::TelegramSubscriber,
+        lang: crate::lang::Lang,
+    ) -> String {
+        use crate::lang::Lang;
+        let site = self.config.public_url.trim_end_matches('/');
+        let door = format!("{site}/unsubscribe/{}", sub.unsubscribe_token);
+        match lang {
+            Lang::Ru => format!(
+                "<b>Вы в книге дома</b>\nКогда на полке появится новая небылица, я напишу сюда — без шума и спешки.\n\nЧтобы больше не получать: /stop или {door}"
+            ),
+            Lang::En => format!(
+                "<b>You are in the house book</b>\nWhen a new tall tale is set on the shelf, I will write here — no noise, no haste.\n\nTo stop these: /stop or {door}"
+            ),
+            Lang::Uk => format!(
+                "<b>Ви в книзі дому</b>\nКоли на полиці з’явиться нова небилиця, я напишу сюди — без галасу й поспіху.\n\nЩоб більше не отримувати: /stop або {door}"
+            ),
+        }
+    }
+
+    /// `/stop`.
+    async fn telegram_stopped(&self, bot: &crate::telegram::Bot, chat: i64, lang: crate::lang::Lang) {
+        let was = self.repo.unsubscribe_telegram_chat(chat).await.unwrap_or(false);
+        let text = if was {
+            lang.pick(
+                "Done — I will not write again. You can return from the site.",
+                "Готово: больше писать не буду. Вернуться можно на сайте.",
+                "Готово: більше писати не буду. Повернутися можна на сайті.",
+            )
+        } else {
+            lang.pick(
+                "You are not in the house book.",
+                "Вы и так не в книге дома.",
+                "Ви й так не в книзі дому.",
+            )
+        };
+        bot.say(chat, text).await;
+    }
+
+    /// Подписаться на книгу дома в Telegram. Вошедшему через Telegram бот уже
+    /// знаком — подписка оформляется сразу; остальным даётся ссылка с кодом, и
+    /// подписка начинается, когда они нажмут «Запустить».
+    pub async fn subscribe_via_telegram(
+        &self,
+        req: crate::models::TelegramSubscribeRequest,
+        user: Option<&User>,
+        ip: Option<String>,
+    ) -> Result<crate::models::TelegramSubscribeResponse> {
+        if !req.age_confirmed {
+            return Err(AppError::BadRequest(
+                "Please confirm you are 16 or older".to_string(),
+            ));
+        }
+        let (Some(bot), Some(bot_name)) = (
+            self.login_bot(),
+            self.config.telegram_login_bot_username.as_deref(),
+        ) else {
+            return Err(AppError::BadRequest("Telegram is not set up".into()));
+        };
+        let lang = req
+            .lang
+            .as_deref()
+            .and_then(crate::lang::Lang::parse)
+            .unwrap_or_default()
+            .code();
+        let source = req
+            .source
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.len() <= 40)
+            .unwrap_or("home");
+
+        // Вошедший через Telegram: бот ему знаком, и написать ему можно сразу.
+        if let Some(u) = user
+            && let Some(chat) = u.telegram_id
+        {
+            let (sub, already) = self
+                .repo
+                .subscribe_telegram_chat(chat, u.telegram_username.as_deref(), lang, source, Some(u.id), ip.as_deref())
+                .await?;
+            if already {
+                return Ok(crate::models::TelegramSubscribeResponse {
+                    link: None,
+                    confirmed: true,
+                    unsubscribe_token: sub.unsubscribe_token,
+                });
+            }
+            if bot.say_why(chat, &self.telegram_welcome(&sub, crate::lang::Lang::parse(lang).unwrap_or_default())).await.is_ok() {
+                self.observability
+                    .record_business_event("newsletter_subscribed_telegram", "ok");
+                Self::log_domain_event("newsletter_subscribed_telegram", "subscriber", sub.id, "ok");
+                return Ok(crate::models::TelegramSubscribeResponse {
+                    link: None,
+                    confirmed: true,
+                    unsubscribe_token: sub.unsubscribe_token,
+                });
+            }
+            // Бот не смог написать (заблокирован): подписка без канала не
+            // подписка. Снимаем и просим нажать «Запустить» заново.
+            let _ = self
+                .repo
+                .telegram_subscriber_unreachable(sub.id, "the bot could not write at sign-up")
+                .await;
+        }
+
+        // Код ссылки: `sub_` и 32 знака — Telegram берёт в `start` до 64.
+        let code = format!("{TG_SUBSCRIBE_PREFIX}{}", Uuid::new_v4().simple());
+        let sub = self
+            .repo
+            .create_pending_telegram_subscriber(&fingerprint(&code), lang, source, user.map(|u| u.id), ip.as_deref())
+            .await?;
+        if self.config.public_url_is_local() {
+            tracing::info!(
+                "[local] Telegram book subscription: the bot cannot reach this host — send /start {code} to the bot from a test webhook"
+            );
+        }
+        Ok(crate::models::TelegramSubscribeResponse {
+            link: Some(format!("https://t.me/{bot_name}?start={code}")),
+            confirmed: false,
+            unsubscribe_token: sub.unsubscribe_token,
+        })
+    }
+
+    /// Записки о новой небылице подписчикам книги в Telegram. Раскладывает их
+    /// тот же проход, что и письма; здесь — отправка.
+    pub async fn send_tale_book_notes(&self) -> Result<usize> {
+        let local = self.config.public_url_is_local();
+        let bot = self.login_bot();
+        if !local && bot.is_none() {
+            return Ok(0);
+        }
+        let site = self.config.public_url.trim_end_matches('/').to_string();
+        let due = self
+            .repo
+            .claim_book_notes(TALE_LETTERS_PER_TICK, TALE_LETTER_MAX_ATTEMPTS, TALE_LETTER_CLAIM_SECS)
+            .await?;
+        let mut sent = 0;
+        for note in due {
+            let Some(chat) = note.chat_id else { continue };
+            let lang = crate::lang::Lang::parse(&note.lang).unwrap_or_default();
+            let title = crate::tales::in_lang(
+                lang,
+                Some(&note.title_en),
+                Some(&note.title_ru),
+                Some(&note.title_uk),
+            )
+            .unwrap_or_default();
+            let dek = crate::tales::in_lang(
+                lang,
+                note.dek_en.as_deref(),
+                note.dek_ru.as_deref(),
+                note.dek_uk.as_deref(),
+            );
+            let link = format!("{site}/tales/{}?src=telegram_book", note.slug);
+            let (text, button) = crate::tales::compose_book_note(lang, &title, dek.as_deref());
+            let Some(bot) = bot.as_ref().filter(|_| !local) else {
+                tracing::info!("[local] book note to Telegram chat {chat} → {link}");
+                self.repo.book_note_sent(note.tale_id, note.subscriber_id).await?;
+                sent += 1;
+                continue;
+            };
+            match bot.post_text(&chat.to_string(), &text, button, &link).await {
+                Ok(_) => {
+                    self.repo.book_note_sent(note.tale_id, note.subscriber_id).await?;
+                    sent += 1;
+                }
+                Err(why) => {
+                    tracing::warn!("Book note to Telegram chat {chat} failed: {why}");
+                    // Заблокировал бота или удалил чат: ждать нечего, и
+                    // подписка снимается, чтобы не стучаться в закрытую дверь.
+                    let gone = ["blocked", "chat not found", "deactivated", "kicked"]
+                        .iter()
+                        .any(|m| why.contains(m));
+                    if gone {
+                        self.repo.telegram_subscriber_unreachable(note.subscriber_id, &why).await?;
+                    }
+                    self.repo.book_note_failed(note.tale_id, note.subscriber_id, &why).await?;
+                }
+            }
+        }
+        Ok(sent)
+    }
+
     /// `/start <слово>` — показать записку с двумя кнопками.
     async fn telegram_started(&self, bot: &crate::telegram::Bot, msg: crate::telegram::Message) {
         let Some(from) = msg.from else { return };
-        let ru = from.speaks_russian();
+        let lang = from.lang();
         let text = msg.text.unwrap_or_default();
+
+        // `/stop` — выйти из книги дома в Telegram, не заходя на сайт.
+        if crate::telegram::is_stop(&text) {
+            self.telegram_stopped(bot, msg.chat.id, lang).await;
+            return;
+        }
 
         let Some(code) = crate::telegram::start_code(&text) else {
             // Открыли бота просто так. Вход начинают на сайте, и сказать об
             // этом — единственное, что здесь уместно.
-            bot.say(msg.chat.id, if ru {
-                "Это бот входа. Начните вход на сайте — он покажет слово, и я спрошу его здесь."
-            } else {
-                "This bot signs you in. Start on the site: it shows a word, and I will ask for it here."
-            }).await;
+            bot.say(
+                msg.chat.id,
+                lang.pick(
+                    "This bot signs you in. Start on the site: it shows a word, and I will ask for it here.",
+                    "Это бот входа. Начните вход на сайте — он покажет слово, и я спрошу его здесь.",
+                    "Це бот входу. Почніть вхід на сайті — він покаже слово, і я спитаю його тут.",
+                ),
+            )
+            .await;
             return;
         };
 
-        let cold = if ru {
-            "Слово остыло. Начните вход на сайте заново."
-        } else {
-            "That word has gone cold. Start again on the site."
-        };
+        // Код подписки на книгу дома, а не вход.
+        if code.starts_with(TG_SUBSCRIBE_PREFIX) {
+            self.telegram_subscribed(bot, msg.chat.id, &from, &code).await;
+            return;
+        }
+
+        let cold = lang.pick(
+            "That word has gone cold. Start again on the site.",
+            "Слово остыло. Начните вход на сайте заново.",
+            "Слово охололо. Почніть вхід на сайті заново.",
+        );
         let Ok(Some(row)) = self.repo.find_telegram_login_code(&code).await else {
             bot.say(msg.chat.id, cold).await;
             return;
@@ -5539,23 +5916,34 @@ impl AppService {
             }
             parts.join(" · ")
         };
-        let note = if ru {
-            format!(
+        let from_line = |label: &str| {
+            if where_from.is_empty() {
+                String::new()
+            } else {
+                format!("\n{label}: {}", esc(&where_from))
+            }
+        };
+        let note = match lang {
+            crate::lang::Lang::Ru => format!(
                 "<b>Вход на сайт</b>\nСлово: <b>{}</b>{}\n\nЕсли на сайте другое слово или вы не начинали вход — нажмите «Не я».",
                 esc(&row.word),
-                if where_from.is_empty() { String::new() } else { format!("\nОткуда: {}", esc(&where_from)) },
-            )
-        } else {
-            format!(
+                from_line("Откуда"),
+            ),
+            crate::lang::Lang::En => format!(
                 "<b>Signing in</b>\nWord: <b>{}</b>{}\n\nIf the site shows a different word, or you did not start this, press “Not me”.",
                 esc(&row.word),
-                if where_from.is_empty() { String::new() } else { format!("\nFrom: {}", esc(&where_from)) },
-            )
+                from_line("From"),
+            ),
+            crate::lang::Lang::Uk => format!(
+                "<b>Вхід на сайт</b>\nСлово: <b>{}</b>{}\n\nЯкщо на сайті інше слово або ви не починали вхід — натисніть «Не я».",
+                esc(&row.word),
+                from_line("Звідки"),
+            ),
         };
-        let (yes, no) = if ru {
-            ("Это я, войти", "Не я")
-        } else {
-            ("It's me, sign in", "Not me")
+        let (yes, no) = match lang {
+            crate::lang::Lang::Ru => ("Это я, войти", "Не я"),
+            crate::lang::Lang::En => ("It's me, sign in", "Not me"),
+            crate::lang::Lang::Uk => ("Це я, увійти", "Не я"),
         };
 
         let message_id = bot.ask(msg.chat.id, &note, yes, no, &code).await;
@@ -5581,7 +5969,7 @@ impl AppService {
 
     /// Нажали кнопку под запиской.
     async fn telegram_answered(&self, bot: &crate::telegram::Bot, cb: crate::telegram::CallbackQuery) {
-        let ru = cb.from.speaks_russian();
+        let lang = cb.from.lang();
         let Some(answer) = cb.data.as_deref().and_then(crate::telegram::Answer::parse) else {
             return;
         };
@@ -5599,15 +5987,16 @@ impl AppService {
 
         if let crate::telegram::Answer::No(_) = answer {
             let _ = self.repo.telegram_login_refused(&code, cb.from.id).await;
-            bot.ack(&cb.id, if ru { "Вход отменён" } else { "Cancelled" }).await;
+            bot.ack(&cb.id, lang.pick("Cancelled", "Вход отменён", "Вхід скасовано")).await;
             settle(
-                if ru { "Вход отменён.".to_string() } else { "Sign-in cancelled.".to_string() },
+                lang.pick("Sign-in cancelled.", "Вход отменён.", "Вхід скасовано.")
+                    .to_string(),
             )
             .await;
             return;
         }
 
-        let cold = if ru { "Слово остыло" } else { "That word has gone cold" };
+        let cold = lang.pick("That word has gone cold", "Слово остыло", "Слово охололо");
         let Ok(Some(row)) = self.repo.find_telegram_login_code(&code).await else {
             bot.ack(&cb.id, cold).await;
             return;
@@ -5629,7 +6018,11 @@ impl AppService {
                     city: row.city.clone(),
                 };
                 let Ok(token) = self.open_session(user_id, &ctx).await else {
-                    bot.ack(&cb.id, if ru { "Не получилось" } else { "Something went wrong" }).await;
+                    bot.ack(
+                        &cb.id,
+                        lang.pick("Something went wrong", "Не получилось", "Не вдалося"),
+                    )
+                    .await;
                     return;
                 };
                 let stored = self
@@ -5646,42 +6039,49 @@ impl AppService {
                 }
                 Self::log_domain_event("telegram_login", "user", user_id, "ok");
 
-                bot.ack(&cb.id, if ru { "Готово" } else { "Done" }).await;
+                bot.ack(&cb.id, lang.pick("Done", "Готово", "Готово")).await;
                 // Возвращать надо ВО ВКЛАДКУ, а не «на сайт»: сессия лежит
                 // для того браузера, который просил вход, и открытая по ссылке
                 // новая вкладка показала бы главную не вошедшему — то есть
                 // сказала бы, что вход не удался. Адрес назван вторым, на
                 // случай закрытой вкладки.
                 let back = &self.config.public_url;
-                settle(if ru {
-                    format!(
-                        "Готово. Вернитесь во вкладку браузера, где начинали вход, — она уже впустила вас.\nЕсли вкладка закрыта: {}",
-                        crate::telegram::esc(back)
-                    )
-                } else {
-                    format!(
-                        "Done. Go back to the browser tab where you started — it has already let you in.\nIf that tab is closed: {}",
-                        crate::telegram::esc(back)
-                    )
-                })
+                settle(format!(
+                    "{}\n{}: {}",
+                    lang.pick(
+                        "Done. Go back to the browser tab where you started — it has already let you in.",
+                        "Готово. Вернитесь во вкладку браузера, где начинали вход, — она уже впустила вас.",
+                        "Готово. Поверніться до вкладки браузера, де починали вхід, — вона вже впустила вас.",
+                    ),
+                    lang.pick("If that tab is closed", "Если вкладка закрыта", "Якщо вкладку закрито"),
+                    crate::telegram::esc(back)
+                ))
                 .await;
+            }
+            Err(AppError::BadRequest(m)) if m == "age" => {
+                // Слово погашено с причиной: странице скажут про регистрацию, а
+                // не «вход отменён» — человек ничего не отменял.
+                let _ = self.repo.telegram_login_aged(&code, cb.from.id).await;
+                let said = lang.pick(
+                    "There is no name for this Telegram yet. A new name is made on the sign-up page — tick your age there, then sign in again.",
+                    "Для этого Telegram у нас ещё нет имени. Новое имя заводится на странице регистрации: отметьте там возраст и войдите снова.",
+                    "Для цього Telegram у нас іще немає імені. Нове ім’я заводиться на сторінці реєстрації: позначте там вік і увійдіть знову.",
+                );
+                bot.ack(
+                    &cb.id,
+                    lang.pick("Age needs confirming", "Нужно подтвердить возраст", "Потрібно підтвердити вік"),
+                )
+                .await;
+                settle(said.to_string()).await;
             }
             Err(e) => {
                 let said = match &e {
-                    AppError::Conflict(_) => {
-                        if ru {
-                            "Этот Telegram уже привязан к другому имени"
-                        } else {
-                            "This Telegram is already linked to another account"
-                        }
-                    }
-                    _ => {
-                        if ru {
-                            "Войти не удалось"
-                        } else {
-                            "Could not sign in"
-                        }
-                    }
+                    AppError::Conflict(_) => lang.pick(
+                        "This Telegram is already linked to another account",
+                        "Этот Telegram уже привязан к другому имени",
+                        "Цей Telegram уже прив’язано до іншого імені",
+                    ),
+                    _ => lang.pick("Could not sign in", "Войти не удалось", "Увійти не вдалося"),
                 };
                 bot.ack(&cb.id, said).await;
                 settle(said.to_string()).await;
@@ -5721,8 +6121,14 @@ impl AppService {
             return Ok(user.id);
         }
 
-        // Первый приход. Ни почты, ни значков: почту спросит первое дело,
-        // которому она нужна.
+        // Первый приход — заводится НОВОЕ имя, а значит, нужно самоподтверждение
+        // возраста (политика: на каждой форме, где собираются контакты). Так же,
+        // как у Google и Apple (`oauth_admit`): вернувшийся и привязка из
+        // профиля выше уже вернулись.
+        if !row.age_confirmed {
+            return Err(AppError::BadRequest("age".into()));
+        }
+        // Ни почты, ни значков: почту спросит первое дело, которому она нужна.
         let ctx = crate::models::ClientContext {
             ip: row.ip.clone(),
             user_agent: row.browser.clone(),
@@ -5742,6 +6148,41 @@ impl AppService {
             .get_session_user(&fingerprint(token))
             .await?
             .ok_or(AppError::Unauthorized)
+    }
+
+    /// Игрок боя: вошедший или гость. Только для ручек боя — все прочие
+    /// спрашивают `get_user_from_session`, а он гостей не пускает.
+    pub async fn get_player_from_session(&self, token: &str) -> Result<User> {
+        self.repo
+            .get_player_session_user(&fingerprint(token))
+            .await?
+            .ok_or(AppError::Unauthorized)
+    }
+
+    /// Гость боя: имя без почты и дверей и сессия на месяц. Заводится нажатием
+    /// «Начать бой» в обучении, чтобы первый бой доигрывался без формы входа.
+    ///
+    /// Имён можно было бы завести сколько угодно, поэтому три замка: предел на
+    /// адрес, общий предел в час и то, что имя ничем, кроме боя с заданной
+    /// расстановкой, не владеет (ни пыли, ни писем, ни других ручек).
+    pub async fn begin_guest_player(
+        &self,
+        ip: Option<String>,
+        user_agent: Option<String>,
+    ) -> Result<String> {
+        self.check_rate_limit("guest", ip.as_deref().unwrap_or("unknown"), 20, 3600)
+            .await?;
+        self.check_rate_limit("guest_all", "house", 2000, 3600).await?;
+        let ctx = self.client_context(ip, user_agent);
+        let user = self.repo.create_guest_user(&ctx).await?;
+        let token = self.open_session(user.id, &ctx).await?;
+        Self::log_domain_event("guest_player_started", "user", user.id, "ok");
+        Ok(token)
+    }
+
+    /// Суточная уборка: гости старше месяца.
+    pub async fn prune_stale_guests(&self) -> Result<u64> {
+        self.repo.prune_stale_guests(35).await
     }
 
     /// Свои двери и как закрыть все, кроме этой.
@@ -5996,6 +6437,10 @@ impl AppService {
             display_name: user.display_name,
             telegram_username: user.telegram_username.clone(),
             telegram_linked: user.telegram_id.is_some(),
+            google_linked: user.google_sub.is_some(),
+            google_email: user.google_email.clone(),
+            apple_linked: user.apple_sub.is_some(),
+            apple_email: user.apple_email.clone(),
             admin_notes: user.admin_notes,
             created_at: user.created_at.to_rfc3339(),
             signup_ip: user.signup_ip,
@@ -6072,7 +6517,7 @@ impl AppService {
         req: &ApplyPasswordResetRequest,
         ip: Option<String>,
         user_agent: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<ApplyPasswordResetResponse> {
         let user = self
             .repo
             .find_user_by_reset_hash(&fingerprint(&req.token))
@@ -6096,7 +6541,18 @@ impl AppService {
             .apply_password_reset(user.id, &new_hash, &pool_json, &ctx)
             .await?;
         Self::log_domain_event("password_reset_applied", "user", user.id, "ok");
-        Ok(())
+
+        // Старые сессии погашены выше; взамен — одна новая, для этого браузера.
+        // Заблокированному её не выдают: знаки ему назначены, но дверь закрыта.
+        if user.is_blocked {
+            return Ok(ApplyPasswordResetResponse { session_token: None, user: None });
+        }
+        let session = self.open_session(user.id, &ctx).await?;
+        let fresh = self.repo.find_user_by_id(user.id).await?;
+        Ok(ApplyPasswordResetResponse {
+            session_token: Some(session),
+            user: fresh.as_ref().map(UserDto::from),
+        })
     }
 
     /// Self-service "forgot password": issue a reset token and email the link to
@@ -6240,10 +6696,16 @@ impl AppService {
     ///
     /// Отправляется вдогонку (`spawn`): медленный SMTP не должен держать стол
     /// хозяина, а неудача письма не отменяет утверждения.
-    async fn send_studio_approved_email(&self, to: &str, work: &str, en: bool) -> Result<()> {
+    async fn send_studio_approved_email(
+        &self,
+        to: &str,
+        work: &str,
+        lang: crate::lang::Lang,
+    ) -> Result<()> {
+        use crate::lang::Lang;
         let site = self.config.public_url.trim_end_matches('/');
-        let (subject, body_text) = if en {
-            (
+        let (subject, body_text) = match lang {
+            Lang::En => (
                 "Your frame was taken into the game",
                 format!(
                     "“{work}” is approved.\n\nIt gets a run of licences with your name on them — \
@@ -6252,9 +6714,8 @@ impl AppService {
                      Nothing else from the studio reaches your inbox — the rest waits \
                      for you in the house."
                 ),
-            )
-        } else {
-            (
+            ),
+            Lang::Ru => (
                 "Вашу раму взяли в игру",
                 format!(
                     "«{work}» утверждена.\n\nОна получает тираж лицензий и ваше имя на них — \
@@ -6262,7 +6723,16 @@ impl AppService {
                      Это письмо приходит один раз — когда вашу работу берут в игру. \
                      Больше студия почтой не пишет: остальное ждёт вас в доме."
                 ),
-            )
+            ),
+            Lang::Uk => (
+                "Вашу раму взяли в гру",
+                format!(
+                    "«{work}» затверджена.\n\nВона отримує наклад ліцензій і ваше ім’я на них — \
+                     назавжди. Роботи дому: {site}/studio/gallery\n\n\
+                     Цей лист приходить один раз — коли вашу роботу беруть у гру. \
+                     Більше студія поштою не пише: решта чекає на вас у домі."
+                ),
+            ),
         };
 
         self.send_mail(to, subject, body_text).await
@@ -6443,20 +6913,20 @@ impl AppService {
 
     // === COMMENTS ===
 
-    async fn check_comment_rate_limit(&self, ip: &str) -> Result<()> {
-        const MAX_PER_HOUR: usize = 5;
-        let now = Instant::now();
-        let cutoff_secs = Duration::from_secs(3600);
-        let mut map = self.comment_rate_limiter.lock().await;
-        let entry = map.entry(ip.to_string()).or_default();
-        entry.retain(|t: &Instant| now.duration_since(*t) < cutoff_secs);
-        if entry.len() >= MAX_PER_HOUR {
-            return Err(AppError::BadRequest(
+    /// Гость ограничен по адресу (5 в час), вошедший — по имени (30 в час):
+    /// имя заводится бесплатно, и без предела вошедший заливал бы очередь модерации.
+    async fn check_comment_rate_limit(&self, user: Option<&User>, ip: &str) -> Result<()> {
+        let (key, max_per_hour) = match user {
+            Some(u) => (format!("comment|user:{}", u.id), 30),
+            None => (format!("comment|{ip}"), 5),
+        };
+        if self.repo.rate_limit_take(&key, max_per_hour, 3600).await? {
+            Ok(())
+        } else {
+            Err(AppError::BadRequest(
                 "Too many comments from this address. Please wait before submitting again.".into(),
-            ));
+            ))
         }
-        entry.push(now);
-        Ok(())
     }
 
     pub async fn get_smtp_settings(&self) -> Result<SmtpSettings> {
@@ -6719,7 +7189,7 @@ impl AppService {
                 "Please confirm you are 16 or older".to_string(),
             ));
         }
-        let uuid = self.resolve_figurine_uuid(&figurine_id).await?;
+        let uuid = self.resolve_public_figurine_uuid(&figurine_id).await?;
         validate_text("Name", &req.requester_name, 100)?;
         if !req.requester_email.contains('@') || req.requester_email.len() > 200 {
             return Err(AppError::BadRequest("Valid email is required".to_string()));
@@ -6853,9 +7323,9 @@ impl AppService {
 
     // === NEWSLETTER ("visitor book") ===
 
-    /// Sign the visitor book (single opt-in — active immediately). Sends a
-    /// welcome letter only for a genuinely new signature, so a re-sign doesn't
-    /// re-mail an existing subscriber.
+    /// Ask to sign the visitor book. Double opt-in: the address becomes a
+    /// subscriber only when its owner follows the link from the confirmation
+    /// letter (`confirm_subscription`); the welcome letter goes after that.
     pub async fn subscribe(
         &self,
         req: crate::models::CreateSubscriptionRequest,
@@ -6888,21 +7358,109 @@ impl AppService {
             lang: req.lang.clone(),
             age_confirmed: req.age_confirmed,
         };
-        let (sub, already) = self.repo.subscribe(&normalized, ip.as_deref()).await?;
-        self.observability
-            .record_business_event("newsletter_subscribed", "ok");
-        Self::log_domain_event("newsletter_subscribed", "subscriber", sub.id, "ok");
-        if !already {
+        // Ключ уходит в письмо, в базе лежит только его отпечаток.
+        let key = secret_key();
+        let outcome = self
+            .repo
+            .request_subscription(&normalized, ip.as_deref(), &fingerprint(&key))
+            .await?;
+        // Ответ один и тот же для нового адреса, для действующего подписчика
+        // и для адреса, которому письмо уже уходило: иначе форма отвечала бы на
+        // вопрос «состоит ли такой-то в книге».
+        let (token, to_send) = match outcome {
+            // Настоящий ключ отказа получает только тот, кто завёл строку.
+            crate::db::SubscribeOutcome::Created(sub) => (sub.unsubscribe_token.clone(), Some(sub)),
+            // Строка старая: письмо уходит владельцу ящика, а запросивший
+            // может быть кем угодно и ключа не получает.
+            crate::db::SubscribeOutcome::Sent(sub) => (Self::generate_decoy_token(), Some(sub)),
+            crate::db::SubscribeOutcome::Throttled(_)
+            | crate::db::SubscribeOutcome::AlreadyActive(_) => (Self::generate_decoy_token(), None),
+        };
+        if let Some(sub) = to_send {
+            self.observability
+                .record_business_event("newsletter_subscribe_requested", "ok");
+            Self::log_domain_event("newsletter_subscribe_requested", "subscriber", sub.id, "ok");
             let svc = self.clone();
-            let sub = sub.clone();
             tokio::spawn(async move {
-                let _ = svc.send_welcome_email(&sub).await;
+                if let Err(e) = svc.send_subscription_confirmation(&sub, &key).await {
+                    tracing::warn!("subscription confirmation letter not sent: {e}");
+                }
             });
         }
         Ok(crate::models::SubscriptionCreatedResponse {
-            unsubscribe_token: sub.unsubscribe_token,
-            already_subscribed: already,
+            unsubscribe_token: token,
+            already_subscribed: false,
         })
+    }
+
+    /// Ключ-пустышка того же вида, что и настоящий отказ, который ни к чему не
+    /// ведёт.
+    fn generate_decoy_token() -> String {
+        let raw = Uuid::new_v4().simple().to_string().to_uppercase();
+        format!("{}-{}-{}-{}", &raw[..4], &raw[4..8], &raw[8..12], &raw[12..16])
+    }
+
+    /// Ссылка из письма. Подтверждает, что ящиком владеет тот, кто его вписал;
+    /// первое письмо дома приходит только после этого.
+    pub async fn confirm_subscription(&self, key: &str) -> Result<bool> {
+        match self.repo.confirm_subscription(&fingerprint(key.trim())).await? {
+            crate::db::ConfirmOutcome::Confirmed(sub) => {
+                self.observability
+                    .record_business_event("newsletter_subscribed", "ok");
+                Self::log_domain_event("newsletter_subscribed", "subscriber", sub.id, "ok");
+                let svc = self.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = svc.send_welcome_email(&sub).await {
+                        tracing::warn!("welcome letter not sent: {e}");
+                    }
+                });
+                Ok(true)
+            }
+            crate::db::ConfirmOutcome::AlreadyActive(_) => Ok(true),
+            crate::db::ConfirmOutcome::Unknown => Ok(false),
+        }
+    }
+
+    /// Письмо со ссылкой подтверждения. Ничего, кроме просьбы: ни новостей, ни
+    /// имён — кто вписал адрес, дом не знает и не говорит.
+    async fn send_subscription_confirmation(
+        &self,
+        sub: &crate::models::Subscriber,
+        key: &str,
+    ) -> Result<()> {
+        let base = self.config.public_url.trim_end_matches('/');
+        let link = format!("{base}/subscribe/confirm/{key}");
+        use crate::lang::Lang;
+        let (subject, body) = match Lang::parse(&sub.lang).unwrap_or_default() {
+            Lang::Ru => (
+                "Подтвердите адрес для книги дома",
+                format!(
+                    "Этот адрес вписали в книгу дома. Если это были вы, откройте ссылку — \
+                     и письма из мастерской начнут приходить сюда:\n{link}\n\n\
+                     Если вы ничего не вписывали, просто не отвечайте на это письмо: \
+                     без вашего перехода по ссылке не придёт ничего. Ссылка живёт неделю."
+                ),
+            ),
+            Lang::En => (
+                "Confirm your address for the house book",
+                format!(
+                    "This address was written into the house book. If that was you, open \
+                     the link and letters from the workshop will begin to arrive here:\n{link}\n\n\
+                     If you wrote nothing, simply ignore this letter: without your follow of \
+                     the link nothing will be sent. The link lives a week."
+                ),
+            ),
+            Lang::Uk => (
+                "Підтвердьте адресу для книги дому",
+                format!(
+                    "Цю адресу вписали до книги дому. Якщо це були ви, відкрийте посилання — \
+                     і листи з майстерні почнуть надходити сюди:\n{link}\n\n\
+                     Якщо ви нічого не вписували, просто не відповідайте на цей лист: \
+                     без вашого переходу за посиланням не прийде нічого. Посилання діє тиждень."
+                ),
+            ),
+        };
+        self.say_or_send(&sub.email, subject, body, &link).await
     }
 
     /// View a subscription by its unsubscribe token (the unsubscribe page).
@@ -6910,11 +7468,20 @@ impl AppService {
         &self,
         token: &str,
     ) -> Result<Option<crate::models::SubscriberInfo>> {
+        if let Some(s) = self.repo.get_subscriber_by_token(token).await? {
+            return Ok(Some(crate::models::SubscriberInfo { email: s.email }));
+        }
+        // Подписчик книги в Telegram: вместо адреса — его имя в Telegram.
         Ok(self
             .repo
-            .get_subscriber_by_token(token)
+            .get_telegram_subscriber_by_token(token)
             .await?
-            .map(|s| crate::models::SubscriberInfo { email: s.email }))
+            .map(|s| crate::models::SubscriberInfo {
+                email: match s.username {
+                    Some(name) => format!("Telegram @{name}"),
+                    None => "Telegram".to_string(),
+                },
+            }))
     }
 
     /// Leave the book by token. Idempotent.
@@ -6922,7 +7489,11 @@ impl AppService {
         match self.repo.unsubscribe_by_token(token).await? {
             Some(s) => Self::log_domain_event("newsletter_unsubscribed", "subscriber", s.id, "ok"),
             None => {
-                Self::log_domain_event("newsletter_unsubscribed", "subscriber", "unknown", "noop")
+                if self.repo.unsubscribe_telegram_by_token(token).await? {
+                    Self::log_domain_event("newsletter_unsubscribed", "subscriber", "telegram", "ok");
+                } else {
+                    Self::log_domain_event("newsletter_unsubscribed", "subscriber", "unknown", "noop")
+                }
             }
         }
         Ok(())
@@ -7067,84 +7638,61 @@ impl AppService {
     /// unsubscribe door. Fire-and-forget: no SMTP configured → logged and skipped
     /// (the subscription is already active either way).
     async fn send_welcome_email(&self, sub: &crate::models::Subscriber) -> Result<()> {
-        use lettre::message::header::ContentType;
-        use lettre::{AsyncTransport, Message};
-
-        let db = self.get_smtp_settings().await.unwrap_or_default();
-        let host = db.host.as_deref().or(self.config.smtp_host.as_deref());
-        let user = db.user.as_deref().or(self.config.smtp_user.as_deref());
-        let pass = db.pass.as_deref().or(self.config.smtp_pass.as_deref());
-        let from = db.from.as_deref().or(self.config.smtp_from.as_deref());
-        let port = db.port.or(self.config.smtp_port).unwrap_or(587);
-
-        let (Some(host), Some(user), Some(pass), Some(from)) = (host, user, pass, from) else {
-            tracing::warn!(
-                "SMTP not configured — welcome letter not sent to {}",
-                sub.email
-            );
-            return Ok(());
-        };
-
         let base = self.config.public_url.trim_end_matches('/');
         let unsub = format!("{}/unsubscribe/{}", base, sub.unsubscribe_token);
-        let ru = sub.lang == "ru";
+        use crate::lang::Lang;
+        let lang = Lang::parse(&sub.lang).unwrap_or_default();
         // Вписавшийся после последней строки байки просил одного — следующую
         // байку, и первое письмо говорит об этом, а не о показах.
         let after_tale = sub.source == "tale";
-        let subject = match (ru, after_tale) {
-            (true, true) => "Следующая небылица придёт письмом",
-            (false, true) => "The next tall tale will come as a letter",
-            (true, false) => "Ваше имя вписано в книгу дома",
-            (false, false) => "Your name is in the house book",
+        let subject = match (lang, after_tale) {
+            (Lang::Ru, true) => "Следующая небылица придёт письмом",
+            (Lang::En, true) => "The next tall tale will come as a letter",
+            (Lang::Uk, true) => "Наступна небилиця прийде листом",
+            (Lang::Ru, false) => "Ваше имя вписано в книгу дома",
+            (Lang::En, false) => "Your name is in the house book",
+            (Lang::Uk, false) => "Ваше ім’я вписане до книги дому",
         };
-        let body_text = match (ru, after_tale) {
-            (true, true) => format!(
+        let body_text = match (lang, after_tale) {
+            (Lang::Ru, true) => format!(
                 "Дом запомнил вас.\n\n\
                  Когда на полке появится новая небылица, она придёт сюда — письмом, без шума \
                  и спешки. Изредка вместе с ней — вести из мастерской.\n\n\
                  Если захотите, чтобы дом забыл ваше имя, эта дверь всегда открыта:\n{unsub}",
             ),
-            (false, true) => format!(
+            (Lang::En, true) => format!(
                 "The house has remembered you.\n\n\
                  When a new tall tale is set on the shelf, it will come here as a letter — no \
                  noise, no haste. Now and then, word from the workshop comes with it.\n\n\
                  Should you ever wish the house to forget your name, this door stays open:\n{unsub}",
             ),
-            (true, false) => format!(
+            (Lang::Uk, true) => format!(
+                "Дім запам’ятав вас.\n\n\
+                 Коли на полиці з’явиться нова небилиця, вона прийде сюди — листом, без галасу \
+                 й поспіху. Зрідка разом із нею — вісті з майстерні.\n\n\
+                 Якщо забажаєте, щоб дім забув ваше ім’я, ці двері завжди відчинені:\n{unsub}",
+            ),
+            (Lang::Ru, false) => format!(
                 "Дом запомнил вас.\n\n\
                  Теперь вести из мастерской — новые работы, новые небылицы, открытие показов — \
                  будут находить вас первыми. Без шума и спешки.\n\n\
                  Если захотите, чтобы дом забыл ваше имя, эта дверь всегда открыта:\n{unsub}",
             ),
-            (false, false) => format!(
+            (Lang::En, false) => format!(
                 "The house has remembered you.\n\n\
                  Letters from the workshop — new works, new tall tales, the opening of \
                  showings — will now reach you first. No noise, no haste.\n\n\
                  Should you ever wish the house to forget your name, this door stays open:\n{unsub}",
             ),
+            (Lang::Uk, false) => format!(
+                "Дім запам’ятав вас.\n\n\
+                 Тепер вісті з майстерні — нові роботи, нові небилиці, відчинення показів — \
+                 знаходитимуть вас першими. Без галасу й поспіху.\n\n\
+                 Якщо забажаєте, щоб дім забув ваше ім’я, ці двері завжди відчинені:\n{unsub}",
+            ),
         };
 
-        let email = Message::builder()
-            .from(
-                from.parse()
-                    .map_err(|_| AppError::Internal("Invalid SMTP from address".into()))?,
-            )
-            .to(sub
-                .email
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
-            .subject(subject)
-            .header(ContentType::TEXT_PLAIN)
-            .body(body_text)
-            .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
-
-        let mailer = smtp_transport(host, port, user, pass)?;
-
-        mailer
-            .send(email)
-            .await
-            .map_err(|e| AppError::Internal(format!("SMTP send error: {e}")))?;
-        Ok(())
+        self.send_mail(&sub.email, subject, body_text).await
     }
 
     pub async fn remove_waitlist_entry(&self, id: uuid::Uuid) -> Result<()> {
@@ -7386,24 +7934,32 @@ impl AppService {
         let base = self.config.public_url.trim_end_matches('/');
         let work = format!("{base}/figurines/{figurine_handle}");
         let leave = format!("{base}/gazette/watch/{}", watch.cancel_token);
-        let ru = watch.lang == "ru";
-        let subject = if ru {
-            format!("«{figurine_name}» уже на сайте")
-        } else {
-            format!("{figurine_name} is ready")
-        };
-        let body_text = if ru {
-            format!(
-                "Работа готова и лежит на сайте.\n\n\
-                 «{figurine_name}»:\n{work}\n\n\
-                 Если больше не хотите писем об этой работе:\n{leave}"
-            )
-        } else {
-            format!(
-                "This work is ready and on the site.\n\n\
-                 {figurine_name}:\n{work}\n\n\
-                 If you no longer want letters about this work:\n{leave}"
-            )
+        use crate::lang::Lang;
+        let (subject, body_text) = match Lang::parse(&watch.lang).unwrap_or_default() {
+            Lang::Ru => (
+                format!("«{figurine_name}» уже на сайте"),
+                format!(
+                    "Работа готова и лежит на сайте.\n\n\
+                     «{figurine_name}»:\n{work}\n\n\
+                     Если больше не хотите писем об этой работе:\n{leave}"
+                ),
+            ),
+            Lang::En => (
+                format!("{figurine_name} is ready"),
+                format!(
+                    "This work is ready and on the site.\n\n\
+                     {figurine_name}:\n{work}\n\n\
+                     If you no longer want letters about this work:\n{leave}"
+                ),
+            ),
+            Lang::Uk => (
+                format!("«{figurine_name}» уже на сайті"),
+                format!(
+                    "Робота готова й лежить на сайті.\n\n\
+                     «{figurine_name}»:\n{work}\n\n\
+                     Якщо більше не хочете листів про цю роботу:\n{leave}"
+                ),
+            ),
         };
 
         let email = Message::builder()
@@ -7526,9 +8082,7 @@ impl AppService {
         req: &SubmitCommentRequest,
         ip: &str,
     ) -> Result<()> {
-        if user.is_none() {
-            self.check_comment_rate_limit(ip).await?;
-        }
+        self.check_comment_rate_limit(user, ip).await?;
 
         let body = req.body.trim();
         if body.is_empty() {
@@ -7748,9 +8302,7 @@ impl AppService {
         ip: &str,
     ) -> Result<()> {
         self.tale_or_404(tale_id).await?;
-        if user.is_none() {
-            self.check_comment_rate_limit(ip).await?;
-        }
+        self.check_comment_rate_limit(user, ip).await?;
 
         let body = req.body.trim();
         if body.is_empty() {
@@ -7853,6 +8405,7 @@ impl AppService {
                     tale_id: c.tale_id.to_string(),
                     tale_title_en: c.tale_title_en,
                     tale_title_ru: c.tale_title_ru,
+                    tale_title_uk: c.tale_title_uk,
                     tale_slug: c.tale_slug,
                     author_name: c.author_name,
                     author_email: c.author_email,
@@ -7981,6 +8534,27 @@ impl AppService {
         Ok(Some(email))
     }
 
+    /// Письмо о байке уходит только на адрес, чей хозяин доказал ящик: либо это
+    /// подтверждённая почта вошедшего, либо подтверждённый подписчик книги дома.
+    /// Иначе форма была бы способом отправить письмо от имени дома любому
+    /// постороннему адресу.
+    async fn require_verified_letter_address(
+        &self,
+        email: &str,
+        user: Option<&User>,
+    ) -> Result<()> {
+        if let Some(u) = user
+            && u.email_confirmed()
+            && u.email.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(email))
+        {
+            return Ok(());
+        }
+        if self.repo.is_confirmed_subscriber(email).await? {
+            return Ok(());
+        }
+        Err(AppError::BadRequest("letter_address_unconfirmed".into()))
+    }
+
     /// «Хочу продолжение». Просьба без адреса тоже просьба: стол рассказов
     /// видит, чего ждут, даже если письмо никому не нужно.
     pub async fn set_tale_sequel_wish(
@@ -7996,6 +8570,9 @@ impl AppService {
         } else {
             None
         };
+        if let Some(addr) = email.as_deref() {
+            self.require_verified_letter_address(addr, user).await?;
+        }
         // Записка в Telegram — только вошедшему, у чьего имени Telegram
         // привязан: номер чата знает только имя, а гостю писать некуда.
         if req.want
@@ -8100,8 +8677,9 @@ impl AppService {
         &self,
         poll_id: Uuid,
         req: &crate::models::TalePollVoteRequest,
-        user_id: Option<Uuid>,
+        user: &User,
     ) -> Result<crate::models::TalePollVoteResponse> {
+        let user_id = Some(user.id);
         let token = Self::tale_visitor_token(&req.visitor_token)?;
         if !self
             .repo
@@ -8111,6 +8689,9 @@ impl AppService {
             return Err(AppError::NotFound("No such choice in this poll".into()));
         }
         let email = Self::reader_letter_address(req.email.as_deref(), req.age_confirmed)?;
+        if let Some(addr) = email.as_deref() {
+            self.require_verified_letter_address(addr, Some(user)).await?;
+        }
         let lang = crate::tales::letter_lang(req.lang.as_deref());
         let voted = self
             .repo
@@ -8154,7 +8735,7 @@ impl AppService {
                 });
         }
         let mut out = Vec::with_capacity(polls.len());
-        for (id, state, opened_at, closed_at, winner, slug, title_en, title_ru) in polls {
+        for (id, state, opened_at, closed_at, winner, slug, title_en, title_ru, title_uk) in polls {
             let candidates = by_poll.remove(&id).unwrap_or_default();
             let letters = candidates.iter().map(|c| c.letters).sum();
             out.push(crate::models::AdminTalePollDto {
@@ -8169,6 +8750,7 @@ impl AppService {
                             slug,
                             title_en,
                             title_ru,
+                            title_uk: title_uk.unwrap_or_default(),
                         })
                     }
                     _ => None,
@@ -8330,15 +8912,25 @@ impl AppService {
             let Some(reason) = crate::tales::LetterReason::parse(&letter.reason) else {
                 continue;
             };
-            let ru = letter.lang == "ru";
-            let pick = |ru_side: Option<&str>, en_side: Option<&str>| {
-                crate::tales::in_lang(ru, ru_side, en_side)
+            let lang = crate::lang::Lang::parse(&letter.lang).unwrap_or_default();
+            let pick = |en_side: Option<&str>, ru_side: Option<&str>, uk_side: Option<&str>| {
+                crate::tales::in_lang(lang, en_side, ru_side, uk_side)
             };
-            let title = pick(Some(&letter.title_ru), Some(&letter.title_en)).unwrap_or_default();
-            let dek = pick(letter.dek_ru.as_deref(), letter.dek_en.as_deref());
+            let title = pick(
+                Some(&letter.title_en),
+                Some(&letter.title_ru),
+                Some(&letter.title_uk),
+            )
+            .unwrap_or_default();
+            let dek = pick(
+                letter.dek_en.as_deref(),
+                letter.dek_ru.as_deref(),
+                letter.dek_uk.as_deref(),
+            );
             let original = pick(
-                letter.original_title_ru.as_deref(),
                 letter.original_title_en.as_deref(),
+                letter.original_title_ru.as_deref(),
+                letter.original_title_uk.as_deref(),
             );
             // `src` остаётся в замере посещений (§ 18): по нему видно, сколько
             // людей привело письмо.
@@ -8349,7 +8941,7 @@ impl AppService {
                 .map(|t| format!("{site}/unsubscribe/{t}"));
             let (subject, body) = crate::tales::compose_letter(&crate::tales::TaleLetter {
                 reason,
-                ru,
+                lang,
                 title: &title,
                 dek: dek.as_deref(),
                 link: &link,
@@ -8418,18 +9010,24 @@ impl AppService {
                     .await?;
                 continue;
             };
-            let ru = note.lang == "ru";
-            let title = crate::tales::in_lang(ru, Some(&note.title_ru), Some(&note.title_en))
-                .unwrap_or_default();
+            let lang = crate::lang::Lang::parse(&note.lang).unwrap_or_default();
+            let title = crate::tales::in_lang(
+                lang,
+                Some(&note.title_en),
+                Some(&note.title_ru),
+                Some(&note.title_uk),
+            )
+            .unwrap_or_default();
             let original = crate::tales::in_lang(
-                ru,
-                note.original_title_ru.as_deref(),
+                lang,
                 note.original_title_en.as_deref(),
+                note.original_title_ru.as_deref(),
+                note.original_title_uk.as_deref(),
             );
             // Свой `src`, отдельный от канала: по нему видно, сколько людей
             // привели записки (§ 18).
             let link = format!("{site}/tales/{}?src=telegram_note", note.slug);
-            let (text, button) = crate::tales::compose_note(ru, &title, original.as_deref());
+            let (text, button) = crate::tales::compose_note(lang, &title, original.as_deref());
 
             // Локально записка не уходит: база своя, а чаты настоящие.
             let Some(bot) = bot.as_ref().filter(|_| !local) else {
@@ -8871,10 +9469,13 @@ impl AppService {
             status: row.status,
             title_en: row.title_en,
             title_ru: row.title_ru,
+            title_uk: row.title_uk,
             dek_en: row.dek_en,
             dek_ru: row.dek_ru,
+            dek_uk: row.dek_uk,
             body_en: row.body_en,
             body_ru: row.body_ru,
+            body_uk: row.body_uk,
             figurine_id: row.figurine_id.map(|u| u.to_string()),
             figurine_name: row.figurine_name,
             figurine_slug: row.figurine_slug,
@@ -9132,6 +9733,9 @@ impl AppService {
                 p.scheduled_at,
                 p.expected_from,
                 p.expected_to,
+                &p.title_uk,
+                p.dek_uk.as_deref(),
+                p.body_uk.as_deref(),
             )
             .await?;
         Self::log_domain_event("gazette_leaf_created", "gazette_leaf", rec.id, "ok");
@@ -9182,6 +9786,9 @@ impl AppService {
                 p.scheduled_at,
                 p.expected_from,
                 p.expected_to,
+                &p.title_uk,
+                p.dek_uk.as_deref(),
+                p.body_uk.as_deref(),
             )
             .await?;
         Self::log_domain_event("gazette_leaf_updated", "gazette_leaf", rec.id, "ok");
@@ -9201,6 +9808,7 @@ impl AppService {
         req: WatchGazetteLeafRequest,
         user_id: Option<Uuid>,
         user_email: Option<&str>,
+        user_email_confirmed: bool,
         user_name: Option<&str>,
     ) -> Result<GazetteWatchCreatedResponse> {
         if !req.age_confirmed {
@@ -9251,22 +9859,106 @@ impl AppService {
         let lang = req
             .lang
             .as_deref()
-            .map(str::trim)
-            .filter(|s| *s == "ru" || *s == "en")
-            .unwrap_or("en");
-        let (watch, already) = self
+            .and_then(crate::lang::Lang::parse)
+            .unwrap_or_default()
+            .code();
+        // Письмо «работа готова» уходит позже и само, поэтому слежение
+        // начинает действовать, когда адрес доказан: это подтверждённая почта
+        // просящего, подтверждённый подписчик книги — или переход по ссылке из
+        // письма, которое уходит на адрес сейчас.
+        let owner = user_id.is_some()
+            && user_email_confirmed
+            && user_email.is_some_and(|e| e.trim().eq_ignore_ascii_case(&email));
+        let address_proved = owner || self.repo.is_confirmed_subscriber(&email).await?;
+        let key = secret_key();
+        let outcome = self
             .repo
-            .upsert_gazette_watch(leaf.id, &email, name.as_deref(), lang, user_id)
+            .request_gazette_watch(
+                leaf.id,
+                &email,
+                name.as_deref(),
+                lang,
+                user_id,
+                owner,
+                address_proved,
+                &fingerprint(&key),
+            )
             .await?;
-        if let Some(fid) = leaf.figurine_id {
+        let watch = outcome.watch;
+        if outcome.send_confirmation {
+            let svc = self.clone();
+            let w = watch.clone();
+            let work = leaf.figurine_name.clone().unwrap_or_default();
+            tokio::spawn(async move {
+                if let Err(e) = svc.send_watch_confirmation(&w, &work, &key).await {
+                    tracing::warn!("watch confirmation letter not sent: {e}");
+                }
+            });
+        }
+        if outcome.own_key
+            && let Some(fid) = leaf.figurine_id
+        {
             let fname = leaf.figurine_name.clone().unwrap_or_default();
             let _ = self.mirror_watch_as_notify(&watch, fid, &fname).await;
         }
         Self::log_domain_event("gazette_watch_left", "gazette_watch", watch.id, "ok");
+        // Ключ отказа получает тот, кто завёл строку или владеет адресом.
+        // Просящий на чужую строку мог набрать чужой адрес: ему пустышка.
         Ok(GazetteWatchCreatedResponse {
-            cancel_token: watch.cancel_token,
-            already_watching: already,
+            cancel_token: if outcome.own_key {
+                watch.cancel_token
+            } else {
+                Self::generate_decoy_token()
+            },
+            already_watching: outcome.existed,
+            confirmed: watch.confirmed_at.is_some(),
         })
+    }
+
+    /// Ссылка из письма слежения.
+    pub async fn confirm_gazette_watch(&self, key: &str) -> Result<bool> {
+        self.repo.confirm_gazette_watch(&fingerprint(key.trim())).await
+    }
+
+    async fn send_watch_confirmation(
+        &self,
+        watch: &GazetteWatch,
+        work: &str,
+        key: &str,
+    ) -> Result<()> {
+        let base = self.config.public_url.trim_end_matches('/');
+        let link = format!("{base}/gazette/watch/confirm/{key}");
+        use crate::lang::Lang;
+        let (subject, body) = match Lang::parse(&watch.lang).unwrap_or_default() {
+            Lang::Ru => (
+                "Подтвердите адрес: напишем, когда работа будет готова".to_string(),
+                format!(
+                    "Этот адрес попросил сообщить, когда будет готова работа «{work}». \
+                     Если это были вы, откройте ссылку:\n{link}\n\n\
+                     Если вы ничего не просили, не отвечайте на это письмо: без вашего \
+                     перехода по ссылке не придёт ничего. Ссылка живёт неделю."
+                ),
+            ),
+            Lang::En => (
+                "Confirm your address: we will write when the work is ready".to_string(),
+                format!(
+                    "This address asked to be told when “{work}” is ready. If that was you, \
+                     open the link:\n{link}\n\n\
+                     If you asked for nothing, ignore this letter: without your follow of the \
+                     link nothing will be sent. The link lives a week."
+                ),
+            ),
+            Lang::Uk => (
+                "Підтвердьте адресу: напишемо, коли робота буде готова".to_string(),
+                format!(
+                    "Ця адреса попросила повідомити, коли буде готова робота «{work}». \
+                     Якщо це були ви, відкрийте посилання:\n{link}\n\n\
+                     Якщо ви нічого не просили, не відповідайте на цей лист: без вашого \
+                     переходу за посиланням не прийде нічого. Посилання діє тиждень."
+                ),
+            ),
+        };
+        self.say_or_send(&watch.email, &subject, body, &link).await
     }
 
     pub async fn get_gazette_watch_by_token(
@@ -9283,7 +9975,9 @@ impl AppService {
             leaf_slug: leaf.slug,
             title_en: leaf.title_en,
             title_ru: leaf.title_ru,
+            title_uk: leaf.title_uk,
             notified: w.notified_at.is_some(),
+            confirmed: w.confirmed_at.is_some(),
         }))
     }
 
@@ -9311,6 +10005,7 @@ impl AppService {
                 leaf_slug: w.leaf_slug,
                 title_en: w.title_en,
                 title_ru: w.title_ru,
+                title_uk: w.title_uk,
                 cancel_token: w.cancel_token,
                 notified_at: w.notified_at.map(|t| t.to_rfc3339()),
                 created_at: w.created_at.to_rfc3339(),
@@ -9592,10 +10287,13 @@ impl AppService {
             status: "draft".into(),
             title_en: title.clone(),
             title_ru: title,
+            title_uk: String::new(),
             dek_en: None,
             dek_ru: None,
+            dek_uk: None,
             body_en: None,
             body_ru: None,
+            body_uk: None,
             figurine_id: None,
             href: Some(cutting.url.clone()),
             source_name: Some(cutting.source_name.clone()),
@@ -9626,8 +10324,16 @@ impl AppService {
         }
         let mut title_en = crate::gazette::clamp_title(&req.title_en);
         let mut title_ru = crate::gazette::clamp_title(&req.title_ru);
+        let title_uk = crate::gazette::clamp_title(&req.title_uk);
         if title_en.is_empty() && title_ru.is_empty() {
-            return Err(AppError::BadRequest("A title is required".into()));
+            // A leaf written only in Ukrainian still needs a title in the two
+            // columns that cannot be empty (they key the address and the
+            // neighbours); the Ukrainian one stands in for both.
+            if title_uk.is_empty() {
+                return Err(AppError::BadRequest("A title is required".into()));
+            }
+            title_en = title_uk.clone();
+            title_ru = title_uk.clone();
         }
         if title_en.is_empty() {
             title_en = title_ru.clone();
@@ -9681,6 +10387,9 @@ impl AppService {
             dek_ru: crate::gazette::clamp_dek(req.dek_ru.as_deref()),
             body_en: crate::gazette::clamp_body(req.body_en.as_deref()),
             body_ru: crate::gazette::clamp_body(req.body_ru.as_deref()),
+            title_uk,
+            dek_uk: crate::gazette::clamp_dek(req.dek_uk.as_deref()),
+            body_uk: crate::gazette::clamp_body(req.body_uk.as_deref()),
             figurine_id,
             href: req
                 .href
@@ -9738,17 +10447,23 @@ impl AppService {
             race_id: row.race_id.map(|id| id.to_string()),
             race_name_en: row.race_name_en,
             race_name_ru: row.race_name_ru,
+            race_name_uk: row.race_name_uk,
             race_icon_url: row.race_icon_url,
             race_level_frames: row.race_level_frames,
             race_motion_wear: row.race_motion_wear,
+            race_damage: crate::battles::parse_race_damage(row.race_damage.as_deref()),
             type_en: row.type_en,
             type_ru: row.type_ru,
+            type_uk: row.type_uk,
             title_en: row.title_en,
             title_ru: row.title_ru,
+            title_uk: row.title_uk,
             effect_en: row.effect_en,
             effect_ru: row.effect_ru,
+            effect_uk: row.effect_uk,
             lore_en: row.lore_en,
             lore_ru: row.lore_ru,
+            lore_uk: row.lore_uk,
             cost: row.cost,
             power: row.power,
             health: row.health,
@@ -9777,6 +10492,7 @@ impl AppService {
             motion_wear: row.motion_wear,
             shelf_order: row.shelf_order,
             lendable: row.lendable,
+            shoots: row.shoots,
             credit_name: row.credit_name,
             edition_size: row.edition_size,
             minted: row.minted,
@@ -9795,6 +10511,18 @@ impl AppService {
         let rows = self
             .repo
             .list_battle_cards_public(crate::battles::SHELF_CARDS)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| self.battle_card_dto(r, false))
+            .collect())
+    }
+
+    /// Карты «только для этюдов» — для сцены этюда, которой нужны их картинки.
+    pub async fn list_battle_cards_etude_only(&self) -> Result<Vec<BattleCardDto>> {
+        let rows = self
+            .repo
+            .list_battle_cards_etude_only(crate::battles::SHELF_CARDS)
             .await?;
         Ok(rows
             .into_iter()
@@ -10274,8 +11002,10 @@ impl AppService {
             slug: e.slug.clone(),
             title_en: e.title_en.clone(),
             title_ru: e.title_ru.clone(),
+            title_uk: e.title_uk.clone(),
             note_en: e.note_en.clone(),
             note_ru: e.note_ru.clone(),
+            note_uk: e.note_uk.clone(),
             rule: e.rule.clone(),
             threshold: e.threshold,
             currency: e.currency.clone(),
@@ -10420,6 +11150,7 @@ impl AppService {
 
         let title_en = Self::clamp_text(&req.title_en, crate::battles::ERRAND_TITLE_MAX);
         let title_ru = Self::clamp_text(&req.title_ru, crate::battles::ERRAND_TITLE_MAX);
+        let title_uk = Self::clamp_text(&req.title_uk, crate::battles::ERRAND_TITLE_MAX);
         // Оба языка, а не «хотя бы один»: пустой английский когда-то заполняли
         // русским, и английская полка печатала кириллицу как английский.
         if title_en.is_empty() || title_ru.is_empty() {
@@ -10436,8 +11167,10 @@ impl AppService {
             slug,
             title_en,
             title_ru,
+            title_uk,
             note_en: note(&req.note_en),
             note_ru: note(&req.note_ru),
+            note_uk: note(&req.note_uk),
             rule: req.rule.clone(),
             threshold,
             currency: req.currency.clone(),
@@ -10519,8 +11252,10 @@ impl AppService {
             by_hand: errand.by_hand,
             title_en: errand.title_en.clone(),
             title_ru: errand.title_ru.clone(),
+            title_uk: errand.title_uk.clone(),
             note_en: errand.note_en.clone(),
             note_ru: errand.note_ru.clone(),
+            note_uk: errand.note_uk.clone(),
             rule: errand.rule.clone(),
             threshold: errand.threshold,
             currency: errand.currency.clone(),
@@ -10712,7 +11447,7 @@ impl AppService {
 
     /// Запомнить язык работы. Не свойство рамы, а свойство разговора о ней.
     pub async fn set_studio_frame_lang(&self, user: Uuid, id: Uuid, lang: &str) -> Result<()> {
-        let lang = if lang == "en" { "en" } else { "ru" };
+        let lang = crate::lang::Lang::parse(lang).unwrap_or(crate::lang::Lang::Ru).code();
         self.repo.set_studio_frame_lang(user, id, lang).await
     }
 
@@ -11607,7 +12342,7 @@ impl AppService {
     ) -> Result<crate::models::StudioCardDto> {
         let settings = self.studio_admit(user_id).await?;
         let clean = Self::clean_studio_card(body)?;
-        let lang = if lang == "en" { "en" } else { "ru" };
+        let lang = crate::lang::Lang::parse(lang).unwrap_or(crate::lang::Lang::Ru).code();
         match id {
             None => {
                 // Потолок незаконченных — СВОИМ числом, а не рамочным: карта
@@ -11994,11 +12729,14 @@ impl AppService {
                 slug: add.slug.clone(),
                 name_en: race.name_en.clone(),
                 name_ru: race.name_ru.clone(),
+                name_uk: race.name_uk.clone(),
                 note_en: race.note_en.clone(),
                 note_ru: race.note_ru.clone(),
+                note_uk: race.note_uk.clone(),
                 icon_url: race.icon_url.clone(),
                 level_frames: None,
                 motion_wear: None,
+                race_damage: None,
             })
             .await
         {
@@ -12167,41 +12905,63 @@ impl AppService {
 
     /// Записка автору о его карте. Язык — работы, а не хозяина.
     async fn note_about_card(&self, card: Uuid, kind: &str, word: Option<&str>) -> Result<()> {
+        use crate::lang::Lang;
         let Some(row) = self.repo.get_studio_card_any(card).await? else {
             return Ok(());
         };
-        let name = row
-            .card
-            .body
-            .get(if row.lang == "en" { "titleEn" } else { "titleRu" })
-            .and_then(|v| v.as_str())
+        let lang = Lang::parse(&row.lang).unwrap_or(Lang::Ru);
+        let field = match lang {
+            Lang::En => "titleEn",
+            Lang::Ru => "titleRu",
+            Lang::Uk => "titleUk",
+        };
+        // Названа карта могла быть не на языке работы: тогда берётся любое
+        // написанное, лишь бы записка не называла её пустотой.
+        let named = |key: &str| {
+            row.card
+                .body
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        let name = named(field)
+            .or_else(|| named("titleEn"))
+            .or_else(|| named("titleRu"))
+            .or_else(|| named("titleUk"))
             .unwrap_or("")
             .to_string();
-        let en = row.lang == "en";
-        let (subject, body) = match (kind, en) {
-            ("denied", false) => (
+        let word = word.unwrap_or("");
+        let (subject, body) = match (kind, lang) {
+            ("denied", Lang::Ru) => (
                 "Карта возвращена",
                 format!(
-                    "«{name}» пока не выходит на полку. Хозяин пишет: {}\n\nОна вернулась к вам в черновики — поправьте и покажите снова.",
-                    word.unwrap_or("")
+                    "«{name}» пока не выходит на полку. Хозяин пишет: {word}\n\nОна вернулась к вам в черновики — поправьте и покажите снова."
                 ),
             ),
-            ("denied", true) => (
+            ("denied", Lang::En) => (
                 "Your card is back with you",
                 format!(
-                    "“{name}” is not going on the shelf yet. The keeper writes: {}\n\nIt is back in your drafts — mend it and show it again.",
-                    word.unwrap_or("")
+                    "“{name}” is not going on the shelf yet. The keeper writes: {word}\n\nIt is back in your drafts — mend it and show it again."
                 ),
             ),
-            ("approved", false) => (
-                "Карта взята в игру",
+            ("denied", Lang::Uk) => (
+                "Карту повернуто",
                 format!(
-                    "«{name}» стоит на полке с вашим именем, и первый её экземпляр — ваш."
+                    "«{name}» поки не виходить на полицю. Господар пише: {word}\n\nВона повернулася до вас у чернетки — поправте й покажіть знову."
                 ),
             ),
-            ("approved", true) => (
+            ("approved", Lang::Ru) => (
+                "Карта взята в игру",
+                format!("«{name}» стоит на полке с вашим именем, и первый её экземпляр — ваш."),
+            ),
+            ("approved", Lang::En) => (
                 "Taken into the game",
                 format!("“{name}” is on the shelf with your name on it, and the first copy is yours."),
+            ),
+            ("approved", Lang::Uk) => (
+                "Карту взято в гру",
+                format!("«{name}» стоїть на полиці з вашим ім’ям, і перший її примірник — ваш."),
             ),
             _ => return Ok(()),
         };
@@ -12232,80 +12992,115 @@ impl AppService {
     }
 
     async fn note_about_frame(&self, frame: Uuid, kind: &str, word: Option<&str>) -> Result<()> {
+        use crate::lang::Lang;
         let Some((user, _, slug, lang, name)) = self.repo.studio_frame_owner(frame).await? else {
             return Ok(());
         };
-        let en = lang == "en";
-        let (subject, body) = match (kind, en) {
-            ("admitted", false) => (
+        let lang = Lang::parse(&lang).unwrap_or(Lang::Ru);
+        let word = word.unwrap_or("");
+        let page = |prefix_ru: &str, prefix_en: &str, prefix_uk: &str| {
+            slug.as_deref()
+                .map(|s| {
+                    format!(
+                        "\n\n{}: /studio/authors/{s}",
+                        lang.pick(prefix_en, prefix_ru, prefix_uk)
+                    )
+                })
+                .unwrap_or_default()
+        };
+        let (subject, body) = match (kind, lang) {
+            ("admitted", Lang::Ru) => (
                 "Работа в сезоне",
-                format!(
-                    "«{name}» допущена и уже стоит в сезоне — её видно в галерее, и её оценивают."
-                ),
+                format!("«{name}» допущена и уже стоит в сезоне — её видно в галерее, и её оценивают."),
             ),
-            ("admitted", true) => (
+            ("admitted", Lang::En) => (
                 "Your work is in the season",
                 format!("“{name}” is admitted and already in the season — it is in the gallery, and people are marking it."),
             ),
+            ("admitted", Lang::Uk) => (
+                "Робота в сезоні",
+                format!("«{name}» допущена й уже стоїть у сезоні — її видно в галереї, і її оцінюють."),
+            ),
             // Допущена, но в сезон не встала: у автора уже есть заявка на этой
             // неделе, или неделя подведена. Это не отказ, и сказать надо так.
-            ("admittedOnly", false) => (
+            ("admittedOnly", Lang::Ru) => (
                 "Работа вышла на люди",
                 format!(
                     "«{name}» допущена: её видно в галерее. В сезон она не встала — на этой неделе у вас уже есть работа. Выставить её можно в следующем сезоне."
                 ),
             ),
-            ("admittedOnly", true) => (
+            ("admittedOnly", Lang::En) => (
                 "Your work is out",
                 format!("“{name}” is admitted and is in the gallery. It did not go into the season — you already have a work in this one. Next week it can."),
             ),
-            ("denied", false) => (
+            ("admittedOnly", Lang::Uk) => (
+                "Робота вийшла на люди",
+                format!(
+                    "«{name}» допущена: її видно в галереї. У сезон вона не стала — цього тижня у вас уже є робота. Виставити її можна в наступному сезоні."
+                ),
+            ),
+            ("denied", Lang::Ru) => (
                 "Работа возвращена",
                 format!(
-                    "«{name}» пока не выходит на люди. Хозяин пишет: {}\n\nОна вернулась к вам в черновики — поправьте и покажите снова.",
-                    word.unwrap_or("")
+                    "«{name}» пока не выходит на люди. Хозяин пишет: {word}\n\nОна вернулась к вам в черновики — поправьте и покажите снова."
                 ),
             ),
-            ("denied", true) => (
+            ("denied", Lang::En) => (
                 "Your work is back with you",
                 format!(
-                    "“{name}” is not going out yet. The keeper writes: {}\n\nIt is back in your drafts — mend it and show it again.",
-                    word.unwrap_or("")
+                    "“{name}” is not going out yet. The keeper writes: {word}\n\nIt is back in your drafts — mend it and show it again."
                 ),
             ),
-            ("approved", false) => (
+            ("denied", Lang::Uk) => (
+                "Роботу повернуто",
+                format!(
+                    "«{name}» поки не виходить на люди. Господар пише: {word}\n\nВона повернулася до вас у чернетки — поправте й покажіть знову."
+                ),
+            ),
+            ("approved", Lang::Ru) => (
                 "Работа взята в игру",
                 format!(
                     "«{name}» утверждена. Она получает тираж лицензий и ваше имя на них — навсегда.{}",
-                    slug.as_deref()
-                        .map(|s| format!("\n\nВаша страница: /studio/authors/{s}"))
-                        .unwrap_or_default()
+                    page("Ваша страница", "Your page", "Ваша сторінка")
                 ),
             ),
-            ("approved", true) => (
+            ("approved", Lang::En) => (
                 "Taken into the game",
                 format!(
                     "“{name}” is approved. It gets a run of licences with your name on them — for good.{}",
-                    slug.as_deref()
-                        .map(|s| format!("\n\nYour page: /studio/authors/{s}"))
-                        .unwrap_or_default()
+                    page("Ваша страница", "Your page", "Ваша сторінка")
                 ),
             ),
-            ("struck", false) => (
+            ("approved", Lang::Uk) => (
+                "Роботу взято в гру",
+                format!(
+                    "«{name}» затверджена. Вона отримує наклад ліцензій і ваше ім’я на них — назавжди.{}",
+                    page("Ваша страница", "Your page", "Ваша сторінка")
+                ),
+            ),
+            ("struck", Lang::Ru) => (
                 "Работа снята",
-                format!("«{name}» снята с людских глаз. Причина: {}", word.unwrap_or("")),
+                format!("«{name}» снята с людских глаз. Причина: {word}"),
             ),
-            ("struck", true) => (
+            ("struck", Lang::En) => (
                 "Your work was taken down",
-                format!("“{name}” has been taken down. Why: {}", word.unwrap_or("")),
+                format!("“{name}” has been taken down. Why: {word}"),
             ),
-            ("chosen", false) => (
+            ("struck", Lang::Uk) => (
+                "Роботу знято",
+                format!("«{name}» знято з людських очей. Причина: {word}"),
+            ),
+            ("chosen", Lang::Ru) => (
                 "Работа в тройке недели",
                 format!("«{name}» вошла в тройку сезона и ушла хозяину на решение."),
             ),
-            ("chosen", true) => (
+            ("chosen", Lang::En) => (
                 "Among the three",
                 format!("“{name}” is among the three of the season and has gone to the keeper."),
+            ),
+            ("chosen", Lang::Uk) => (
+                "Робота в трійці тижня",
+                format!("«{name}» увійшла до трійки сезону й пішла господареві на рішення."),
             ),
             _ => return Ok(()),
         };
@@ -12419,9 +13214,9 @@ impl AppService {
                     && let Some(to) = who.email.clone()
                 {
                     let svc = self.clone();
-                    let en = lang == "en";
+                    let lang = crate::lang::Lang::parse(&lang).unwrap_or(crate::lang::Lang::Ru);
                     tokio::spawn(async move {
-                        if let Err(e) = svc.send_studio_approved_email(&to, &name, en).await {
+                        if let Err(e) = svc.send_studio_approved_email(&to, &name, lang).await {
                             tracing::warn!("Studio approval email failed: {e}");
                         }
                     });
@@ -12793,7 +13588,12 @@ impl AppService {
             .collect();
         let developed_works = self
             .repo
-            .credit_battle_seen_bulk(user_id, &seen, rates.seen)
+            .credit_battle_seen_bulk(
+                user_id,
+                &seen,
+                rates.seen,
+                crate::battles::ATTENTION_DAILY_CAP,
+            )
             .await?;
         let developed_works = i32::try_from(developed_works).unwrap_or(i32::MAX);
 
@@ -12998,7 +13798,20 @@ impl AppService {
             .as_ref()
             .and_then(|d| serde_json::from_str(&d.layout).ok())
             .unwrap_or_default();
+        let loan = self.loan_inputs(user_id).await?;
+        let (board, hand, nothing_to_lend) =
+            Self::lay_with_loan(&layout, &loan, &crate::battles::DECK_DEFAULT_CELLS);
+        Ok(crate::models::BattleDeckDto {
+            board,
+            hand,
+            laid,
+            nothing_to_lend,
+        })
+    }
 
+    /// Что нужно, чтобы досчитать заём: какие карты выходят на поле, какие у
+    /// гостя есть и что дом одолжит.
+    async fn loan_inputs(&self, user_id: Uuid) -> Result<LoanInputs> {
         let cards = self.list_battle_cards_public().await?;
         let fieldable: std::collections::HashSet<Uuid> = cards
             .iter()
@@ -13018,13 +13831,35 @@ impl AppService {
             .into_iter()
             .map(|o| o.card_id)
             .collect();
+        let pool = self.loan_pool(user_id).await?;
+        Ok(LoanInputs {
+            fieldable,
+            owned,
+            pool,
+            cards,
+        })
+    }
 
+    /// Места стола или расстановки с досчитанным заёмом.
+    ///
+    /// `loan_cells` — клетки, на которые дом ставит временные карты, в порядке
+    /// предпочтения; занятые картами гостя пропускаются. Не хватило клеток —
+    /// место на поле остаётся пустым: ставить временную карту некуда.
+    fn lay_with_loan(
+        layout: &crate::models::DeckLayout,
+        loan: &LoanInputs,
+        loan_cells: &[(u8, u8)],
+    ) -> (
+        Vec<crate::models::BattleDeckSlotDto>,
+        Vec<crate::models::BattleDeckSlotDto>,
+        bool,
+    ) {
         // Пул перебирается по кругу, а не раздаётся по одной карте: у дома,
         // отметившего одну карту заёмной, иначе закрывалось бы одно место из
         // шести, а остальные пять оставались бы пустыми — то есть отметить
         // меньше шести карт значило бы не отметить ничего. Повтор одного тела
         // на поле правилам не мешает; пустая половина мешает партии.
-        let pool = self.loan_pool(user_id).await?;
+        let pool = &loan.pool;
         let mut given = 0usize;
         let mut hand_out = |taken: bool| -> Option<String> {
             if !taken || pool.is_empty() {
@@ -13034,10 +13869,11 @@ impl AppService {
             given += 1;
             Some(id.to_string())
         };
+        let gone = |card: &Uuid| !loan.fieldable.contains(card) || !loan.owned.contains(card);
 
         let mut board = Vec::with_capacity(crate::battles::DECK_BOARD);
         for slot in layout.board.iter().take(crate::battles::DECK_BOARD) {
-            let gone = !fieldable.contains(&slot.card) || !owned.contains(&slot.card);
+            let gone = gone(&slot.card);
             board.push(crate::models::BattleDeckSlotDto {
                 card_id: Some(slot.card.to_string()),
                 gone,
@@ -13046,17 +13882,17 @@ impl AppService {
                 y: Some(slot.y),
             });
         }
-        // Пустые места дома встают на клетки по умолчанию — на те, которых
-        // гость ещё не занял: заём, поставленный поверх своей карты, был бы
-        // не заёмом, а подменой.
+        // Пустые места дома встают на те клетки, которых гость ещё не занял:
+        // заём, поставленный поверх своей карты, был бы не заёмом, а подменой.
         // Свободные клетки отбираются ДО того, как в `board` что-то допишут:
         // ленивый фильтр держал бы `board` на всё время дозаписи.
         let taken_cells: Vec<(u8, u8)> = board.iter().filter_map(|s| s.x.zip(s.y)).collect();
-        let mut free = crate::battles::DECK_DEFAULT_CELLS
-            .into_iter()
+        let mut free = loan_cells
+            .iter()
+            .copied()
             .filter(|cell| !taken_cells.contains(cell));
         while board.len() < crate::battles::DECK_BOARD {
-            let (x, y) = free.next().unwrap_or((1, 4));
+            let Some((x, y)) = free.next() else { break };
             board.push(crate::models::BattleDeckSlotDto {
                 card_id: None,
                 gone: false,
@@ -13068,7 +13904,7 @@ impl AppService {
 
         let mut hand = Vec::with_capacity(crate::battles::DECK_HAND);
         for card in layout.hand.iter().take(crate::battles::DECK_HAND) {
-            let gone = !fieldable.contains(card) || !owned.contains(card);
+            let gone = gone(card);
             hand.push(crate::models::BattleDeckSlotDto {
                 card_id: Some(card.to_string()),
                 gone,
@@ -13094,13 +13930,229 @@ impl AppService {
             .iter()
             .chain(&hand)
             .any(|s| s.lent_card_id.is_none() && (s.card_id.is_none() || s.gone));
+        (board, hand, nothing_to_lend)
+    }
 
-        Ok(crate::models::BattleDeckDto {
+    // ── Расстановка перед встречей ────────────────────────────────────────
+    //
+    // Карты расставляют прямо перед боем, на поле этой встречи: с её
+    // величиной, местностью и картами противника. Расстановка запоминается
+    // для встречи, и повторная партия открывается с прежней.
+
+    /// Расстановка встречи. Этюд, в котором гость не приводит своих карт,
+    /// расстановки не имеет: обе стороны в нём задал хранитель.
+    async fn meeting_setup(&self, challenge_id: Uuid) -> Result<ChallengeSetup> {
+        let challenge = self.repo.get_battle_challenge(challenge_id).await?;
+        if challenge.status != "published" {
+            return Err(AppError::NotFound("No such challenge".into()));
+        }
+        if challenge.player_side != crate::battles::SIDE_DECK {
+            return Err(AppError::BadRequest(
+                "This challenge sets both sides; there is nothing to arrange".into(),
+            ));
+        }
+        serde_json::from_str(&challenge.setup)
+            .map_err(|_| AppError::Internal("Challenge arrangement will not read".into()))
+    }
+
+    /// Расстановка гостя на поле встречи — с досчитанным заёмом и с тем, куда
+    /// достаёт противник.
+    pub async fn read_battle_lineup(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+    ) -> Result<crate::models::BattleLineupDto> {
+        let setup = self.meeting_setup(challenge_id).await?;
+        let loan = self.loan_inputs(user_id).await?;
+        let mut dto = self.lineup_on(user_id, challenge_id, &setup, &loan).await?;
+        dto.threats = self.strike_zones_on(&setup, &dto, &loan).await;
+        Ok(dto)
+    }
+
+    /// Расстановка без зон удара.
+    ///
+    /// Не сохранял для этой встречи — берётся прежний стол, поставленный к
+    /// середине поля, как его ставил сервер до расстановки перед боем. Карта,
+    /// чья клетка с тех пор закрылась (хранитель поставил туда стену), уходит
+    /// на ближайшую открытую: расстановка, ставшая незаконной не по вине
+    /// гостя, не должна отказывать.
+    async fn lineup_on(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+        setup: &ChallengeSetup,
+        loan: &LoanInputs,
+    ) -> Result<crate::models::BattleLineupDto> {
+        let ground = crate::battles::LineupGround::of(setup);
+        let stored = self.repo.get_battle_lineup(user_id, challenge_id).await?;
+        let laid = stored.is_some();
+        let mut layout: crate::models::DeckLayout = match stored {
+            Some(json) => serde_json::from_str(&json).unwrap_or_default(),
+            None => self.lineup_from_deck(user_id, ground.field).await?,
+        };
+        let open = ground.open_cells();
+        Self::settle_cells(&mut layout, &open);
+        let loan_cells = Self::loan_cells(&layout, &open);
+        let (board, hand, nothing_to_lend) = Self::lay_with_loan(&layout, loan, &loan_cells);
+        Ok(crate::models::BattleLineupDto {
             board,
             hand,
             laid,
             nothing_to_lend,
+            cells: open
+                .iter()
+                .map(|&(x, y)| battle_core::Cell { x, y })
+                .collect(),
+            limits: crate::battles::deck_limits(),
+            threats: Vec::new(),
         })
+    }
+
+    /// Куда встают временные карты: сначала на клетки, выбранные гостем (если
+    /// они ещё открыты и не заняты его картами), затем по порядку дома.
+    fn loan_cells(layout: &crate::models::DeckLayout, open: &[(u8, u8)]) -> Vec<(u8, u8)> {
+        let own: Vec<(u8, u8)> = layout.board.iter().map(|p| (p.x, p.y)).collect();
+        let mut cells: Vec<(u8, u8)> = Vec::with_capacity(open.len());
+        let chosen = layout.lent.iter().map(|c| (c.x, c.y));
+        for cell in chosen.chain(open.iter().copied()) {
+            if open.contains(&cell) && !own.contains(&cell) && !cells.contains(&cell) {
+                cells.push(cell);
+            }
+        }
+        cells
+    }
+
+    /// Куда противник достаёт ударом при этой расстановке.
+    ///
+    /// Подсказка, а не условие: не собралось (карта противника снята) —
+    /// расставлять это не мешает, и зон просто нет.
+    async fn strike_zones_on(
+        &self,
+        setup: &ChallengeSetup,
+        lineup: &crate::models::BattleLineupDto,
+        loan: &LoanInputs,
+    ) -> Vec<crate::models::StrikeZoneDto> {
+        let Ok(cards) = self.cards_by_slug().await else {
+            return Vec::new();
+        };
+        let Ok(mut raised) = Self::raise(setup, &cards) else {
+            return Vec::new();
+        };
+        let Ok((board, _)) = Self::bodies_of(lineup, loan) else {
+            return Vec::new();
+        };
+        raised.player_board = board;
+        raised.player_hand = Vec::new();
+        let state = battle_core::MatchState::begin_with(raised, crate::battles::rules_of(setup));
+        state
+            .strike_zones(battle_core::Side::Keeper)
+            .into_iter()
+            .map(|(cell, cells)| crate::models::StrikeZoneDto { cell, cells })
+            .collect()
+    }
+
+    /// Прежний стол, поставленный на поле встречи: передний ряд стола — к
+    /// середине поля (`deck_cell_on`).
+    async fn lineup_from_deck(
+        &self,
+        user_id: Uuid,
+        field: battle_core::Field,
+    ) -> Result<crate::models::DeckLayout> {
+        let Some(deck) = self.repo.get_battle_deck(user_id).await? else {
+            return Ok(crate::models::DeckLayout::default());
+        };
+        let mut layout: crate::models::DeckLayout =
+            serde_json::from_str(&deck.layout).unwrap_or_default();
+        for p in &mut layout.board {
+            if let Some(cell) = battle_core::Cell::new(p.x, p.y) {
+                let on = crate::battles::deck_cell_on(field, cell);
+                p.x = on.x;
+                p.y = on.y;
+            }
+        }
+        Ok(layout)
+    }
+
+    /// Карты на закрытых или повторённых клетках уходят на первую свободную
+    /// открытую клетку; не нашлось такой — карта снимается с поля.
+    fn settle_cells(layout: &mut crate::models::DeckLayout, open: &[(u8, u8)]) {
+        layout.board.truncate(crate::battles::DECK_BOARD);
+        let mut taken: Vec<(u8, u8)> = Vec::new();
+        let mut homeless = Vec::new();
+        for (i, p) in layout.board.iter().enumerate() {
+            let cell = (p.x, p.y);
+            if open.contains(&cell) && !taken.contains(&cell) {
+                taken.push(cell);
+            } else {
+                homeless.push(i);
+            }
+        }
+        let mut dropped = Vec::new();
+        for i in homeless {
+            match open.iter().find(|c| !taken.contains(c)) {
+                Some(&(x, y)) => {
+                    layout.board[i].x = x;
+                    layout.board[i].y = y;
+                    taken.push((x, y));
+                }
+                None => dropped.push(i),
+            }
+        }
+        for i in dropped.into_iter().rev() {
+            layout.board.remove(i);
+        }
+    }
+
+    /// Расставить карты на поле встречи.
+    ///
+    /// Проверяется тем же правилом, что перечитывает начало партии, — по полю
+    /// этой встречи, а не по половине 3 × 3.
+    ///
+    /// Страница сохраняет сама после каждой правки, поэтому у ручки свой предел
+    /// в минуту: щедрый для человека и тесный для цикла.
+    pub async fn save_battle_lineup(
+        &self,
+        user_id: Uuid,
+        challenge_id: Uuid,
+        req: &crate::models::SaveBattleDeckRequest,
+    ) -> Result<crate::models::BattleLineupDto> {
+        self.check_hot_limit(
+            "lineup",
+            &user_id.to_string(),
+            crate::battles::LINEUP_SAVES_PER_MINUTE,
+            60,
+        )
+        .await?;
+        let setup = self.meeting_setup(challenge_id).await?;
+        let ground = crate::battles::LineupGround::of(&setup);
+        let loan = self.loan_inputs(user_id).await?;
+        let board: Vec<(Uuid, u8, u8)> = req.board.iter().map(|p| (p.card, p.x, p.y)).collect();
+        crate::battles::check_lineup(&ground, &board, &req.hand, &loan.owned, &loan.tier_of())
+            .and_then(|()| crate::battles::check_loan_cells(&ground, &board, &req.lent))
+            .map_err(|fault| AppError::BadRequest(format!("deck:{}", fault.word())))?;
+
+        let layout = crate::models::DeckLayout {
+            board: req
+                .board
+                .iter()
+                .map(|p| crate::models::DeckPlacement {
+                    card: p.card,
+                    x: p.x,
+                    y: p.y,
+                })
+                .collect(),
+            hand: req.hand.clone(),
+            lent: req.lent.clone(),
+        };
+        let json = serde_json::to_string(&layout)
+            .map_err(|_| AppError::Internal("Lineup will not serialise".into()))?;
+        self.repo
+            .upsert_battle_lineup(user_id, challenge_id, &json)
+            .await?;
+        self.settle_errands_quietly(user_id).await;
+        let mut dto = self.lineup_on(user_id, challenge_id, &setup, &loan).await?;
+        dto.threats = self.strike_zones_on(&setup, &dto, &loan).await;
+        Ok(dto)
     }
 
     /// Что дом одолжит этому гостю, в одном и том же порядке.
@@ -13170,6 +14222,7 @@ impl AppService {
                 })
                 .collect(),
             hand: req.hand.clone(),
+            lent: Vec::new(),
         };
         let json = serde_json::to_string(&layout)
             .map_err(|_| AppError::Internal("Table will not serialise".into()))?;
@@ -13315,6 +14368,7 @@ impl AppService {
         user_id: Uuid,
         kind: &str,
         id: Uuid,
+        visitor_hashes: &[String],
     ) -> Result<crate::models::BattleAttentionResponse> {
         let rates = self.get_battle_dust_rates().await?;
         let amount = match kind {
@@ -13326,17 +14380,47 @@ impl AppService {
         // Вещь, за которую платят, должна существовать и быть открытой.
         // Без этого придуманный UUID — это выдуманная пыль, и ключ книги её не
         // ловит: он стережёт от второй выплаты, а не от первой выдуманной.
-        let settled = if amount > 0 && self.repo.battle_attention_target_public(kind, id).await? {
-            self.repo
-                .credit_battle_wallet(
-                    user_id,
-                    "dust",
-                    amount,
+        // Платит только внимание, которое сервер видел сам: просмотр страницы
+        // (для байки — ещё и присутствие на ней) от этого посетителя за
+        // последний час. Страница присылает маячок сама, и один запрос с
+        // придуманным id иначе оплачивал бы любую работу без единого просмотра.
+        // Сверх того у имени есть суточный потолок: сколько бы имён ни завёл
+        // один человек, каждое получает не больше него.
+        let settled = if amount > 0
+            && self.repo.battle_attention_target_public(kind, id).await?
+            && self
+                .repo
+                .battle_attention_witnessed(
                     kind,
-                    Some(id),
-                    &format!("{kind}:{id}"),
+                    id,
+                    visitor_hashes,
+                    crate::battles::ATTENTION_WITNESS_MINUTES,
+                    crate::battles::ATTENTION_READ_MIN_MS,
                 )
                 .await?
+        {
+            let credit = self
+                .repo
+                .credit_attention_capped(
+                    user_id,
+                    amount,
+                    kind,
+                    id,
+                    &format!("{kind}:{id}"),
+                    crate::battles::ATTENTION_DAILY_CAP,
+                )
+                .await?;
+            // Имя, упёршееся в суточный потолок, видно в журнале: человеку
+            // столько внимания за день не нужно, а те, кто заводит имена ради
+            // пыли, упираются в него каждый день.
+            if credit == crate::db::AttentionCredit::CapReached {
+                tracing::warn!(
+                    target: "gotiga_server::economy",
+                    %user_id, kind,
+                    "attention dust: daily cap reached"
+                );
+            }
+            credit == crate::db::AttentionCredit::Paid
         } else {
             false
         };
@@ -13378,7 +14462,9 @@ impl AppService {
         // Черновик из студии может прийти на одном языке — гость пишет на
         // своём, а переводит хозяин. На люди же без обязательного не выходит
         // ни одна карта, каким бы путём она ни пришла.
-        if req.status == "published" {
+        // Карту «только для этюдов» гость тоже видит на обоих языках — на
+        // поле этюда, — поэтому и ей без обязательного нельзя.
+        if req.status == "published" || req.status == crate::battles::CARD_ETUDE_ONLY {
             if let Some(field) = readiness.missing.first() {
                 return Err(AppError::BadRequest(format!("card:missing:{field}")));
             }
@@ -13394,7 +14480,8 @@ impl AppService {
         // in `prose_blockers`, not a silent copy.
         let price_dust = crate::battles::clamp_price(req.price_dust);
         let price_feed = crate::battles::clamp_price(req.price_feed);
-        if price_dust.is_none() && price_feed.is_none() {
+        // Снаряжение этюда не продаётся, и цена ему не нужна.
+        if price_dust.is_none() && price_feed.is_none() && req.status != crate::battles::CARD_ETUDE_ONLY {
             return Err(AppError::BadRequest(
                 "A card needs a price in at least one coin".into(),
             ));
@@ -13483,6 +14570,10 @@ impl AppService {
             effect_ru: crate::battles::clamp_effect(req.effect_ru.as_deref()),
             lore_en: crate::battles::clamp_lore(req.lore_en.as_deref()),
             lore_ru: crate::battles::clamp_lore(req.lore_ru.as_deref()),
+            type_uk: crate::battles::clamp_type(req.type_uk.as_deref()),
+            title_uk: crate::battles::clamp_title(&req.title_uk),
+            effect_uk: crate::battles::clamp_effect(req.effect_uk.as_deref()),
+            lore_uk: crate::battles::clamp_lore(req.lore_uk.as_deref()),
             cost,
             power,
             health,
@@ -13512,6 +14603,7 @@ impl AppService {
             frame_override: crate::battles::normalize_frame_override(req.frame_override.as_deref()),
             motion_wear: crate::battles::normalize_motion_wear(req.motion_wear.as_deref()),
             lendable: req.lendable,
+            shoots: req.shoots,
             // Тираж — целое больше нуля или ничего. Ноль пришедший из формы
             // значит «не ограничивать», а не «не печатать ни одной».
             edition_size: req.edition_size.filter(|n| *n > 0),
@@ -13560,6 +14652,8 @@ impl AppService {
             crate::battles::clamp_price(req.price_feed),
         )
         .into_iter()
+        // Снаряжение этюда не продаётся: цена у него не обязательна.
+        .filter(|f| !(*f == "price" && req.status == crate::battles::CARD_ETUDE_ONLY))
         .map(str::to_string)
         .collect();
         blocking.extend(
@@ -13672,12 +14766,17 @@ impl AppService {
 
         // Имена карт по слугу. Из админской полки, а не из публичной: партия
         // могла быть сыграна картой, которую с тех пор сняли.
-        let titles: std::collections::HashMap<String, (String, String)> = self
+        let titles: std::collections::HashMap<String, (String, String, String)> = self
             .repo
             .list_battle_cards_admin(crate::battles::SHELF_CARDS)
             .await?
             .into_iter()
-            .map(|c| (c.slug.clone(), (c.title_ru.clone(), c.title_en.clone())))
+            .map(|c| {
+                (
+                    c.slug.clone(),
+                    (c.title_ru.clone(), c.title_en.clone(), c.title_uk.clone()),
+                )
+            })
             .collect();
 
         let mut by_challenge: Vec<crate::models::BattleChallengeTally> = Vec::new();
@@ -13698,6 +14797,7 @@ impl AppService {
                     by_challenge.push(crate::models::BattleChallengeTally {
                         challenge_id: key.clone(),
                         title_ru: row.title_ru.clone(),
+                        title_uk: row.title_uk.clone(),
                         title_en: row.title_en.clone(),
                         played: 0,
                         guest_won: 0,
@@ -13741,6 +14841,7 @@ impl AppService {
                                 slug: slug.clone(),
                                 title_ru: named.map(|t| t.0.clone()),
                                 title_en: named.map(|t| t.1.clone()),
+                                title_uk: named.map(|t| t.2.clone()),
                                 played: 0,
                                 won: 0,
                                 lost: 0,
@@ -13764,6 +14865,7 @@ impl AppService {
                 guest: row.guest.clone(),
                 challenge_id: key,
                 title_ru: row.title_ru.clone(),
+                title_uk: row.title_uk.clone(),
                 title_en: row.title_en.clone(),
                 outcome: row.outcome.clone(),
                 rounds: row.rounds,
@@ -13880,8 +14982,10 @@ impl AppService {
             slug: row.slug,
             title_en: row.title_en,
             title_ru: row.title_ru,
+            title_uk: row.title_uk,
             note_en: row.note_en,
             note_ru: row.note_ru,
+            note_uk: row.note_uk,
             setup: serde_json::from_str(&row.setup).unwrap_or_default(),
             bot_depth: crate::battles::clamp_bot_depth(row.bot_depth),
             reward_dust: row.reward_dust,
@@ -13974,6 +15078,7 @@ impl AppService {
         if title_ru.is_empty() {
             title_ru = title_en.clone();
         }
+        let title_uk = crate::battles::clamp_title(&req.title_uk);
 
         if !crate::battles::valid_player_side(&req.player_side) {
             return Err(AppError::BadRequest("Unknown side for the guest".into()));
@@ -14013,6 +15118,12 @@ impl AppService {
                         .as_deref()
                         .map(str::trim)
                         .filter(|s| !s.is_empty()),
+                    title_uk: &title_uk,
+                    note_uk: req
+                        .note_uk
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty()),
                     setup: &setup,
                     bot_depth: crate::battles::clamp_bot_depth(req.bot_depth),
                     reward_dust: req.reward_dust.clamp(0, 1000),
@@ -14042,19 +15153,43 @@ impl AppService {
         Ok(())
     }
 
+    /// Запустить проверку проходимости в фоне: те же карты и правила, что
+    /// получит гость, партиями ботов (`siege::probe`).
+    pub async fn admin_start_battle_probe(
+        &self,
+        req: crate::models::BattleProbeRequest,
+    ) -> Result<crate::models::BattleProbeStarted> {
+        let cards = self.cards_by_slug().await?;
+        if req.setup.player_board.is_empty() || req.setup.keeper_board.is_empty() {
+            return Err(AppError::BadRequest("probe:needsBothSides".into()));
+        }
+        let setup = Self::raise(&req.setup, &cards)?;
+        let rules = crate::battles::rules_of(&req.setup);
+        let depth = req.bot_depth.clamp(1, battle_core::bot::DEPTH_MAX as i16) as u8;
+        let id = crate::siege::start_probe(setup, rules, depth);
+        Ok(crate::models::BattleProbeStarted { id: id.to_string() })
+    }
+
+    pub fn admin_read_battle_probe(&self, id: Uuid) -> Result<crate::siege::ProbeState> {
+        crate::siege::read_probe(id).ok_or_else(|| AppError::NotFound("No such probe".into()))
+    }
+
     pub async fn admin_delete_battle_challenge(&self, id: Uuid) -> Result<()> {
         self.repo.delete_battle_challenge(id).await?;
         Self::log_domain_event("battle_challenge_deleted", "battle_challenge", id, "ok");
         Ok(())
     }
 
-    /// Every published card, by slug — what an arrangement is resolved against.
+    /// Every card an arrangement may name, by slug — published ones and those
+    /// kept for etudes only (walls, towers, a ram).
     async fn cards_by_slug(&self) -> Result<std::collections::BTreeMap<String, BattleCardDto>> {
         Ok(self
-            .list_battle_cards_public()
+            .repo
+            .list_battle_cards_for_etudes(crate::battles::SHELF_CARDS)
             .await?
             .into_iter()
-            .filter(crate::battles::can_take_the_field)
+            .map(|r| self.battle_card_dto(r, false))
+            .filter(crate::battles::can_stand_in_an_etude)
             .map(|c| (c.slug.clone(), c))
             .collect())
     }
@@ -14071,7 +15206,7 @@ impl AppService {
         for slug in named {
             if !cards.contains_key(slug) {
                 return Err(AppError::BadRequest(format!(
-                    "No published card with health under the name {slug}"
+                    "No card for etudes with health under the name {slug}"
                 )));
             }
         }
@@ -14108,6 +15243,7 @@ impl AppService {
                 .ok_or_else(|| AppError::BadRequest(format!("Unknown card {slug}")))
         };
         let field = crate::battles::check_field(setup.field).map_err(|e| AppError::BadRequest(e.into()))?;
+        crate::battles::check_background(&setup.background).map_err(|e| AppError::BadRequest(e.into()))?;
         let place = |list: &[crate::models::ChallengePlacement]| -> Result<Vec<_>> {
             list.iter()
                 .map(|p| {
@@ -14130,23 +15266,27 @@ impl AppService {
         })
     }
 
-    /// Что выходит на поле со стороны гостя: его стол, с досчитанным заёмом.
+    /// Что выходит на поле со стороны гостя: его расстановка на поле этой
+    /// встречи, с досчитанным заёмом.
     ///
-    /// Заём считается ровно там же, где его считает сама комната стола, —
-    /// `read_battle_deck`. Второй расчёт заёма означал бы, что человек видит на
-    /// столе одно, а на поле у него встаёт другое.
+    /// Заём считается ровно там же, где его видит окно расстановки, —
+    /// `read_battle_lineup`. Второй расчёт заёма означал бы, что человек видит
+    /// перед боем одно, а на поле у него встаёт другое.
     ///
-    /// Законность перечитывается ЗДЕСЬ, а не берётся из сохранения: между тем,
-    /// как стол был разложен, и тем, как гость нажал «Взяться», мог пройти
-    /// месяц, и чин карты мог за это время подняться.
-    async fn deck_takes_the_field(
+    /// Законность перечитывается ЗДЕСЬ, а не берётся из сохранения: между
+    /// сохранением и «В бой» карта могла уйти, а ранг — подняться.
+    async fn lineup_takes_the_field(
         &self,
         user_id: Uuid,
+        challenge_id: Uuid,
+        setup: &ChallengeSetup,
     ) -> Result<(
         Vec<(battle_core::CardSnapshot, battle_core::Cell)>,
         Vec<battle_core::CardSnapshot>,
     )> {
-        let table = self.read_battle_deck(user_id).await?;
+        let ground = crate::battles::LineupGround::of(setup);
+        let loan = self.loan_inputs(user_id).await?;
+        let table = self.lineup_on(user_id, challenge_id, setup, &loan).await?;
 
         // Своё — только то, что гость выбрал сам и что ещё выходит на поле.
         // Заём в проверку не идёт: его не выбирают и им не владеют.
@@ -14162,34 +15302,43 @@ impl AppService {
             .filter(|s| !s.gone)
             .filter_map(|s| s.card_id.as_deref()?.parse().ok())
             .collect();
+        crate::battles::check_lineup(&ground, &kept_board, &kept_hand, &loan.owned, &loan.tier_of())
+            .map_err(|fault| AppError::BadRequest(format!("deck:{}", fault.word())))?;
 
-        let owned: std::collections::HashSet<Uuid> = self
-            .repo
-            .list_owned_battle_cards(user_id)
-            .await?
-            .into_iter()
-            .map(|o| o.card_id)
-            .collect();
-        let cards = self.list_battle_cards_public().await?;
-        let by_id: std::collections::HashMap<Uuid, &BattleCardDto> = cards
+        let (board, hand) = Self::bodies_of(&table, &loan)?;
+
+        // Отказ только если приводить НЕЧЕГО — ни на поле, ни в руке.
+        //
+        // Проверки `board.is_empty()` здесь нет и не должно быть: нет тел на
+        // поле — поражение (`is_spent`), но поле пустым не приходит, пустые
+        // места закрывает заём. Проверить это здесь второй раз значило бы
+        // переписать правило движка своим.
+        if board.is_empty() && hand.is_empty() {
+            return Err(AppError::BadRequest("deck:nothingToBring".into()));
+        }
+        Ok((board, hand))
+    }
+
+    /// Что фактически встаёт: свой выбор, а где его нет — заём. Снимки
+    /// собираются по полке (`loan.cards`), призыв находит своё по слагу.
+    fn bodies_of(
+        table: &crate::models::BattleLineupDto,
+        loan: &LoanInputs,
+    ) -> Result<(
+        Vec<(battle_core::CardSnapshot, battle_core::Cell)>,
+        Vec<battle_core::CardSnapshot>,
+    )> {
+        let by_id: std::collections::HashMap<Uuid, &BattleCardDto> = loan
+            .cards
             .iter()
             .filter_map(|c| c.id.parse().ok().map(|id| (id, c)))
             .collect();
-        let tier_of: std::collections::HashMap<Uuid, i16> =
-            by_id.iter().map(|(id, c)| (*id, c.tier)).collect();
-
-        crate::battles::check_deck(&kept_board, &kept_hand, &owned, &tier_of)
-            .map_err(|fault| AppError::BadRequest(format!("deck:{}", fault.word())))?;
-
-        // Что фактически встаёт: свой выбор, а где его нет — заём.
         let by_slug: std::collections::HashMap<&str, &BattleCardDto> =
-            cards.iter().map(|c| (c.slug.as_str(), c)).collect();
+            loan.cards.iter().map(|c| (c.slug.as_str(), c)).collect();
         let body = |id: Uuid| -> Result<battle_core::CardSnapshot> {
             by_id
                 .get(&id)
-                .map(|c| {
-                    crate::battles::to_snapshot_with(c, |want| by_slug.get(want).copied())
-                })
+                .map(|c| crate::battles::to_snapshot_with(c, |want| by_slug.get(want).copied()))
                 .ok_or_else(|| AppError::BadRequest("deck:nothingToBring".into()))
         };
         let mut board = Vec::new();
@@ -14209,22 +15358,6 @@ impl AppService {
             if let Some(id) = Self::slot_takes_the_field(slot) {
                 hand.push(body(id)?);
             }
-        }
-
-        // Отказ только если приводить НЕЧЕГО — ни на поле, ни в руке.
-        //
-        // Проверки `board.is_empty()` здесь нет и не должно быть, но причина у
-        // этого теперь ДРУГАЯ, чем была. Раньше пустое поле при непустой руке
-        // партию не проигрывало — `is_spent` считал и руку. Теперь считает
-        // только тела: нет тел на поле — поражение. Своей проверки это всё
-        // равно не требует, потому что поле пустым не приходит: пустые места
-        // стола дом закрывает заёмом (`read_battle_deck`), и «колода из трёх
-        // карт в руке» встаёт на поле тремя одолженными телами.
-        //
-        // Проверить это здесь второй раз значило бы переписать правило движка
-        // своим — ровно то, за что прежнюю проверку и сняли.
-        if board.is_empty() && hand.is_empty() {
-            return Err(AppError::BadRequest("deck:nothingToBring".into()));
         }
         Ok((board, hand))
     }
@@ -14371,6 +15504,11 @@ impl AppService {
         if challenge.status != "published" {
             return Err(AppError::NotFound("No such challenge".into()));
         }
+        // Гостю — только бои с заданной расстановкой: встреча просит свою
+        // колоду, а колода — имя с собранием карт.
+        if challenge.player_side == crate::battles::SIDE_DECK && self.repo.user_is_guest(user_id).await? {
+            return Err(AppError::Unauthorized);
+        }
         let arrangement: ChallengeSetup = serde_json::from_str(&challenge.setup)
             .map_err(|_| AppError::Internal("Challenge arrangement will not read".into()))?;
 
@@ -14382,14 +15520,11 @@ impl AppService {
         // в один вызов: снимок, `MatchState::begin`, запись, награда и пересмотр
         // общие для обоих родов.
         if challenge.player_side == crate::battles::SIDE_DECK {
-            let (board, hand) = self.deck_takes_the_field(user_id).await?;
-            // Стол гостя собран под половину 3 × 3 и стоит у шва. На глубоком
-            // поле он встаёт туда же — к шву, а не в дальний угол: передний
-            // ряд стола остаётся передним рядом половины.
-            let board = board
-                .into_iter()
-                .map(|(card, cell)| (card, crate::battles::deck_cell_on(setup.field, cell)))
-                .collect();
+            // Клетки уже клетки поля этой встречи: гость расставил карты на
+            // нём самом (`read_battle_lineup`), подгонять нечего.
+            let (board, hand) = self
+                .lineup_takes_the_field(user_id, challenge_id, &arrangement)
+                .await?;
             setup.player_board = board;
             setup.player_hand = hand;
         }
@@ -14587,8 +15722,12 @@ impl AppService {
         // ничего — человек сел за доску, дошёл до исхода, и комната промолчала.
         // Ферму это не открывает: ключ прежний, один на этюд, сколько бы раз
         // его ни переигрывали.
+        //
+        // Гостю пыль не платится вовсе: гостевых имён можно завести сколько
+        // угодно, и «однажды на этюд» стало бы «однажды на каждое имя».
+        let guest = self.repo.user_is_guest(user_id).await?;
         let mut reward = 0;
-        if let (Some(challenge_id), Some(done)) = (rec.challenge_id, outcome) {
+        if let (Some(challenge_id), Some(done), false) = (rec.challenge_id, outcome, guest) {
             let challenge = self.repo.get_battle_challenge(challenge_id).await?;
 
             if challenge.reward_finish_dust > 0
@@ -14630,7 +15769,7 @@ impl AppService {
         // Партия дошла до исхода — «довести этюд до конца» закрывается здесь.
         // Победа или нет: сегодня проигравший первую партию не получает ровно
         // ничего, и это худший из возможных ответов на первую же попытку.
-        if outcome.is_some() {
+        if outcome.is_some() && !guest {
             self.settle_errands_quietly(user_id).await;
         }
 
@@ -14807,8 +15946,10 @@ impl AppService {
             slug: row.slug,
             name_en: row.name_en,
             name_ru: row.name_ru,
+            name_uk: row.name_uk,
             rules_en: row.rules_en,
             rules_ru: row.rules_ru,
+            rules_uk: row.rules_uk,
             icon_url: row.icon_url,
             point_value: row.point_value,
             sort_order: row.sort_order,
@@ -14836,6 +15977,8 @@ impl AppService {
                 p.rules_ru.as_deref(),
                 p.icon_url.as_deref(),
                 p.point_value,
+                &p.name_uk,
+                p.rules_uk.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_keyword_created", "battle_keyword", rec.id, "ok");
@@ -14860,6 +16003,8 @@ impl AppService {
                 p.rules_ru.as_deref(),
                 p.icon_url.as_deref(),
                 p.point_value,
+                &p.name_uk,
+                p.rules_uk.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_keyword_updated", "battle_keyword", rec.id, "ok");
@@ -14917,6 +16062,8 @@ impl AppService {
             name_ru,
             rules_en: rules(req.rules_en.as_deref()),
             rules_ru: rules(req.rules_ru.as_deref()),
+            name_uk: cut(&req.name_uk, crate::battles::KEYWORD_NAME_MAX),
+            rules_uk: rules(req.rules_uk.as_deref()),
             icon_url: req
                 .icon_url
                 .as_deref()
@@ -14935,13 +16082,17 @@ impl AppService {
             slug: row.slug,
             name_en: row.name_en,
             name_ru: row.name_ru,
+            name_uk: row.name_uk,
             note_en: row.note_en,
             note_ru: row.note_ru,
+            note_uk: row.note_uk,
             icon_url: row.icon_url,
             level_frames: row.level_frames,
             motion_wear: row.motion_wear,
             sort_order: row.sort_order,
             card_count: row.card_count,
+            race_damage: crate::battles::parse_race_damage(row.race_damage.as_deref()),
+            race_damage_step: crate::battles::RACE_DAMAGE_MAX,
         }
     }
 
@@ -14956,6 +16107,7 @@ impl AppService {
     ) -> Result<BattleRaceDto> {
         let taken = self.repo.list_battle_race_slugs_except(None).await?;
         let p = Self::prepare_race(&req, &taken)?;
+        let damage = self.race_damage_text(None, req.race_damage.as_ref()).await?;
         let rec = self
             .repo
             .insert_battle_race(
@@ -14967,6 +16119,9 @@ impl AppService {
                 p.icon_url.as_deref(),
                 p.level_frames.as_deref(),
                 p.motion_wear.as_deref(),
+                &p.name_uk,
+                p.note_uk.as_deref(),
+                damage.flatten().as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_race_created", "battle_race", rec.id, "ok");
@@ -14980,6 +16135,10 @@ impl AppService {
     ) -> Result<BattleRaceDto> {
         let taken = self.repo.list_battle_race_slugs_except(Some(id)).await?;
         let p = Self::prepare_race(&req, &taken)?;
+        // Таблица урона проверяется ДО записи и пишется той же командой, что
+        // и остальная раса: две записи подряд могли оставить имя сохранённым,
+        // а таблицу прежней, и ответить ошибкой на наполовину сделанное.
+        let damage = self.race_damage_text(Some(id), req.race_damage.as_ref()).await?;
         let rec = self
             .repo
             .update_battle_race(
@@ -14992,17 +16151,74 @@ impl AppService {
                 p.icon_url.as_deref(),
                 p.level_frames.as_deref(),
                 p.motion_wear.as_deref(),
+                &p.name_uk,
+                p.note_uk.as_deref(),
+                damage.as_ref().map(|d| d.as_deref()),
             )
             .await?;
         Self::log_domain_event("battle_race_updated", "battle_race", rec.id, "ok");
         self.find_race(rec.id).await
     }
 
+    /// Таблица урона в том виде, в каком её пишут в колонку.
+    ///
+    /// Внешний `None` — таблицу не прислали, и колонка не трогается
+    /// (утверждение из студии пишет расу без неё). Внутренний `None` — таблица
+    /// пуста. Числа приводятся к пределу, ссылки — только на расы, которые
+    /// есть, и не на саму себя (`own`).
+    async fn race_damage_text(
+        &self,
+        own: Option<Uuid>,
+        damage: Option<&battle_core::RaceDamage>,
+    ) -> Result<Option<Option<String>>> {
+        let Some(damage) = damage else { return Ok(None) };
+        let own = own.map(|id| id.to_string());
+        let known: Vec<String> = self
+            .repo
+            .list_battle_races()
+            .await?
+            .into_iter()
+            .map(|r| r.id.to_string())
+            .filter(|id| Some(id) != own.as_ref())
+            .collect();
+        let clean = crate::battles::normalize_race_damage(damage, &known);
+        Ok(Some(Self::race_damage_json(&clean)?))
+    }
+
+    fn race_damage_json(clean: &battle_core::RaceDamage) -> Result<Option<String>> {
+        if clean.is_empty() {
+            return Ok(None);
+        }
+        serde_json::to_string(clean)
+            .map(Some)
+            .map_err(|e| AppError::Internal(e.to_string()))
+    }
+
     /// Removing a race does not remove the cards that wore it — they simply
     /// stand without one. Said here as well as in the schema, because that is
     /// the thing a keeper is right to fear before clicking.
+    ///
+    /// Из таблиц урона остальных рас она вычёркивается той же транзакцией:
+    /// иначе её id лежал бы там, пока те расы не пересохранят.
     pub async fn admin_delete_battle_race(&self, id: Uuid) -> Result<()> {
-        self.repo.delete_battle_race(id).await?;
+        let gone = id.to_string();
+        let rows = self.repo.list_battle_races().await?;
+        let known: Vec<String> = rows
+            .iter()
+            .map(|r| r.id.to_string())
+            .filter(|r| *r != gone)
+            .collect();
+        let mut unlink = Vec::new();
+        for row in rows.iter().filter(|r| r.id != id) {
+            let was = crate::battles::parse_race_damage(row.race_damage.as_deref());
+            if !was.against.contains(&gone) && !was.from.contains(&gone) {
+                continue;
+            }
+            let own: Vec<String> = known.iter().filter(|k| **k != row.id.to_string()).cloned().collect();
+            let clean = crate::battles::normalize_race_damage(&was, &own);
+            unlink.push((row.id, Self::race_damage_json(&clean)?));
+        }
+        self.repo.delete_battle_race(id, &unlink).await?;
         Self::log_domain_event("battle_race_deleted", "battle_race", id, "ok");
         Ok(())
     }
@@ -15601,6 +16817,26 @@ impl AppService {
         let _ = tokio::fs::remove_file(&path).await;
     }
 
+    /// Массовое назначение расы. Раса, которой нет, — отказ словами, а не
+    /// нарушение внешнего ключа: стол держит список рас, и он мог устареть.
+    pub async fn admin_set_battle_cards_race(
+        &self,
+        card_ids: Vec<Uuid>,
+        race_id: Option<Uuid>,
+    ) -> Result<u64> {
+        if card_ids.len() > crate::battles::SHELF_CARDS as usize {
+            return Err(AppError::BadRequest("More cards than the shelf holds".into()));
+        }
+        if let Some(id) = race_id {
+            self.find_race(id).await?;
+        }
+        let changed = self.repo.set_battle_cards_race(&card_ids, race_id).await?;
+        for card in &card_ids {
+            Self::log_domain_event("battle_card_race_set", "battle_card", *card, "ok");
+        }
+        Ok(changed)
+    }
+
     pub async fn admin_reorder_battle_races(&self, ids: Vec<Uuid>) -> Result<()> {
         let mut seen = std::collections::HashSet::with_capacity(ids.len());
         if !ids.iter().all(|id| seen.insert(*id)) {
@@ -15654,6 +16890,8 @@ impl AppService {
             name_ru,
             note_en: note(req.note_en.as_deref()),
             note_ru: note(req.note_ru.as_deref()),
+            name_uk: cut(&req.name_uk),
+            note_uk: note(req.note_uk.as_deref()),
             icon_url,
             level_frames,
             motion_wear,
@@ -15672,6 +16910,8 @@ struct PreparedKeyword {
     name_ru: String,
     rules_en: Option<String>,
     rules_ru: Option<String>,
+    name_uk: String,
+    rules_uk: Option<String>,
     icon_url: Option<String>,
     point_value: Option<f64>,
 }
@@ -15682,6 +16922,8 @@ struct PreparedRace {
     name_ru: String,
     note_en: Option<String>,
     note_ru: Option<String>,
+    name_uk: String,
+    note_uk: Option<String>,
     icon_url: Option<String>,
     level_frames: Option<String>,
     motion_wear: Option<String>,
@@ -15699,6 +16941,9 @@ struct PreparedGazetteLeaf {
     dek_ru: Option<String>,
     body_en: Option<String>,
     body_ru: Option<String>,
+    title_uk: String,
+    dek_uk: Option<String>,
+    body_uk: Option<String>,
     figurine_id: Option<Uuid>,
     href: Option<String>,
     source_name: Option<String>,
@@ -15850,5 +17095,24 @@ mod tale_scene_tests {
         let mut sc = scene(vec![frame("/a"), frame("/b")], vec![]);
         sc.position = "22% 40%".into();
         assert_eq!(normalize_tale_scene(sc).unwrap().position, "22% 40%");
+    }
+}
+
+/// Что нужно, чтобы досчитать заём (`AppService::lay_with_loan`).
+struct LoanInputs {
+    fieldable: std::collections::HashSet<Uuid>,
+    owned: std::collections::HashSet<Uuid>,
+    pool: Vec<Uuid>,
+    /// Полка, по которой всё это посчитано: из неё же берутся ранги и снимки,
+    /// чтобы не читать её второй раз.
+    cards: Vec<BattleCardDto>,
+}
+
+impl LoanInputs {
+    fn tier_of(&self) -> std::collections::HashMap<Uuid, i16> {
+        self.cards
+            .iter()
+            .filter_map(|c| c.id.parse().ok().map(|id| (id, c.tier)))
+            .collect()
     }
 }
