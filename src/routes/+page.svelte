@@ -7,7 +7,8 @@
     import { observeWork, roomCta, trackWorkClicks } from '$lib/analytics';
     import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, GazetteHome, HomeContent } from '$lib/types/api';
-    import { t, brandName } from '$lib/i18n';
+    import { t, lang, brandName } from '$lib/i18n';
+    import { plateSlips } from '$lib/gazette';
     import ReelWorkCard from '$lib/components/ReelWorkCard.svelte';
     import WorkMarginIndex from '$lib/components/WorkMarginIndex.svelte';
     import VisitorBook from '$lib/components/VisitorBook.svelte';
@@ -21,6 +22,7 @@
     import { afterLoadIdle } from '$lib/after-load-idle';
     import { visitorBook } from '$lib/stores/visitor-book.svelte';
     import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
+    import { watchCurrentWork } from '$lib/stores/current-work.svelte';
     import { visitorMarks } from '$lib/stores/visitor-marks.svelte';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
@@ -139,6 +141,11 @@
     // honest count — and, because the works are seeded from load(), it is already right in
     // the prerendered HTML rather than snapping into place after hydration.
     let collectionTotal = $derived(collectionFigurines.length);
+    // Year of the earliest dated work; null when no work carries a year.
+    let firstWorkYear = $derived.by(() => {
+        const years = collectionFigurines.map((f) => f.year).filter((y): y is number => typeof y === 'number' && y > 0);
+        return years.length ? Math.min(...years) : null;
+    });
     let homeContent = $state<HomeContent>(data.homeContent);
     let gazetteHome = $state<GazetteHome>(data.gazette);
     let mouseX = $state(0.5);
@@ -210,6 +217,16 @@
     })());
     let heroObjectHref = $derived(heroPhotoFigurine ? figurineHref(heroPhotoFigurine, 'home_featured') : '/figurines');
     let latestAddedWork = $derived(pickLatestAddedWork([...collectionFigurines, ...inProgressFigurines]));
+    // Байки листает своя плитка рядом, поэтому в плитке вестника их нет:
+    // иначе две соседние плитки показывали бы одну и ту же вещь.
+    let gazetteSlips = $derived(
+        plateSlips(
+            gazetteHome.leaves.filter((leaf) => leaf.kind !== 'tale'),
+            gazetteHome.cuttings,
+            $lang,
+            latestAddedWork,
+        ),
+    );
     let showHeroCaption = $derived(Boolean(heroObjectName));
     // The hero photo. `heroFigurine` is the deterministic pick made by pickHeroFigurine —
     // the same function load() ran at build time, over the same data — so this string is
@@ -311,6 +328,14 @@
 
         for (const slot of el.querySelectorAll<HTMLElement>('[data-reel-slot]')) io.observe(slot);
         return () => io.disconnect();
+    });
+
+    // Какая работа сейчас на экране: док работы внизу (компьютер) читает её из
+    // общего хранилища. Здесь страница только сообщает ленту и снимает слежение.
+    $effect(() => {
+        const el = reelEl;
+        if (!el) return;
+        return watchCurrentWork(el, visibleGalleryFigurines, galleryRemaining, collectionFigurines);
     });
 
     // The gallery's works are shown as glass panes (ReelWorkCard). Their whole
@@ -588,7 +613,11 @@
         <div class={hlClasses('hero')} style={hlStyle('hero')} data-hl="hero">
         <section class="hero hero-cine" aria-labelledby="home-title">
 
-            <!-- Photo, left: the work is the first thing the eye meets. -->
+            <!-- Left column: the photo, then the search field and the one-line
+                 tally under it. The column is as tall as its content and sits at
+                 the top of the row, so the photo starts level with the kicker. -->
+            <div class="hero-left">
+            <!-- Photo: the work is the first thing the eye meets. -->
             <div class="cine-frame">
                 <div class="cine-photo" style="--lens-scale:{heroLensScale}">
                     <div class="hero-lens" bind:this={heroPhotoEl}>
@@ -628,6 +657,26 @@
                         <span>{$t('homeScrollCue')}</span>
                     </a>
                 {/if}
+            </div>
+
+            <div class="hero-search">
+                {#if deferHomeExtras}
+                {#await import('$lib/components/KeeperNote.svelte') then { default: KeeperNote }}
+                <KeeperNote figurines={collectionFigurines} reelIds={galleryReelIds} />
+                {/await}
+                {/if}
+                {#if collectionTotal > 0}
+                    <p class="hero-tally">
+                        <span>{$t('worldWorksCount').replace('{n}', String(collectionTotal))}</span>
+                        {#if inProgressFigurines.length > 0}
+                            <span>{$t('homeTallyInProgress').replace('{n}', String(inProgressFigurines.length))}</span>
+                        {/if}
+                        {#if firstWorkYear}
+                            <span>{$t('homeTallySince').replace('{year}', String(firstWorkYear))}</span>
+                        {/if}
+                    </p>
+                {/if}
+            </div>
             </div>
 
             <!-- Copy, right column -->
@@ -675,53 +724,66 @@
                             </a>
                         </div>
 
-                        <div class="hero-doors">
-                            <button
-                                type="button"
-                                class="hero-door"
-                                onclick={(e) => openReelModal('a', e)}
-                            >
-                                <HeroWorkshopTeaser
-                                    webm="/images/workshop/atelier-reel-tiny.webm"
-                                    mp4="/images/workshop/atelier-reel-tiny.mp4"
-                                    poster="/images/workshop/atelier-reel-tiny-poster.jpg"
-                                    label={$t('homeDoorHandsTitle')}
-                                    size="door"
-                                    interactive={false}
-                                />
-                                <span class="hero-door-copy">
-                                    <b>{$t('homeDoorHandsTitle')}</b>
-                                    <span>{$t('homeDoorHandsHint')}</span>
-                                </span>
-                            </button>
-                            <button
-                                type="button"
-                                class="hero-door"
-                                onclick={(e) => openReelModal('b', e)}
-                            >
-                                <HeroWorkshopTeaser
-                                    webm="/images/workshop/atelier-reel-2-tiny.webm"
-                                    mp4="/images/workshop/atelier-reel-2-tiny.mp4"
-                                    poster="/images/workshop/atelier-reel-2-tiny-poster.jpg"
-                                    label={$t('homeDoorBenchTitle')}
-                                    size="door"
-                                    interactive={false}
-                                    delayMs={400}
-                                />
-                                <span class="hero-door-copy">
-                                    <b>{$t('homeDoorBenchTitle')}</b>
-                                    <span>{$t('homeDoorBenchHint')}</span>
-                                </span>
-                            </button>
+                        <div class="hero-doors"><div class="hero-doors-grid">
+                            <!-- Пробный удар двумя картами игры — первой строкой
+                                 колонки, оформлен как соседние строки. Монтируется
+                                 после загрузки, как вестник и байки; до того держит
+                                 место пустышкой своего роста, чтобы колонка не
+                                 прыгала. -->
                             {#if deferHomeExtras}
-                            {#await import('$lib/components/HeroGazettePlate.svelte') then { default: HeroGazettePlate }}
+                            {#await import('$lib/components/HomeTrialStrike.svelte') then { default: HomeTrialStrike }}
+                                <div class="hero-trial"><HomeTrialStrike /></div>
+                            {/await}
+                            {:else}
+                                <div class="hero-trial"><div class="hero-trial-slot" aria-hidden="true"></div></div>
+                            {/if}
+                            <!-- Два ролика мастерской — одна плитка: оба про одно и то же,
+                                 а не два отдельных входа. Каждый кружок открывает свой ролик. -->
+                            <div class="hero-pair">
+                                <div class="hero-pair-reels">
+                                    <button
+                                        type="button"
+                                        class="hero-reel"
+                                        aria-label={$t('homeDoorHandsTitle')}
+                                        title={$t('homeDoorHandsTitle')}
+                                        onclick={(e) => openReelModal('a', e)}
+                                    >
+                                        <HeroWorkshopTeaser
+                                            webm="/images/workshop/atelier-reel-tiny.webm"
+                                            mp4="/images/workshop/atelier-reel-tiny.mp4"
+                                            poster="/images/workshop/atelier-reel-tiny-poster.jpg"
+                                            label={$t('homeDoorHandsTitle')}
+                                            size="door"
+                                            interactive={false}
+                                        />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="hero-reel"
+                                        aria-label={$t('homeDoorBenchTitle')}
+                                        title={$t('homeDoorBenchTitle')}
+                                        onclick={(e) => openReelModal('b', e)}
+                                    >
+                                        <HeroWorkshopTeaser
+                                            webm="/images/workshop/atelier-reel-2-tiny.webm"
+                                            mp4="/images/workshop/atelier-reel-2-tiny.mp4"
+                                            poster="/images/workshop/atelier-reel-2-tiny-poster.jpg"
+                                            label={$t('homeDoorBenchTitle')}
+                                            size="door"
+                                            interactive={false}
+                                            delayMs={400}
+                                        />
+                                    </button>
+                                </div>
+                                <span class="hero-pair-copy">
+                                    <b>{$t('navWorkshop')}</b>
+                                    <span>{$t('homeDoorWorkshopHint')}</span>
+                                </span>
+                            </div>
+                            {#if deferHomeExtras}
+                            {#await import('$lib/components/HeroSlideTile.svelte') then { default: HeroSlideTile }}
                             <div class="hero-door-row">
-                                <HeroGazettePlate
-                                    variant="door"
-                                    leaves={gazetteHome.leaves}
-                                    cuttings={gazetteHome.cuttings}
-                                    latestWork={latestAddedWork}
-                                />
+                                <HeroSlideTile slides={gazetteSlips} kicker={$t('homeGazettePlateLabel')} />
                             </div>
                             {/await}
                             {#await import('$lib/components/HeroTalesPlate.svelte') then { default: HeroTalesPlate }}
@@ -732,7 +794,7 @@
                             {:else}
                                 <div class="hero-door-slot" aria-hidden="true"></div>
                             {/if}
-                        </div>
+                        </div></div>
                         {#if availableFigurines.length === 0}
                             <p class="release-note">{$t('homeReleaseNote')}</p>
                         {/if}
@@ -824,12 +886,6 @@
                 </div>
             </div>
 
-            {#if deferHomeExtras}
-            {#await import('$lib/components/KeeperNote.svelte') then { default: KeeperNote }}
-            <KeeperNote figurines={collectionFigurines} reelIds={galleryReelIds} />
-            {/await}
-            {/if}
-
             <div class="work-content">
                 {#if visibleGalleryFigurines.length > 0}
                     <!-- The works, one pane per row, alternating sides. They sit on
@@ -909,6 +965,20 @@
             </div>
 
         </section>
+        </div>
+        {/if}
+
+        <!-- Три раздела сайта одного размера: работы, байки, игра. Стоит сразу
+             за аркадой работ: посетитель уже увидел собрание и решает, куда
+             идти дальше. Компонент грузится вместе с прочим необязательным
+             (`deferHomeExtras`), а полку карт и байки читает сам. -->
+        {#if hlVisible('sections')}
+        <div class={hlClasses('sections')} style={hlStyle('sections')} data-hl="sections">
+        {#if deferHomeExtras}
+        {#await import('$lib/components/HomeSections.svelte') then { default: HomeSections }}
+            <HomeSections works={collectionFigurines.length} latest={latestAddedWork} />
+        {/await}
+        {/if}
         </div>
         {/if}
 
@@ -1194,7 +1264,7 @@
     .hero-cine {
         display: grid;
         grid-template-columns: minmax(420px, 1.2fr) minmax(300px, 0.8fr);
-        align-items: center;
+        align-items: start;
         gap: clamp(28px, 4vw, 56px);
         padding:
             calc(var(--site-header-height) + clamp(18px, 2.4vw, 34px))
@@ -1431,76 +1501,127 @@
         transform: translateY(1px);
     }
 
+    /* Правая колонка первого экрана: пробный удар на всю ширину, под ним четыре
+       входа плитками 2×2: сверху два ролика мастерской, снизу то, что читают — тот же фон и скругление, что у карточки удара.
+       В плитке сверху лицо и стрелка, ниже название и строка пояснения.
+       Узкая колонка (телефон) кладёт плитки по одной, лицо слева. */
     .hero-doors {
-        display: flex;
-        flex-direction: column;
+        container-type: inline-size;
         width: 100%;
         margin-top: 8px;
-        border-bottom: 1px solid var(--border);
     }
 
-    .hero-door,
-    .hero-door-row,
-    .hero-door-slot {
-        border-top: 1px solid var(--border);
-    }
-
-    .hero-door {
+    .hero-doors-grid {
         display: grid;
-        grid-template-columns: 64px minmax(0, 1fr);
-        gap: 14px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .hero-trial {
+        grid-column: 1 / -1;
+        min-width: 0;
+    }
+
+    .hero-trial :global(.mini) {
+        margin: 0;
+    }
+
+    .hero-door-row {
+        display: flex;
+        min-width: 0;
+    }
+
+    /* Плитки входов: общий фон и скругление. */
+    .hero-door,
+    .hero-pair {
+        background: color-mix(in srgb, var(--color-canvas-sunken, #f0e9da) 72%, transparent);
+        border: 1px solid color-mix(in srgb, var(--color-ink-primary) 6%, transparent);
+        border-radius: 14px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+    }
+
+    /* Плитка мастерской: два круглых ролика рядом, справа название и строка. */
+    .hero-pair {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
         align-items: center;
-        width: 100%;
-        padding: 12px 0;
+        gap: 18px;
+        min-width: 0;
+        padding: 14px 18px 14px 14px;
+    }
+
+    .hero-pair-reels {
+        display: flex;
+        gap: 12px;
+    }
+
+    .hero-reel {
+        display: block;
+        padding: 0;
         border: none;
-        border-top: 1px solid var(--border);
         background: none;
-        text-align: left;
-        color: inherit;
-        font: inherit;
+        border-radius: 50%;
         cursor: pointer;
+        transition: transform 0.22s ease;
         -webkit-appearance: none;
         appearance: none;
     }
 
-    .hero-door:hover .hero-door-copy b,
-    .hero-door:focus-visible .hero-door-copy b {
-        color: var(--copper);
+    .hero-reel:hover {
+        transform: translateY(-2px);
     }
 
-    .hero-door:focus-visible {
+    .hero-reel:active {
+        transform: translateY(0);
+    }
+
+    .hero-reel:focus-visible {
         outline: 2px solid rgba(198, 95, 60, 0.56);
-        outline-offset: 3px;
+        outline-offset: 4px;
     }
 
-    .hero-door-copy {
+    .hero-pair-copy {
         min-width: 0;
         display: flex;
         flex-direction: column;
-        gap: 3px;
+        gap: 4px;
     }
 
-    .hero-door-copy b {
+    .hero-pair-copy b {
         font-family: 'Cormorant Garamond', serif;
-        font-size: 22px;
+        font-size: 21px;
         font-weight: 500;
-        line-height: 1.15;
+        line-height: 1.12;
         color: var(--ink);
-        transition: color 0.18s ease;
     }
 
-    .hero-door-copy span {
+    .hero-pair-copy span {
         font-size: 12px;
         line-height: 1.35;
         color: var(--muted);
     }
 
-    .hero-door-row {
-        min-width: 0;
+    .hero-door-slot {
+        grid-column: 2;
+        height: 140px;
     }
 
-    .hero-door-slot {
-        height: 88px;
+    @container (max-width: 440px) {
+        .hero-doors-grid {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .hero-door-slot {
+            grid-column: 1;
+            height: 88px;
+        }
+    }
+
+    .hero-trial-slot {
+        height: 246px;
+        margin: 10px 0;
+        border-radius: 14px;
+        background: color-mix(in srgb, var(--color-canvas-sunken, #f0e9da) 72%, transparent);
     }
 
     .release-note {
@@ -1520,6 +1641,43 @@
        Site palette throughout (no near-black cinema ground) — the
        "cinema" comes from the letterbox proportions, the HUD strip,
        and the slow drift on the photo, not from a foreign color world. */
+    .hero-left {
+        min-width: 0;
+        padding-top: 8px;
+    }
+
+    /* The search frame is sized for the gallery (64rem); under the photo it
+       takes the photo's width instead. */
+    .hero-search { margin-top: clamp(14px, 1.6vw, 22px); }
+    .hero-search :global(.keeper-slot),
+    .hero-search :global(.keeper-note) {
+        max-width: none;
+        margin-top: 0;
+    }
+    /* Under the photo only the title and the field stay: the eyebrow and the
+       lead would make the frame taller than the gap it fills. */
+    .hero-search :global(.keeper-note) { padding-block: 18px 16px; }
+    .hero-search :global(.kn-eyebrow),
+    .hero-search :global(.kn-lead) { display: none; }
+
+    .hero-tally {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 0;
+        margin: 12px 2px 0;
+        padding: 0;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--color-ink-tertiary, #7c6554);
+    }
+    .hero-tally span + span::before {
+        content: '·';
+        margin: 0 0.8em;
+        color: var(--copper);
+    }
+
     .cine-frame {
          position: relative;
         border-radius: clamp(10px, 1.2vw, 16px);
@@ -2038,7 +2196,12 @@
             gap: 22px;
         }
 
-        /* Stacked, the photo already leads in the markup. */
+        /* Stacked: photo first, then the copy, and only then the search —
+           the buttons must not sit a whole search frame below the photo. */
+        .hero-left { display: contents; }
+        .cine-frame { order: 1; }
+        .hero-text { order: 2; }
+        .hero-search { order: 3; margin-top: 0; }
 
         /* Stacked, the text has the whole page width to itself — the 580px cap
            belonged to the two-column layout and here it just walls off the

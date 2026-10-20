@@ -6,6 +6,7 @@
    * embedded in CorrespondenceInvite (home page) and inside the header's
    * quill panel (SiteHeader), via the `compact` prop.
    */
+  import { untrack } from 'svelte';
   import { scale } from 'svelte/transition';
   import { elasticOut } from 'svelte/easing';
   import { api } from '$lib/api';
@@ -14,14 +15,17 @@
   import { isValidEmail } from '$lib/validation';
 
   let {
-    source = 'home' as 'home' | 'header',
+    source = 'home' as 'home' | 'header' | 'dock',
     compact = false,
-  }: { source?: 'home' | 'header'; compact?: boolean } = $props();
+    // Начало письма, уже стоящее в поле: док работы подставляет название работы,
+    // о которой человек хочет спросить. Читается один раз, при создании формы.
+    prefill = '',
+  }: { source?: 'home' | 'header' | 'dock'; compact?: boolean; prefill?: string } = $props();
 
   const uid = $props.id();
 
   let email = $state(authStore.user?.email ?? '');
-  let message = $state('');
+  let message = $state(untrack(() => prefill));
   let submitting = $state(false);
   let sealed = $state(false);
   let error = $state('');

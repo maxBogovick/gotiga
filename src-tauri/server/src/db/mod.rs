@@ -2335,6 +2335,36 @@ impl Repository {
         Ok(rows.into_iter().map(|i| (i.figurine_id, i)).collect())
     }
 
+    /// Похожие работы, выбранные автором, для списка работ разом: по номеру работы
+    /// — до трёх номеров в том порядке, в каком автор их поставил. С
+    /// `include_hidden = false` отбрасываются работы, не стоящие на людях: в
+    /// публичный ответ скрытая работа не попадает даже номером.
+    pub async fn get_similar_for_figurines(
+        &self,
+        ids: &[Uuid],
+        include_hidden: bool,
+    ) -> Result<std::collections::HashMap<Uuid, Vec<Uuid>>> {
+        let mut out: std::collections::HashMap<Uuid, Vec<Uuid>> = std::collections::HashMap::new();
+        if ids.is_empty() {
+            return Ok(out);
+        }
+        let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(
+            "SELECT s.figurine_id, s.similar_id
+               FROM figurine_similar s
+               JOIN figurines t ON t.id = s.similar_id
+              WHERE s.figurine_id = ANY($1) AND ($2 OR t.is_visible)
+              ORDER BY s.figurine_id, s.position",
+        )
+        .bind(ids)
+        .bind(include_hidden)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        for (fig, sim) in rows {
+            out.entry(fig).or_default().push(sim);
+        }
+        Ok(out)
+    }
+
     /// Batch-load one "detail" (second-angle) image per figurine, for the
     /// home gallery's hover reveal. Same batching rationale as
     /// get_face_images_for_figurines; a figurine with no detail image is
@@ -2450,6 +2480,28 @@ impl Repository {
             })
             .collect::<Result<_>>()?;
 
+        // Похожие работы: разобрать до любой записи. Не больше трёх, без повторов и
+        // без самой работы; порядок — порядок автора. `None` — не трогать.
+        let similar_rows: Option<Vec<Uuid>> = match &f.similar_ids {
+            None => None,
+            Some(list) => {
+                let mut picked: Vec<Uuid> = Vec::new();
+                for raw in list {
+                    let sid = Uuid::parse_str(raw)
+                        .map_err(|_| AppError::BadRequest("Invalid similar figurine ID".to_string()))?;
+                    if sid != id && !picked.contains(&sid) {
+                        picked.push(sid);
+                    }
+                }
+                if picked.len() > 3 {
+                    return Err(AppError::BadRequest(
+                        "At most 3 similar figurines".to_string(),
+                    ));
+                }
+                Some(picked)
+            }
+        };
+
         // Lenient parse: a bad/empty room id frees the work (NULL → always open)
         // rather than aborting the save.
         let showing_room_uuid = f
@@ -2538,6 +2590,26 @@ impl Repository {
             .bind(step_id).bind(id).bind(&step.step_type)
             .bind(&step.description).bind(&step.image_url).bind(*sort)
             .execute(&mut *tx).await?;
+        }
+
+        if let Some(picked) = &similar_rows {
+            sqlx::query("DELETE FROM figurine_similar WHERE figurine_id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            for (pos, sid) in picked.iter().enumerate() {
+                // Через SELECT, а не VALUES: работа, которой уже нет, молча
+                // пропускается, а не рушит всё сохранение внешним ключом.
+                sqlx::query(
+                    "INSERT INTO figurine_similar (figurine_id, similar_id, position)
+                     SELECT $1, t.id, $3 FROM figurines t WHERE t.id = $2",
+                )
+                .bind(id)
+                .bind(sid)
+                .bind(pos as i16)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
 
         tx.commit().await?;
@@ -6987,6 +7059,54 @@ impl Repository {
         .bind(limit)
         .fetch_all(&self.pg_pool)
         .await?)
+    }
+
+    /// Числа для шапки одним запросом: сколько на каждой из трёх полок и сколько
+    /// из них новее метки посетителя. Условия «на людях» те же, что у самих
+    /// списков (`get_all_figurines`, `list_gazette_leaves_public`,
+    /// `list_tales_public`): число в шапке не должно расходиться с тем, что
+    /// человек увидит, открыв раздел.
+    pub async fn section_counts(
+        &self,
+        works_since: Option<DateTime<Utc>>,
+        gazette_since: Option<DateTime<Utc>>,
+        tales_since: Option<DateTime<Utc>>,
+    ) -> Result<crate::models::SectionCounts> {
+        const WORKS: &str =
+            "FROM figurines WHERE is_visible = true AND (first_look_until IS NULL OR first_look_until <= NOW())";
+        const OUT: &str = "(status = 'published' OR (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()))";
+        const WHEN: &str = "COALESCE(published_at, scheduled_at, created_at)";
+        let sql = format!(
+            "SELECT
+               (SELECT COUNT(*) {WORKS}),
+               (SELECT COUNT(*) {WORKS} AND $1::timestamptz IS NOT NULL AND created_at > $1::timestamptz),
+               (SELECT MAX(created_at) {WORKS}),
+               (SELECT COUNT(*) FROM gazette_leaves WHERE kind <> 'tale' AND {OUT}),
+               (SELECT COUNT(*) FROM gazette_leaves WHERE kind <> 'tale' AND {OUT}
+                  AND $2::timestamptz IS NOT NULL AND {WHEN} > $2::timestamptz),
+               (SELECT MAX({WHEN}) FROM gazette_leaves WHERE kind <> 'tale' AND {OUT}),
+               (SELECT COUNT(*) FROM gazette_leaves WHERE kind = 'tale' AND {OUT}),
+               (SELECT COUNT(*) FROM gazette_leaves WHERE kind = 'tale' AND {OUT}
+                  AND $3::timestamptz IS NOT NULL AND {WHEN} > $3::timestamptz),
+               (SELECT MAX({WHEN}) FROM gazette_leaves WHERE kind = 'tale' AND {OUT})"
+        );
+        type Row = (
+            i64, i64, Option<DateTime<Utc>>,
+            i64, i64, Option<DateTime<Utc>>,
+            i64, i64, Option<DateTime<Utc>>,
+        );
+        let r: Row = sqlx::query_as(&sql)
+            .bind(works_since)
+            .bind(gazette_since)
+            .bind(tales_since)
+            .fetch_one(&self.pg_pool)
+            .await?;
+        use crate::models::SectionCount;
+        Ok(crate::models::SectionCounts {
+            works: SectionCount { total: r.0, fresh: r.1, latest: r.2 },
+            gazette: SectionCount { total: r.3, fresh: r.4, latest: r.5 },
+            tales: SectionCount { total: r.6, fresh: r.7, latest: r.8 },
+        })
     }
 
     /// Rewrite the whole shelf in one statement. Ids that are not tales are

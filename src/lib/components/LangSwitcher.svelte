@@ -448,7 +448,10 @@
   .ls--strip {
     position: relative;
     display: grid;
-    grid-template-columns: repeat(var(--n), 1fr);
+    /* `minmax(0, 1fr)`, а не `1fr`: у `1fr` нижняя граница — ширина самого
+       длинного слова, и «Українська» растягивала свою колонку, а ползунок
+       (ровно треть) съезжал с выбранной клетки. */
+    grid-template-columns: repeat(var(--n), minmax(0, 1fr));
     width: min(100%, 22rem);
     padding: 3px;
     background: color-mix(in srgb, var(--ls-deep) 80%, transparent);
@@ -477,7 +480,7 @@
     align-items: center;
     gap: 2px;
     min-height: 44px;
-    padding: 6px 6px 7px;
+    padding: 6px 4px 7px;
     border: 0;
     border-radius: 999px;
     background: transparent;
@@ -498,6 +501,7 @@
   .chip-name {
     font-size: 11px;
     letter-spacing: 0.04em;
+    white-space: nowrap;
   }
 
   @media (prefers-reduced-motion: reduce) {

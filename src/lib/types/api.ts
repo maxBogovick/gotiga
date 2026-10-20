@@ -73,6 +73,9 @@ export interface FigurineListItem {
     /** "House Favorite" — rare, loud badge for pieces past a private mark-score
      *  threshold. Never a number, just a boolean (see backend HOUSE_FAVORITE_THRESHOLD). */
     houseFavorite?: boolean;
+    /** До трёх похожих работ в порядке автора (номера). Приходят только в основном
+     *  списке работ; док на главной показывает их тремя миниатюрами. */
+    similarIds?: string[];
 }
 
 /** A named, shared showing window several works can point at (e.g. "Night hall"). */
@@ -147,6 +150,34 @@ export interface EmbedIndexSummary {
     failed: number;
 }
 
+/** Помощник админки (`GET /admin/readiness`): что у работ и байек не доделано.
+ *  В списках только то, у чего есть пропуски. Считает сервер, одно место на
+ *  реестр, форму работы и вкладку «Что не доделано». */
+export interface ReadinessReport {
+    works: WorkGaps[];
+    tales: TaleGaps[];
+    /** Модель поиска лежит в сборке, и пропуск `search` проверялся. */
+    searchChecked: boolean;
+}
+
+export type WorkGap = 'photos' | 'cover' | 'angle' | 'similar' | 'search';
+
+export interface WorkGaps {
+    id: string;
+    name: string;
+    hidden: boolean;
+    similarCount: number;
+    gaps: WorkGap[];
+}
+
+export interface TaleGaps {
+    id: string;
+    title: string;
+    status: 'published' | 'scheduled';
+    /** `body_<язык>`, `title_<язык>`, `photo`. */
+    gaps: string[];
+}
+
 export interface BulkOpResult {
     affected: number;
 }
@@ -206,6 +237,9 @@ export interface Figurine {
     noticedByOthers?: boolean;
     /** "House Favorite" — the loud, rare second tier above noticedByOthers. */
     houseFavorite?: boolean;
+    /** Похожие работы, выбранные автором (до трёх, по порядку). Форма работы в
+     *  админке читает и присылает назад; нет поля — сервер оставляет прежний выбор. */
+    similarIds?: string[];
 }
 
 export type DisplayConfigBackground =
@@ -1787,7 +1821,7 @@ export interface CopyOverrides {
  *  compound blocks: they move as one unit and keep their isReturningVisitor
  *  gate; their children are ordered by bandOrder / shelfOrder. */
 export type HomeMainBlockId =
-    | 'hero' | 'returningBand' | 'gallery' | 'authorStory' | 'correspondence'
+    | 'hero' | 'returningBand' | 'gallery' | 'sections' | 'authorStory' | 'correspondence'
     | 'impressions' | 'requestSteps' | 'visitorBook' | 'latelyShelves';
 export type HomeBandBlockId = 'visitLedger' | 'noticeBoard';
 export type HomeShelfBlockId = 'firstLook' | 'markedByYou' | 'noticedByGuests';
@@ -1986,6 +2020,100 @@ export interface ReelTheme {
     cardWidth?: number;
 }
 
+/** Одна картинка у края шапки. */
+export interface HeaderDecorSide {
+    /** Путь `/static/…`; пусто — у этого края ничего нет. */
+    image?: string | null;
+    /** Ширина картинки в px; высота — вся высота шапки. */
+    width?: number | null;
+    /** Какая часть внутреннего края растворяется в страницу, % ширины. */
+    fade?: number | null;
+}
+
+/** Картинки по краям шапки на компьютере; на телефоне их нет. */
+export interface HeaderDecor {
+    left: HeaderDecorSide;
+    right: HeaderDecorSide;
+}
+
+/** Картинка из набора: композиция (фон) или фотография (человек на прозрачном фоне). */
+export interface HeaderPortraitPicture {
+    id: string;
+    name: string;
+    /** Путь `/static/…`. */
+    image: string;
+    width: number;
+    height: number;
+}
+
+/** Где стоит фотография в композиции; всё в долях композиции. */
+export interface HeaderPortraitPlace {
+    /** Середина фотографии по ширине композиции. */
+    x: number;
+    /** Нижний край фотографии по высоте композиции. */
+    y: number;
+    /** Ширина фотографии в долях ширины композиции. */
+    size: number;
+    flip: boolean;
+    /** Растворение левого и правого краёв фотографии, % её ширины. */
+    fadeSides: number;
+    /** Растворение нижнего края, % её высоты. */
+    fadeBottom: number;
+    /** Сила тени под фотографией, 0–100. */
+    shadow: number;
+}
+
+/** Какую часть композиции показывает шапка, в долях композиции. */
+export interface HeaderPortraitCrop {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+}
+
+/** Готовая картинка: композиция с фотографией, склеенные в один файл. */
+export interface HeaderPortraitAsset {
+    id: string;
+    name: string;
+    image: string;
+    width: number;
+    height: number;
+    compositionId?: string | null;
+    photoId?: string | null;
+    place?: HeaderPortraitPlace | null;
+    crop?: HeaderPortraitCrop | null;
+}
+
+/** Как картинка стоит в шапке: отступы по бокам и растворение краёв в бумагу. */
+export interface HeaderPortraitEdge {
+    /** От левого края окна до картинки, px. */
+    gapLeft: number;
+    /** От картинки до того, что правее, px. */
+    gapRight: number;
+    /** Растворение левого края картинки, % её ширины. */
+    fadeLeft: number;
+    /** Растворение правого края картинки, % её ширины. */
+    fadeRight: number;
+}
+
+/** Наборы и готовые картинки для картинки автора в свёрнутой шапке. */
+export interface HeaderPortrait {
+    compositions: HeaderPortraitPicture[];
+    photos: HeaderPortraitPicture[];
+    assets: HeaderPortraitAsset[];
+    /** Какая готовая картинка стоит в шапке; пусто — фото автора. */
+    activeId?: string | null;
+    edge?: HeaderPortraitEdge;
+}
+
+/** Что получают посетители: только картинка, которая стоит в шапке. */
+export interface HeaderPortraitShown {
+    image?: string | null;
+    width: number;
+    height: number;
+    edge?: HeaderPortraitEdge;
+}
+
 export interface ReelThemePreset {
     id: string;
     name: string;
@@ -2097,6 +2225,21 @@ export interface SaveGazetteLeafRequest {
     scheduledAt?: string | null;
     expectedFrom?: string | null;
     expectedTo?: string | null;
+}
+
+/** Сколько на одной полке и сколько из этого новее метки посетителя. */
+export interface SectionCount {
+    total: number;
+    fresh: number;
+    /** Дата самой новой записи. Хранится как есть и уходит обратно меткой. */
+    latest: string | null;
+}
+
+/** Числа у пунктов шапки: работы, вестник (без небылиц), небылицы. */
+export interface SectionCounts {
+    works: SectionCount;
+    gazette: SectionCount;
+    tales: SectionCount;
 }
 
 export interface GazetteLeavesPage {

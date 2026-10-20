@@ -318,7 +318,9 @@
   /** Готовая карта: фотография уже нарисована в картинке. */
   let baked = $derived(isBaked(frame));
   let hasBackArt = $derived(!!frame.backImage?.trim());
-  let vars = $derived(frameVars(frame));
+  // Стол рамок рассматривает картинку вблизи (лупа, перетаскивание): ему нужна
+  // полная, а не уменьшенная копия.
+  let vars = $derived(frameVars(frame, !frameEditable));
 
   /* ── Опись ────────────────────────────────────────────────────────────────
      Что печатается, в какой полосе и в каком порядке, решает РАМА. Полосы —
@@ -2613,6 +2615,18 @@
     /* Chrome, not a surface: it must never take a click, a hover or a
        text selection away from the card underneath. */
     pointer-events: none;
+  }
+
+  /* Малая карта (полка 261 px, клетка боя 140 px) берёт уменьшенную копию
+     рамки: полная весит 380–560 КБ, а на таком размере её пиксели не видны.
+     `.slot` — контейнер, поэтому правило стоит у потомков, а не у него самого. */
+  @container (max-width: 280px) {
+    .card--dressed:not(.card--overlaid) {
+      background-image: var(--frame-image-s, var(--frame-image));
+    }
+    .carving {
+      background-image: var(--frame-image-s, var(--frame-image));
+    }
   }
 
   /* The sliced carving's own layer — same box and same place in the stack as

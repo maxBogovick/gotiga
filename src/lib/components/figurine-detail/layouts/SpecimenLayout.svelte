@@ -24,6 +24,7 @@
   } from '$lib/catalog-lists';
   import '$lib/styles/figurine-detail/layout-catalog.css';
   import WorkTaleExcerpt from '$lib/components/figurine-detail/WorkTaleExcerpt.svelte';
+  import WorkInPlay from '$lib/components/figurine-detail/WorkInPlay.svelte';
 
   import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
 
@@ -205,6 +206,7 @@
 
         <div class="catalog-tale">
           <WorkTaleExcerpt tales={ctx.workTales} />
+          <WorkInPlay figurineId={ctx.figurine.id} />
         </div>
         </div>
 

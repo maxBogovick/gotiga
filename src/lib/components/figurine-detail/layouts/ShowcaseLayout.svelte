@@ -14,6 +14,7 @@
   import CommentsThread from '$lib/components/CommentsThread.svelte';
   import '$lib/styles/figurine-detail/layout-showcase.css';
   import WorkTaleExcerpt from '$lib/components/figurine-detail/WorkTaleExcerpt.svelte';
+  import WorkInPlay from '$lib/components/figurine-detail/WorkInPlay.svelte';
 
   import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle } from '$lib/components/figurine-detail/display-config';
 
@@ -332,6 +333,7 @@
     </div>
     <div class="dc-block--tale">
       <WorkTaleExcerpt tales={ctx.workTales} />
+      <WorkInPlay figurineId={ctx.figurine.id} />
     </div>
     <div class="dc-block--making" class:dc-block--hidden={!isBlockVisible(ctx.displayConfig, 'making')} style={computeBlockStyle(ctx.displayConfig, 'making')}>
     <!-- Процесс -->

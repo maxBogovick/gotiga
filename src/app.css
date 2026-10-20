@@ -118,7 +118,7 @@
      cannot scope `:root`, so it became a GLOBAL variable owned by one route: /upcoming,
      /impressions and /hall read it, but only ever saw it when the home page's CSS chunk
      happened to be loaded, i.e. depending on where the visitor had been before. */
-  --site-header-height: 68px;
+  --site-header-height: 150px;
   --cream: var(--color-canvas-base);
   --cream2: var(--color-canvas-raised);
   --ink: var(--color-ink-primary);
@@ -139,7 +139,8 @@
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@media (max-width: 680px) {
+/* Ниже 1024 px шапка — полоса в 58 px (на компьютере она в две строки, 150 px). */
+@media (max-width: 1024px) {
   :root {
     --site-header-height: 58px;
   }

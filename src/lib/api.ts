@@ -145,6 +145,9 @@ import type {
     HomeLayoutPreset,
     ReelTheme,
     ReelThemePreset,
+    HeaderDecor,
+    HeaderPortrait,
+    HeaderPortraitShown,
     DisplayConfigPreset,
     CommissionRequest,
     CommissionDto,
@@ -171,6 +174,7 @@ import type {
     GazetteStatus,
     GazetteLeaf,
     GazetteLeavesPage,
+    SectionCounts,
     GazetteHome,
     GazetteRoom,
     GazetteCutting,
@@ -960,6 +964,11 @@ export const api = {
         const q = query.trim();
         if (!q) return [];
         return webFetch(`/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+    },
+
+    /** Admin: что у работ и байек не доделано (помощник админки). */
+    async adminReadiness(): Promise<import('./types/api').ReadinessReport> {
+        return webFetch('/admin/readiness', { headers: authHeaders(), cache: 'no-store' });
     },
 
     /** Admin: (re)build the "Хранитель" search embeddings for every visible work. */
@@ -2532,6 +2541,38 @@ export const api = {
         });
     },
 
+    // === HEADER DECOR ===
+
+    async getHeaderDecor(): Promise<HeaderDecor> {
+        return webFetch('/settings/header-decor');
+    },
+
+    async saveHeaderDecor(decor: HeaderDecor): Promise<HeaderDecor> {
+        return webFetch('/admin/settings/header-decor', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(decor),
+        });
+    },
+
+    // === HEADER PORTRAIT ===
+
+    async getHeaderPortrait(): Promise<HeaderPortraitShown> {
+        return webFetch('/settings/header-portrait');
+    },
+
+    async adminGetHeaderPortrait(): Promise<HeaderPortrait> {
+        return webFetch('/admin/settings/header-portrait', { headers: authHeaders() });
+    },
+
+    async saveHeaderPortrait(body: HeaderPortrait): Promise<HeaderPortrait> {
+        return webFetch('/admin/settings/header-portrait', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
     // === REEL THEME ===
 
     async getReelTheme(): Promise<ReelTheme> {
@@ -2655,6 +2696,18 @@ export const api = {
      * deploy. That is exactly what shipped. A caller that can honestly carry on
      * without the shelf catches it itself.
      */
+    /** Числа для шапки. `since` — метки «когда смотрел»; без метки новых не считается. */
+    async getSectionCounts(
+        since: { works?: string; gazette?: string; tales?: string } = {},
+    ): Promise<SectionCounts> {
+        const q = new URLSearchParams();
+        if (since.works) q.set('worksSince', since.works);
+        if (since.gazette) q.set('gazetteSince', since.gazette);
+        if (since.tales) q.set('talesSince', since.tales);
+        const qs = q.toString();
+        return webFetch(`/site/counts${qs ? `?${qs}` : ''}`);
+    },
+
     async getTales(loadFetch?: typeof fetch): Promise<GazetteLeaf[]> {
         return await webFetch('/tales', undefined, loadFetch);
     },

@@ -2497,8 +2497,20 @@ export function inkByPicture(
  * owns the whole design: it can switch the whole effect off under a media query,
  * which an inline style cannot be talked out of.
  */
-export function frameVars(frame: BattleFrame): Record<string, string> {
+/**
+ * Адрес уменьшенной копии рамки (`/static/frames-s/…`, сервер делает её при первом
+ * запросе) — только для картинок со склада рамок. Чужой адрес и картинка из
+ * другого каталога остаются как есть: копии у них нет, и пустая рамка вместо
+ * картинки хуже лишних килобайт.
+ */
+export function smallFrameUrl(url: string | null | undefined): string | null {
+  const m = url?.trim().match(/^((?:https?:\/\/[^/]+)?\/static\/)frames\/([A-Za-z0-9_-]+\.webp)$/);
+  return m ? `${m[1]}frames-s/${m[2]}` : null;
+}
+
+export function frameVars(frame: BattleFrame, small = true): Record<string, string> {
   const image = frame.frameImage?.trim();
+  const smallImage = small ? smallFrameUrl(image) : null;
   const paperArt = frame.paperImage?.trim();
   const backArt = frame.backImage?.trim();
   const cornerArt = frame.cornerImage?.trim();
@@ -2514,6 +2526,10 @@ export function frameVars(frame: BattleFrame): Record<string, string> {
     "--edge": frame.border,
     "--foil": frame.foil || "transparent",
     "--frame-image": image ? `url("${cssUrl(image)}")` : "none",
+    // Для малой карты (до 280 px): рамка на полке и в клетке боя занимает вдвое
+    // меньше пикселей, чем в полном размере. Читает её только `@container` в
+    // `BattleCard`; без копии пусто, и работает `--frame-image`.
+    ...(smallImage ? { "--frame-image-s": `url("${cssUrl(smallImage)}")` } : {}),
     // Множитель, не размер — та же причина, что у `--type-scale`: рамка не
     // назначает пиксели, а масштабирует уже нарисованную картинку вокруг её
     // же центра. `sliced` эти два не читает — читает грамматика CSS-класса

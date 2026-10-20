@@ -197,6 +197,27 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background: поиск по смыслу догоняет текст работ. Сохранение работы
+    // обновляет поиск само, но фоном и без повтора; этот проход раз в десять
+    // минут дочищает то, что не успело или упало, и убирает снятые с сайта
+    // работы. Первый проход — через две минуты после запуска: после выкладки
+    // с новой моделью поиск переписывается сам, без кнопки в админке.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                tick.tick().await;
+                match svc.refresh_stale_embeddings().await {
+                    Ok(n) if n > 0 => tracing::info!("Search index: {n} works refreshed"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Search index refresh round failed: {e}"),
+                }
+            }
+        });
+    }
+
     // Background: объявления в Telegram-канале. Тик — пять минут: вместе с
     // выдержкой в десять минут работа выходит в канал через десять–пятнадцать
     // минут после того, как появилась на сайте. Первый тик — через минуту

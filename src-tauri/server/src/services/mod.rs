@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 mod insights;
 mod oauth_login;
+mod readiness;
 pub use insights::{BattleReport, BehaviourReport, HealthReport, PipelineHealth};
 
 #[derive(Clone)]
@@ -1163,6 +1164,7 @@ impl AppService {
             showing_room_id: f.showing_room_id.map(|u| u.to_string()),
             first_look_until: f.first_look_until,
             house_favorite,
+            similar_ids: Vec::new(),
         }
     }
 
@@ -1212,13 +1214,23 @@ impl AppService {
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
         let details = self.repo.get_detail_images_for_figurines(&ids).await?;
         let favorites = self.house_favorite_ids(&ids).await?;
+        // Публично показываются только похожие, которые сами на людях.
+        let mut similar = self.repo.get_similar_for_figurines(&ids, !visible_only).await?;
         let items = figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
                 let detail = details.get(&f.id);
                 let favorite = favorites.contains(&f.id);
-                self.to_list_item(f, face, detail, favorite)
+                let similar_ids = similar
+                    .remove(&f.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|u| u.to_string())
+                    .collect();
+                let mut item = self.to_list_item(f, face, detail, favorite);
+                item.similar_ids = similar_ids;
+                item
             })
             .collect();
         Ok(crate::models::FigurinesPage {
@@ -1411,6 +1423,15 @@ impl AppService {
             related_items,
             noticed_by_others,
             house_favorite,
+            similar_ids: self
+                .repo
+                .get_similar_for_figurines(&[uuid], is_admin)
+                .await?
+                .remove(&uuid)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|u| u.to_string())
+                .collect(),
         })
     }
 
@@ -4389,6 +4410,10 @@ fn verify_password(input: &str, hash: &str, pepper: &str, was: Option<&str>) -> 
 /// Ключ настройки: когда канал подключили. Нет его — следующий тик
 /// отмечает всё, что уже на сайте, как не подлежащее объявлению.
 const CHANNEL_SINCE_KEY: &str = "telegram_channel_since";
+/// Когда канал начал объявлять игру (карты и этюды). Свой ключ, а не прежний:
+/// канал подключён давно, и без второго ключа первый проход после выкладки
+/// объявил бы всю полку карт разом.
+const CHANNEL_PLAY_SINCE_KEY: &str = "telegram_channel_since_play";
 /// Сколько вещь стоит на людях, прежде чем выйти в канал. Работу часто
 /// показывают, а потом ещё минуту правят подпись и меняют фотографию; пост в
 /// канале так не поправишь.
@@ -5237,8 +5262,23 @@ impl AppService {
             return Ok(0);
         }
 
-        self.repo.channel_note_seen("work", &ids("work"), false).await?;
-        self.repo.channel_note_seen("leaf", &ids("leaf"), false).await?;
+        // Игра пришла в канал позже работ и листов: всё, что уже стоит на полке
+        // и на карте этюдов к первому проходу, отмечается пропущенным.
+        if self.repo.get_setting(CHANNEL_PLAY_SINCE_KEY).await?.is_none() {
+            let cards = self.repo.channel_note_seen("card", &ids("card"), true).await?;
+            let etudes = self.repo.channel_note_seen("etude", &ids("etude"), true).await?;
+            self.repo
+                .upsert_setting(CHANNEL_PLAY_SINCE_KEY, &Utc::now().to_rfc3339())
+                .await?;
+            tracing::info!(
+                "Telegram channel {chat}: {cards} cards and {etudes} etudes already on the site \
+                 are left unannounced; new ones go out from now on"
+            );
+        }
+
+        for kind in ["work", "leaf", "card", "etude"] {
+            self.repo.channel_note_seen(kind, &ids(kind), false).await?;
+        }
 
         // Ждущее, но снова снятое с сайта, не выходит и не занимает очередь:
         // вернут на сайт — выйдет тогда.
@@ -5328,6 +5368,8 @@ impl AppService {
         // `src` остаётся в замере посещений (§ 18): по нему видно, сколько
         // людей привёл канал.
         let link = |path: &str| format!("{base}{path}?src=telegram");
+        // Адрес, у которого уже есть строка запроса (`?card=`, `?play=`).
+        let link_with = |path: &str| format!("{base}{path}&src=telegram");
 
         let now = Utc::now();
         let works = self
@@ -5421,6 +5463,106 @@ impl AppService {
                     url: link(&crate::gazette::leaf_path(&leaf.kind, &leaf.slug)),
                     image,
                     button,
+                    label,
+                    tag,
+                },
+            );
+        }
+
+        // Карты полки. Строения (стены, башни) — снаряжение этюдов, не карта,
+        // и в канал не идут.
+        let cards = self.list_battle_cards_public().await?;
+        let mut card_art: HashMap<String, String> = HashMap::new();
+        for card in cards {
+            if card.kind == "structure" {
+                continue;
+            }
+            let Ok(id) = Uuid::parse_str(&card.id) else { continue };
+            let title = [&card.title_ru, &card.title_en]
+                .into_iter()
+                .map(|s| s.trim())
+                .find(|s| !s.is_empty())
+                .unwrap_or_default()
+                .to_string();
+            if title.is_empty() {
+                continue;
+            }
+            let image = card
+                .art_url
+                .as_deref()
+                .filter(|u| !u.trim().is_empty())
+                .map(absolute)
+                .or_else(|| {
+                    let work = Uuid::parse_str(card.figurine_id.as_deref()?).ok()?;
+                    faces.get(&work).cloned()
+                });
+            if let Some(img) = &image {
+                card_art.insert(card.slug.clone(), img.clone());
+            }
+            let lead = [&card.lore_ru, &card.effect_ru, &card.lore_en, &card.effect_en]
+                .into_iter()
+                .flatten()
+                .map(|s| s.trim())
+                .find(|s| !s.is_empty())
+                .map(str::to_string);
+            posts.insert(
+                ("card".to_string(), id),
+                ChannelPost {
+                    title,
+                    lead,
+                    url: link_with(&format!("/battles?card={}", card.id)),
+                    image,
+                    button: "Открыть карту",
+                    label: "Новая карта в игре",
+                    tag: "карта",
+                },
+            );
+        }
+
+        // Этюды. Картинка — фон поля, а без него — первая карта противника.
+        for etude in self.repo.list_battle_challenges(true).await? {
+            let title = [&etude.title_ru, &etude.title_en]
+                .into_iter()
+                .map(|s| s.trim())
+                .find(|s| !s.is_empty())
+                .unwrap_or_default()
+                .to_string();
+            if title.is_empty() {
+                continue;
+            }
+            let setup: serde_json::Value =
+                serde_json::from_str(&etude.setup).unwrap_or(serde_json::Value::Null);
+            let image = setup
+                .get("background")
+                .and_then(|v| v.as_str())
+                .filter(|u| !u.trim().is_empty())
+                .map(absolute)
+                .or_else(|| {
+                    let board = setup.get("keeperBoard")?.as_array()?;
+                    board
+                        .iter()
+                        .filter_map(|p| p.get("card")?.as_str())
+                        .find_map(|slug| card_art.get(slug).cloned())
+                });
+            let lead = [&etude.note_ru, &etude.note_en]
+                .into_iter()
+                .flatten()
+                .map(|s| s.trim())
+                .find(|s| !s.is_empty())
+                .map(str::to_string);
+            let (label, tag) = if etude.player_side == "deck" {
+                ("Новая встреча в игре", "этюд")
+            } else {
+                ("Новый этюд в игре", "этюд")
+            };
+            posts.insert(
+                ("etude".to_string(), etude.id),
+                ChannelPost {
+                    title,
+                    lead,
+                    url: link_with(&format!("/battles/etude?play={}", etude.id)),
+                    image,
+                    button: "Сыграть",
                     label,
                     tag,
                 },
@@ -7043,6 +7185,176 @@ impl AppService {
             return Err(AppError::BadRequest("Reel theme is too large".into()));
         }
         self.repo.upsert_setting("reel_theme", &json).await
+    }
+
+    // === HEADER DECOR ===
+
+    pub async fn get_header_decor(&self) -> Result<crate::models::HeaderDecor> {
+        parse_json_setting("header_decor", self.repo.get_setting("header_decor").await?)
+    }
+
+    pub async fn save_header_decor(
+        &self,
+        decor: crate::models::HeaderDecor,
+    ) -> Result<crate::models::HeaderDecor> {
+        fn side(
+            side: crate::models::HeaderDecorSide,
+        ) -> Result<crate::models::HeaderDecorSide> {
+            let image = crate::battles::check_background(&side.image)
+                .map_err(|e| AppError::BadRequest(e.replace("The field background", "The header picture")))?;
+            Ok(crate::models::HeaderDecorSide {
+                image,
+                width: side.width.map(|w| w.clamp(120, 640)),
+                fade: side.fade.map(|f| f.min(100)),
+            })
+        }
+        let clean = crate::models::HeaderDecor {
+            left: side(decor.left)?,
+            right: side(decor.right)?,
+        };
+        let json = serde_json::to_string(&clean).map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("header_decor", &json).await?;
+        Ok(clean)
+    }
+
+    // === HEADER PORTRAIT ===
+
+    pub async fn get_header_portrait(&self) -> Result<crate::models::HeaderPortrait> {
+        parse_json_setting(
+            "header_portrait",
+            self.repo.get_setting("header_portrait").await?,
+        )
+    }
+
+    /// Public view: only the finished picture the header shows.
+    pub async fn get_header_portrait_shown(&self) -> Result<crate::models::HeaderPortraitShown> {
+        let all = self.get_header_portrait().await?;
+        let shown = all
+            .active_id
+            .as_deref()
+            .and_then(|id| all.assets.iter().find(|a| a.id == id));
+        Ok(match shown {
+            Some(a) => crate::models::HeaderPortraitShown {
+                image: Some(a.image.clone()),
+                width: a.width,
+                height: a.height,
+                edge: all.edge.clone(),
+            },
+            None => crate::models::HeaderPortraitShown::default(),
+        })
+    }
+
+    pub async fn save_header_portrait(
+        &self,
+        body: crate::models::HeaderPortrait,
+    ) -> Result<crate::models::HeaderPortrait> {
+        use crate::models::*;
+        const PICTURES_MAX: usize = 60;
+
+        fn id_ok(id: &str) -> bool {
+            !id.is_empty()
+                && id.len() <= 64
+                && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        }
+        fn name(raw: &str) -> String {
+            raw.trim().chars().take(80).collect()
+        }
+        fn path(raw: &str) -> Result<String> {
+            crate::battles::check_background(&Some(raw.to_string()))
+                .map_err(|e| {
+                    AppError::BadRequest(e.replace("The field background", "The header picture"))
+                })?
+                .ok_or_else(|| AppError::BadRequest("The header picture has no file".into()))
+        }
+        fn px(v: u32) -> u32 {
+            v.clamp(1, 4000)
+        }
+        fn frac(v: f32, lo: f32, hi: f32) -> f32 {
+            if v.is_finite() { v.clamp(lo, hi) } else { lo }
+        }
+        fn pictures(list: Vec<HeaderPortraitPicture>) -> Result<Vec<HeaderPortraitPicture>> {
+            let mut seen = std::collections::HashSet::new();
+            let mut out = Vec::new();
+            for p in list.into_iter().take(PICTURES_MAX) {
+                if !id_ok(&p.id) || !seen.insert(p.id.clone()) {
+                    continue;
+                }
+                out.push(HeaderPortraitPicture {
+                    name: name(&p.name),
+                    image: path(&p.image)?,
+                    width: px(p.width),
+                    height: px(p.height),
+                    id: p.id,
+                });
+            }
+            Ok(out)
+        }
+
+        let compositions = pictures(body.compositions)?;
+        let photos = pictures(body.photos)?;
+
+        let mut seen = std::collections::HashSet::new();
+        let mut assets = Vec::new();
+        for a in body.assets.into_iter().take(PICTURES_MAX) {
+            if !id_ok(&a.id) || !seen.insert(a.id.clone()) {
+                continue;
+            }
+            // A link to a picture that is no longer in the library is dropped:
+            // the finished picture still stands, it just cannot be reopened.
+            let composition_id = a
+                .composition_id
+                .filter(|id| compositions.iter().any(|c| &c.id == id));
+            let photo_id = a.photo_id.filter(|id| photos.iter().any(|p| &p.id == id));
+            let place = a.place.map(|p| HeaderPortraitPlace {
+                x: frac(p.x, -1.0, 2.0),
+                y: frac(p.y, -1.0, 2.0),
+                size: frac(p.size, 0.02, 4.0),
+                flip: p.flip,
+                fade_sides: p.fade_sides.min(50),
+                fade_bottom: p.fade_bottom.min(100),
+                shadow: p.shadow.min(100),
+            });
+            let crop = a.crop.map(|c| {
+                let x = frac(c.x, 0.0, 0.99);
+                let y = frac(c.y, 0.0, 0.99);
+                HeaderPortraitCrop {
+                    x,
+                    y,
+                    w: frac(c.w, 0.01, 1.0 - x),
+                    h: frac(c.h, 0.01, 1.0 - y),
+                }
+            });
+            assets.push(HeaderPortraitAsset {
+                name: name(&a.name),
+                image: path(&a.image)?,
+                width: px(a.width),
+                height: px(a.height),
+                composition_id,
+                photo_id,
+                place,
+                crop,
+                id: a.id,
+            });
+        }
+        let active_id = body
+            .active_id
+            .filter(|id| assets.iter().any(|a| &a.id == id));
+
+        let clean = HeaderPortrait {
+            compositions,
+            photos,
+            assets,
+            active_id,
+            edge: HeaderPortraitEdge {
+                gap_left: body.edge.gap_left.min(200),
+                gap_right: body.edge.gap_right.min(200),
+                fade_left: body.edge.fade_left.min(50),
+                fade_right: body.edge.fade_right.min(50),
+            },
+        };
+        let json = serde_json::to_string(&clean).map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("header_portrait", &json).await?;
+        Ok(clean)
     }
 
     pub async fn get_reel_theme_presets(&self) -> Result<Vec<crate::models::ReelThemePreset>> {
@@ -9649,6 +9961,14 @@ impl AppService {
             .list_tales_public(crate::gazette::SHELF_TALES)
             .await?;
         Ok(rows.into_iter().map(Self::gazette_leaf_dto).collect())
+    }
+
+    /// Числа для шапки: сколько работ, листов вестника и небылиц и сколько из
+    /// них новее меток посетителя.
+    pub async fn section_counts(&self, q: SectionCountsQuery) -> Result<SectionCounts> {
+        self.repo
+            .section_counts(q.works_since, q.gazette_since, q.tales_since)
+            .await
     }
 
     /// Lay the shelf out in the given order; position is the index in the list.

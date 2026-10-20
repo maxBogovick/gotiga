@@ -37,49 +37,68 @@
 </script>
 
 <div class="raven-circle" class:is-away={$birdWalking} bind:this={circleEl} aria-hidden="true">
-  {#if framesReady}
-    {#each frames as src, i}
-      <img
-        {src}
-        alt=""
-        class="bird-frame"
-        class:visible={i === frameIndex}
-        draggable="false"
-        decoding="async"
-      />
-    {/each}
-  {/if}
+  <!-- Окно рамки: подложка и кадры ворона обрезаны по её проёму. -->
+  <div class="raven-window">
+    {#if framesReady}
+      {#each frames as src, i}
+        <img
+          {src}
+          alt=""
+          class="bird-frame"
+          class:visible={i === frameIndex}
+          draggable="false"
+          decoding="async"
+        />
+      {/each}
+    {/if}
+  </div>
+  <img class="raven-frame" src="/images/raven-frame.webp" alt="" draggable="false" decoding="async" />
 </div>
 
 <style>
+  /* Рамка из ветвей — картинка 520 × 480, проём в ней 219 × 262 с отступом
+     (156, 113). Размер задаёт высота проёма (`--raven-h`), остальное — доли
+     от него: рамка выступает за коробку, а коробка остаётся проёмом, по
+     которому ходит ворон (`HeaderBirdWalk` берёт её центр). */
   .raven-circle {
+    --raven-h: 26px;
     position: relative;
-    width: 36px;
-    height: 36px;
+    height: var(--raven-h);
+    aspect-ratio: 219 / 262;
     flex-shrink: 0;
-    border-radius: 50%;
-    background: var(--bird-circle-color, #D4860A);
+    margin-inline: calc(var(--raven-h) * 0.4);
     view-transition-name: none;
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--bird-circle-color, #D4860A) 60%, #000),
-      0 1px 4px rgba(52, 37, 28, 0.22);
-    overflow: hidden;
-    transition:
-      opacity 0.3s ease,
-      transform 0.4s cubic-bezier(0.16, 1, 0.3, 1),
-      box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .raven-circle.is-away {
-    opacity: 0;
+  .raven-window {
+    position: absolute;
+    inset: 0;
+    background: var(--bird-circle-color, #D4860A);
+    -webkit-mask: url('/images/raven-frame-fill.webp') calc(var(--raven-h) * -0.5954) calc(var(--raven-h) * -0.4313) / calc(var(--raven-h) * 1.9847) calc(var(--raven-h) * 1.8321) no-repeat;
+    mask: url('/images/raven-frame-fill.webp') calc(var(--raven-h) * -0.5954) calc(var(--raven-h) * -0.4313) / calc(var(--raven-h) * 1.9847) calc(var(--raven-h) * 1.8321) no-repeat;
+    overflow: hidden;
+  }
+
+  .raven-frame {
+    position: absolute;
+    left: -71.2%;
+    top: -43.1%;
+    width: 237.4%;
+    height: 183.2%;
+    max-width: none;
     pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+    filter: drop-shadow(0 1px 2px rgba(52, 37, 28, 0.25));
+  }
+
+  .raven-circle.is-away .raven-window :global(.bird-frame) {
+    opacity: 0;
   }
 
   :global(.brand:hover) .raven-circle:not(.is-away) {
     transform: rotate(-4deg) scale(1.05);
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--bird-circle-color, #D4860A) 80%, #000),
-      0 2px 8px rgba(52, 37, 28, 0.28);
   }
 
   .bird-frame {
@@ -87,7 +106,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: cover;
     object-position: center 60%;
     mix-blend-mode: multiply;
     opacity: 0;

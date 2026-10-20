@@ -9,6 +9,7 @@
   import { jsonLdSafe } from '$lib/jsonld';
   import { leafCopy, leafCoverUrl, neighborTitle, workHref } from '$lib/gazette';
   import { renderTale, taleMorph, taleMorphNames } from '$lib/tales';
+  import { talePlain } from '$lib/taleText';
   import { siteRefKey } from '$lib/siteLinks';
   import { visitorToken } from '$lib/visitorToken';
   import { activeSeconds, interact } from '$lib/analytics';
@@ -19,6 +20,8 @@
   import CommentsThread from '$lib/components/CommentsThread.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
   import TaleAfterword from '$lib/components/TaleAfterword.svelte';
+  import TaleListen from '$lib/components/TaleListen.svelte';
+  import WorkInPlay from '$lib/components/figurine-detail/WorkInPlay.svelte';
   import TaleProse from '$lib/components/TaleProse.svelte';
   import TaleQuoteCard from '$lib/components/TaleQuoteCard.svelte';
   import TaleStage from '$lib/components/TaleStage.svelte';
@@ -31,6 +34,8 @@
 
   let copy = $derived(data.leaf ? leafCopy(data.leaf, $lang) : null);
   let blocks = $derived(renderTale(copy?.body));
+  /** Что читает голос: заглавие, вводка и текст без разметки. */
+  let spoken = $derived(copy ? [copy.title, copy.dek, ...talePlain(copy.body).spoken].filter(Boolean) : []);
   let byline = $derived(data.leaf?.author?.trim() ?? '');
   let plate = $derived(data.leaf ? leafCoverUrl(data.leaf) : '');
   let work = $derived(data.leaf ? workHref(data.leaf, 'tale') : null);
@@ -407,6 +412,7 @@
         </p>
         <h1 class="title">{copy.title}</h1>
         {#if copy.dek}<p class="epigraph">{copy.dek}</p>{/if}
+        <TaleListen title={copy.title} {spoken} />
         <!-- Подпись печатается только тогда, когда она есть: небылица без
              автора — небылица дома, и строка «Записал(а) —» под ней
              отвечала бы на вопрос, которого никто не задавал. -->
@@ -574,6 +580,15 @@
         <footer class="stands" in:fade={{ duration: 500, delay: 220 }}>
           <a href={work}>{$t('talesWorkHere')} →</a>
         </footer>
+      {/if}
+
+      <!-- Героиня байки и карта в игре — одна работа: после последней строки
+           читатель узнаёт, что её можно взять в колоду. Блок молчит, если
+           карты из этой работы нет. -->
+      {#if data.leaf.figurineId}
+        <div class="in-play">
+          <WorkInPlay figurineId={data.leaf.figurineId} from="tale" />
+        </div>
       {/if}
 
       <!-- Отклик — та же форма, что у работ: один компонент, своя таблица. -->
@@ -969,6 +984,10 @@
     width: 18px;
     height: 1px;
     background: rgba(52, 37, 28, 0.2);
+  }
+
+  .in-play {
+    margin: 0 0 0 calc(var(--spine) + var(--spine-gap));
   }
 
   .talk {

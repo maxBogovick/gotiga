@@ -92,6 +92,7 @@
             />
           {/if}
         </span>
+        <svg class="gz-door-go" width="22" height="12" viewBox="0 0 24 14" fill="none" aria-hidden="true"><path d="M1 7h21m-5-5.5L22.5 7 17 12.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span class="gz-door-copy">
           <b>{$t('homeGazettePlateLabel')}</b>
           <span>{current.title || $t('homeDoorGazetteHint')}</span>
@@ -411,20 +412,22 @@
     transform: translateY(1px);
   }
 
-  /* Door row: same rhythm as the two workshop lockets beside it — 64px face,
-     title, a line of the current leaf. The square plate chrome drops away. */
+  /* Плитка входа: тот же фон и скругление, что у соседних входов первого
+     экрана. Сверху лицо и стрелка, ниже название и строка текущего листа.
+     Ручная кнопка «следующий» в плитке снята: лист и так сменяется сам, а
+     полоска внизу показывает, когда. */
   .gz-plate.gz-door {
     width: 100%;
     height: auto;
     min-height: 0;
     margin: 0;
-    overflow: visible;
-    flex-direction: row;
-    align-items: center;
-    border: none;
-    border-radius: 0;
-    background: none;
-    box-shadow: none;
+    overflow: hidden;
+    flex-direction: column;
+    align-items: stretch;
+    border: 1px solid color-mix(in srgb, var(--color-ink-primary, #34251c) 6%, transparent);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--color-canvas-sunken, #f0e9da) 72%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   }
 
   .gz-plate.gz-door::after {
@@ -433,25 +436,25 @@
 
   .gz-plate.gz-door:hover {
     transform: none;
-    box-shadow: none;
-    border-color: transparent;
+    background: color-mix(in srgb, var(--color-canvas-sunken, #f0e9da) 92%, transparent);
+    border-color: rgba(198, 95, 60, 0.28);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
   }
 
   .gz-plate.gz-door .gz-plate-hit {
     display: grid;
-    grid-template-columns: 64px minmax(0, 1fr);
-    grid-template-rows: auto auto;
-    column-gap: 14px;
-    row-gap: 0;
-    align-items: center;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'face go' 'copy copy' 'prog prog';
+    grid-template-rows: auto 1fr auto;
+    gap: 14px 8px;
+    align-items: start;
     flex: 1;
     min-height: 0;
-    padding: 12px 28px 12px 0;
+    padding: 14px 14px 16px;
   }
 
   .gz-door-face {
-    grid-column: 1;
-    grid-row: 1;
+    grid-area: face;
     position: relative;
     display: flex;
     align-items: center;
@@ -459,9 +462,9 @@
     width: 64px;
     height: 64px;
     overflow: hidden;
-    border-radius: 8px;
+    border-radius: 50%;
     background: #2a1a12;
-    border: 1px solid rgba(52, 37, 28, 0.14);
+    box-shadow: 0 6px 16px rgba(52, 37, 28, 0.22);
   }
 
   .gz-door-face :global(.gz-work-img),
@@ -473,22 +476,35 @@
     object-position: center top;
   }
 
+  .gz-door-go {
+    grid-area: go;
+    align-self: center;
+    color: var(--gz-ember);
+    opacity: 0.8;
+    transition: transform 0.22s ease, opacity 0.22s ease;
+  }
+
+  .gz-plate.gz-door:hover .gz-door-go {
+    opacity: 1;
+    transform: translateX(3px);
+  }
+
   .gz-door-copy {
-    grid-column: 2;
-    grid-row: 1;
+    grid-area: copy;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
   }
 
   .gz-door-copy b {
     font-family: 'Cormorant Garamond', serif;
-    font-size: 22px;
+    font-size: 21px;
     font-weight: 500;
-    line-height: 1.15;
+    line-height: 1.12;
     letter-spacing: 0;
     color: var(--gz-ink);
+    transition: color 0.18s ease;
   }
 
   .gz-door-copy span {
@@ -497,28 +513,36 @@
     font-weight: 400;
     letter-spacing: 0.01em;
     line-height: 1.35;
-    color: rgba(52, 37, 28, 0.55);
-    white-space: nowrap;
+    color: rgba(52, 37, 28, 0.6);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .gz-plate.gz-door .gz-progress {
-    grid-column: 2;
-    grid-row: 2;
-    margin: 6px 0 0;
+    grid-area: prog;
+    margin: 0;
   }
 
   .gz-plate.gz-door .gz-next {
-    position: static;
-    flex-shrink: 0;
-    width: 28px;
-    height: 28px;
-    margin-right: 0;
+    display: none;
   }
 
   .gz-plate.gz-door:hover .gz-door-copy b {
     color: var(--gz-ember);
+  }
+
+  @container (max-width: 440px) {
+    .gz-plate.gz-door .gz-plate-hit {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-areas: 'face copy go' '. prog .';
+      grid-template-rows: auto auto;
+      align-items: center;
+      gap: 14px;
+      row-gap: 8px;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

@@ -27,6 +27,9 @@
   import DisplayConfigEditor from '$lib/components/admin/DisplayConfigEditor.svelte';
   import CatalogListsEditor from '$lib/components/admin/CatalogListsEditor.svelte';
   import HomePlacement from '$lib/components/admin/HomePlacement.svelte';
+  import SimilarPicker from '$lib/components/admin/SimilarPicker.svelte';
+  import { adminReadiness, workGapText, workGapHint, WORK_GAP_TAB } from '$lib/stores/admin-readiness.svelte';
+  import type { WorkGap } from '$lib/types/api';
 
   let {
     figurine,
@@ -40,6 +43,7 @@
     onCancel,
     onMessage,
     onLayGazette,
+    askTab = $bindable(null),
   }: {
     figurine: Figurine;
     /** The whole registry — powers the material/technique/dimensions suggestions. */
@@ -54,12 +58,41 @@
     onCancel: () => void;
     onMessage: (text: string, type?: string) => void;
     onLayGazette?: (seed: GazetteSeed) => void;
+    /** Вкладка формы, которую просит открыть помощник («Что не доделано»). */
+    askTab?: 'media' | 'object' | null;
   } = $props();
 
   let isSaving = $state(false);
   let showingsEditor = $state<FigurineShowingsEditor | null>(null);
   let activeFormTab = $state<'media' | 'text' | 'object' | 'passport' | 'catalog' | 'vitrina'>('media');
   let selectedImageIdx = $state<number | null>(null);
+
+  $effect(() => {
+    if (!askTab) return;
+    activeFormTab = askTab;
+    askTab = null;
+  });
+
+  // Помощник: что у этой работы не доделано — по сохранённому (сервер).
+  let gaps = $derived(adminReadiness.work(figurine.id));
+  let searchBusy = $state(false);
+
+  function fixGap(gap: WorkGap) {
+    const tab = WORK_GAP_TAB[gap];
+    if (tab) activeFormTab = tab;
+  }
+
+  async function searchNow() {
+    searchBusy = true;
+    try {
+      const n = await adminReadiness.searchNow();
+      onMessage($t('adminGapSearchDone').replace('{n}', String(n)), 'success');
+    } catch (e) {
+      onMessage($t('adminGapSearchFailed') + e, 'error');
+    } finally {
+      searchBusy = false;
+    }
+  }
   let uploadingVideo = $state(false);
   let uploadingImage = $state(false);
   let uploadingAudio = $state(false);
@@ -737,6 +770,29 @@
     {/each}
 </div>
 
+<!-- ── ПОМОЩНИК: что не доделано (по сохранённому) ────────── -->
+{#if gaps}
+<div class="shrink-0 flex flex-wrap items-center gap-1.5 px-4 py-2 border-b border-amber-700/20 bg-amber-50/70 text-[11px]">
+    <span class="text-amber-900/80">{$t('adminGapSavedWithout')}</span>
+    {#each gaps.gaps as gap (gap)}
+        {#if WORK_GAP_TAB[gap]}
+            <button onclick={() => fixGap(gap)} title={workGapHint($t, gap)}
+                class="px-2 py-0.5 border border-amber-700/40 text-amber-900 hover:bg-amber-100 transition-colors">
+                {workGapText($t, gap, gaps)} →
+            </button>
+        {:else}
+            <span class="inline-flex items-center gap-1.5 px-2 py-0.5 border border-amber-700/25 text-amber-900" title={workGapHint($t, gap)}>
+                {workGapText($t, gap, gaps)}
+                <button onclick={searchNow} disabled={searchBusy}
+                    class="underline underline-offset-2 hover:text-[#34251c] disabled:opacity-50 disabled:cursor-wait">
+                    {$t('adminGapSearchNow')}
+                </button>
+            </span>
+        {/if}
+    {/each}
+</div>
+{/if}
+
 <!-- ── TAB CONTENT (scrollable) ──────────────────────────── -->
 <div class="flex-1 overflow-y-auto">
 
@@ -1130,6 +1186,8 @@
         </div>
 
         <HomePlacement {figurine} {figurines} />
+
+        <SimilarPicker selfId={figurine.id} {figurines} bind:value={figurine.similarIds} />
 
         <label class="block">
             <span class="label">{$t('adminFieldSlug')}</span>

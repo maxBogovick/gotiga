@@ -23,7 +23,7 @@ import { fontStack } from '$lib/fonts';
 // are compound blocks: they travel as one unit (keeping their isReturningVisitor
 // gate) and order their own children via bandOrder / shelfOrder.
 export const HOME_MAIN_BLOCK_IDS: readonly HomeMainBlockId[] = [
-    'hero', 'returningBand', 'gallery', 'authorStory', 'correspondence',
+    'hero', 'returningBand', 'gallery', 'sections', 'authorStory', 'correspondence',
     'impressions', 'requestSteps', 'visitorBook', 'latelyShelves',
 ] as const;
 export const HOME_BAND_BLOCK_IDS: readonly HomeBandBlockId[] = ['visitLedger', 'noticeBoard'] as const;
@@ -47,8 +47,16 @@ export function normalizeHomeOrder<T extends HomeBlockId>(
 ): T[] {
     if (!saved?.length) return [...all];
     const known = saved.filter((id) => all.includes(id));
-    const missing = all.filter((id) => !known.includes(id));
-    return [...known, ...missing];
+    // A block added after the config was saved goes right after the block that
+    // precedes it by default — not to the very end, where a new block on a
+    // long page would never be seen.
+    const out = [...known];
+    for (const id of all) {
+        if (out.includes(id)) continue;
+        const before = all.slice(0, all.indexOf(id)).reverse().find((b) => out.includes(b));
+        out.splice(before ? out.indexOf(before) + 1 : 0, 0, id);
+    }
+    return out;
 }
 
 export function isHomeBlockVisible(config: HomeLayoutConfig | null, blockId: HomeBlockId): boolean {

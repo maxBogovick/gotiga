@@ -28,6 +28,8 @@
     import MessagesPanel from '$lib/components/admin/MessagesPanel.svelte';
     import DesignEditor from '$lib/components/admin/DesignEditor.svelte';
     import HomeLayoutEditor from '$lib/components/admin/HomeLayoutEditor.svelte';
+    import HeaderDecorPanel from '$lib/components/admin/HeaderDecorPanel.svelte';
+    import HeaderPortraitPanel from '$lib/components/admin/HeaderPortraitPanel.svelte';
     import ReelThemePanel from '$lib/components/admin/ReelThemePanel.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
@@ -46,6 +48,8 @@
     import FigurineForm from '$lib/components/admin/FigurineForm.svelte';
     import SlugsPanel from '$lib/components/admin/SlugsPanel.svelte';
     import ShowingRoomsPanel from '$lib/components/admin/ShowingRoomsPanel.svelte';
+    import ReadinessPanel from '$lib/components/admin/ReadinessPanel.svelte';
+    import { adminReadiness, workGapText, workGapHint } from '$lib/stores/admin-readiness.svelte';
     import LangSwitcher from '$lib/components/LangSwitcher.svelte';
 
     // === AUTH ===
@@ -75,6 +79,7 @@
             setOwnerBrowser(true);
             await loadFigurines();
             await loadShowingRooms();
+            void adminReadiness.load();
         } catch {
             loginError = $t('adminLoginError');
         } finally {
@@ -94,6 +99,8 @@
     // === STATE ===
     let figurines = $state<FigurineListItem[]>([]);
     let selectedFigurine = $state<Figurine | null>(null);
+    /** Вкладка формы работы, которую просит помощник («Что не доделано»). */
+    let formTabAsk = $state<'media' | 'object' | null>(null);
 
     let savedSnapshot = $state<string>('');
     // Raised by the form while an upload is in flight — blocks switching works.
@@ -114,6 +121,7 @@
             label: 'adminGroupCollection',
             tabs: [
                 ['registry',  'adminTabRegistry'],
+                ['todo',      'adminTabTodo'],
                 ['slugs',     'adminTabSlugs'],
                 ['media',     'adminTabMedia'],
                 ['rooms',     'adminTabShowingRooms'],
@@ -182,7 +190,7 @@
 
     let activeTab = $state<AdminTab>('registry');
     let gazetteSeed = $state<GazetteSeed | null>(null);
-    let activeAuthorSubTab = $state<'profile' | 'texts'>('profile');
+    let activeAuthorSubTab = $state<'profile' | 'texts' | 'header' | 'portrait'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
     let pendingBookingsCount = $state(0);
@@ -202,6 +210,8 @@
         impressions: 'bg-orange-600',
         // Оранжевый — модерация: кто-то ждёт не ответа, а решения.
         studio: 'bg-orange-600',
+        // Янтарный — никто не ждёт, но что-то забыли доделать.
+        todo: 'bg-amber-600',
     };
     function tabBadge(tab: AdminTab): number {
         switch (tab) {
@@ -211,6 +221,7 @@
             case 'comments':    return pendingCommentsCount;
             case 'impressions': return pendingImpressionsCount;
             case 'studio':      return studioWaitingCount;
+            case 'todo':        return adminReadiness.count;
             default:            return 0;
         }
     }
@@ -225,7 +236,7 @@
     // Registry list: thumbnails, a status/problem filter and a sort. The view and sort are
     // per-browser conveniences (localStorage), never state anyone else depends on.
     type RegistryView = 'list' | 'grid';
-    type RegistryFilter = 'all' | FigurineListItem['status'] | 'hidden' | 'noCover' | 'noAngle';
+    type RegistryFilter = 'all' | FigurineListItem['status'] | 'hidden' | 'gaps';
     type RegistrySort = 'site' | 'newest' | 'name';
     let registryView = $state<RegistryView>('list');
     let registryFilter = $state<RegistryFilter>('all');
@@ -256,17 +267,15 @@
     function registryMatches(f: FigurineListItem, filter: RegistryFilter): boolean {
         if (filter === 'all') return true;
         if (filter === 'hidden') return f.isVisible === false;
-        if (filter === 'noCover') return !f.faceImageUrl;
-        if (filter === 'noAngle') return !f.detailImageUrl;
+        if (filter === 'gaps') return adminReadiness.byWork.has(f.id);
         return f.status === filter;
     }
     let registryCounts = $derived.by(() => {
-        const c: Record<string, number> = { all: figurines.length, hidden: 0, noCover: 0, noAngle: 0 };
+        const c: Record<string, number> = { all: figurines.length, hidden: 0, gaps: 0 };
         for (const f of figurines) {
             c[f.status] = (c[f.status] ?? 0) + 1;
             if (f.isVisible === false) c.hidden++;
-            if (!f.faceImageUrl) c.noCover++;
-            if (!f.detailImageUrl) c.noAngle++;
+            if (adminReadiness.byWork.has(f.id)) c.gaps++;
         }
         return c;
     });
@@ -462,14 +471,16 @@
         return formBusy;
     }
 
-    async function editFigurine(id: string) {
-        if (uploadBusy()) { showMessage($t('adminMsgUploadInProgress'), 'error'); return; }
-        if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return;
+    /** Открыть работу в форме. `false` — не открылась (идёт загрузка, отказались
+     *  бросить правку, работы нет). */
+    async function editFigurine(id: string): Promise<boolean> {
+        if (uploadBusy()) { showMessage($t('adminMsgUploadInProgress'), 'error'); return false; }
+        if (hasUnsaved && !confirm($t('adminMsgUnsavedLeave'))) return false;
         const full = await api.getFigurineFresh(id);
-        if (full) {
-            selectedFigurine = { ...full };
-            savedSnapshot = JSON.stringify(selectedFigurine);
-        }
+        if (!full) return false;
+        selectedFigurine = { ...full };
+        savedSnapshot = JSON.stringify(selectedFigurine);
+        return true;
     }
 
     function createNew() {
@@ -601,6 +612,7 @@
     // saved state, and the registry list may show a new name/status.
     async function afterFigurineSaved() {
         savedSnapshot = JSON.stringify(selectedFigurine);
+        adminReadiness.afterSave();
         await loadFigurines();
     }
 
@@ -632,6 +644,7 @@
             setOwnerBrowser(true);
             loadFigurines();
             loadShowingRooms();
+            void adminReadiness.load();
             // Значок студии спрашивается сразу: остальные вкладки сообщают своё
             // число, только когда их откроют, а тут «ждёт ли что-нибудь» нужно
             // знать ДО того, как зайдёшь.
@@ -860,7 +873,7 @@
 
                 <!-- Filters: status and "what is missing" -->
                 <div class="shrink-0 flex flex-wrap gap-1">
-                    {#each [{ key: 'all', label: $t('adminRegistryFilterAll') }, ...REGISTRY_STATUSES.map((s) => ({ key: s.key, label: $t(s.label) })), { key: 'hidden', label: $t('adminRegistryHidden') }, { key: 'noCover', label: $t('adminRegistryNoCover') }, { key: 'noAngle', label: $t('adminRegistryNoAngle') }] as chip (chip.key)}
+                    {#each [{ key: 'all', label: $t('adminRegistryFilterAll') }, ...REGISTRY_STATUSES.map((s) => ({ key: s.key, label: $t(s.label) })), { key: 'hidden', label: $t('adminRegistryHidden') }, { key: 'gaps', label: $t('adminRegistryGaps') }] as chip (chip.key)}
                         {@const n = registryCounts[chip.key] ?? 0}
                         {#if chip.key === 'all' || n > 0 || registryFilter === chip.key}
                             <button
@@ -912,6 +925,7 @@
                 <div class="flex-1 overflow-y-auto pr-1 {registryView === 'grid' ? 'grid grid-cols-2 gap-2 content-start' : 'space-y-1'}">
                     {#each filteredFigurines as fig (fig.id)}
                         {@const selected = selectedFigurine?.id === fig.id}
+                        {@const gapsOf = adminReadiness.work(fig.id)}
                         {@const mark = dropMark?.id === fig.id ? dropMark.where : null}
                         <!-- svelte-ignore a11y_no_static_element_interactions -->
                         <div class="relative group/row {registryView === 'grid' ? '' : 'flex'}
@@ -954,8 +968,9 @@
                                         <span>{fig.status === 'available' ? $t('adminFieldStatusAvail') : fig.status === 'reserved' ? $t('adminFieldStatusRes') : fig.status === 'sold' ? $t('adminFieldStatusSold') : $t('adminFieldStatusWip')}</span>
                                         <span class="tabular-nums opacity-70" title={$t('adminRegistryOrderNo')}>№{fig.sortOrder ?? 0}</span>
                                         {#if fig.isVisible === false}<span class="px-1 border border-[#34251c]/30 text-[#34251c]/80">{$t('adminRegistryHidden')}</span>{/if}
-                                        {#if !fig.faceImageUrl}<span class="text-amber-800">{$t('adminRegistryNoCover')}</span>{/if}
-                                        {#if fig.faceImageUrl && !fig.detailImageUrl}<span class="text-[#c65f3c]/80">{$t('adminRegistryNoAngle')}</span>{/if}
+                                        {#each gapsOf?.gaps ?? [] as gap (gap)}
+                                            <span class="normal-case tracking-normal text-amber-800" title={workGapHint($t, gap)}>{workGapText($t, gap, gapsOf!)}</span>
+                                        {/each}
                                     </span>
                                 </span>
                             </button>
@@ -1005,6 +1020,7 @@
                         onCancel={cancelEdit}
                         onMessage={showMessage}
                         onLayGazette={layGazette}
+                        bind:askTab={formTabAsk}
                     />
                 {:else}
                     <div class="h-full flex flex-col items-center justify-center text-[#5f4636] opacity-60">
@@ -1014,6 +1030,14 @@
                 {/if}
             </main>
         </div>
+
+        {:else if activeTab === 'todo'}
+            <div in:fade class="h-full overflow-auto">
+                <ReadinessPanel
+                    onOpenWork={async (id, tab) => { activeTab = 'registry'; if (await editFigurine(id)) formTabAsk = tab; }}
+                    onOpenTale={(id) => layGazette({ kind: 'tale', leafId: id })}
+                />
+            </div>
 
         {:else if activeTab === 'slugs'}
             <SlugsPanel {figurines} onReload={loadFigurines} onMessage={showMessage} />
@@ -1051,10 +1075,10 @@
             <div in:fade class="h-full flex flex-col">
                 <!-- Sub-tabs for author section -->
                 <div class="flex gap-1 border-b border-[#34251c]/10 px-4 pt-2 flex-shrink-0">
-                    {#each [[('profile'), $t('adminSubProfile')],[('texts'), $t('adminSubTexts')]] as [sub, label]}
+                    {#each [[('profile'), $t('adminSubProfile')],[('texts'), $t('adminSubTexts')],[('header'), $t('adminSubHeader')],[('portrait'), $t('adminSubPortrait')]] as [sub, label]}
                         {@const authorSubTab = activeAuthorSubTab}
                         <button
-                            onclick={() => activeAuthorSubTab = sub as 'profile' | 'texts'}
+                            onclick={() => activeAuthorSubTab = sub as 'profile' | 'texts' | 'header' | 'portrait'}
                             class="px-3 py-1.5 text-[10px] uppercase tracking-wide border-b-2 transition-colors -mb-px
                                 {authorSubTab === sub ? 'border-[#34251c]/50 text-[#34251c]' : 'border-transparent text-[#5f4636] hover:text-[#34251c]'}"
                         >{label}</button>
@@ -1063,6 +1087,10 @@
                 <div class="flex-1 overflow-hidden">
                     {#if activeAuthorSubTab === 'profile'}
                         <ProfileEditor />
+                    {:else if activeAuthorSubTab === 'header'}
+                        <HeaderDecorPanel />
+                    {:else if activeAuthorSubTab === 'portrait'}
+                        <HeaderPortraitPanel />
                     {:else}
                         <TextEditor category="author" />
                     {/if}

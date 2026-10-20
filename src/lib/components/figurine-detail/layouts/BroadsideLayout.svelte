@@ -16,6 +16,7 @@
 
   import type { DisplayConfig } from '$lib/types/api';
   import WorkTaleExcerpt from '$lib/components/figurine-detail/WorkTaleExcerpt.svelte';
+  import WorkInPlay from '$lib/components/figurine-detail/WorkInPlay.svelte';
   import { computeSectionOrderStyle, isBlockVisible, computeBlockStyle, computeElementStyle, computeAttrsStyle, computeEyebrowStyle } from '$lib/components/figurine-detail/display-config';
 
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
@@ -350,6 +351,7 @@
       </div>
       <div class="dc-block--tale">
         <WorkTaleExcerpt tales={ctx.workTales} />
+        <WorkInPlay figurineId={ctx.figurine.id} />
       </div>
       <!-- ── Процесс ──────────────────────────── -->
       <div class="dc-block--making" class:dc-block--hidden={!isBlockVisible(ctx.displayConfig, 'making')} style={computeBlockStyle(ctx.displayConfig, 'making')}>

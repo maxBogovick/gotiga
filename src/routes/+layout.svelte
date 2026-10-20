@@ -5,6 +5,9 @@
   import { page } from '$app/state';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import SiteFooter from '$lib/components/SiteFooter.svelte';
+  import SectionBar from '$lib/components/SectionBar.svelte';
+  import { WORK_LEAF_RE } from '$lib/nav';
+  import { currentWork } from '$lib/stores/current-work.svelte';
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
   import { injectStyle } from '$lib/inject-style';
   import { setCopyOverrides, lang } from '$lib/i18n';
@@ -37,6 +40,22 @@
     !page.url.pathname.startsWith('/admin') && !atDesk && !matchChrome.covering,
   );
   let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
+
+  // Нижняя панель разделов (телефон): везде, где есть шапка сайта, кроме страницы
+  // работы — там внизу закреплена кнопка действия, а разделы остаются в меню шапки.
+  let atWorkLeaf = $derived(WORK_LEAF_RE.test(page.url.pathname) && Boolean((page.data as { figurine?: unknown } | undefined)?.figurine));
+  let showSectionBar = $derived(showSiteHeader && !atWorkLeaf);
+
+  // Док работы (компьютер): подключается, только когда страница сообщила хранилищу
+  // ленту работ и окно шире 1024 px. До этого его код не грузится вовсе.
+  let wideScreen = $state(false);
+  // Нижняя панель разделов нужна только телефону и планшету. Она монтируется после
+  // загрузки и не попадает в пререндер: на компьютере она скрыта стилем, но её
+  // разметка (пять печатей) лежала в HTML каждой страницы. Место под неё занято
+  // стилем (`with-section-bar`), поэтому появление панели ничего не сдвигает.
+  let shellReady = $state(false);
+  let hasReel = $derived(currentWork.total > 0);
+  let wantsDock = $derived(showSiteHeader && wideScreen && hasReel);
   // House-descent scroll dimmer: every public page EXCEPT the figurine detail /
   // passport routes, which run their own candle vignette (stacking a second
   // scroll-linked dimmer there would over-darken the specimen).
@@ -102,9 +121,17 @@
   }
 
   let stopFontLoader: (() => void) | null = null;
+  let stopWideListener: (() => void) | null = null;
 
   onMount(() => {
     stopFontLoader = loadSiteFonts();
+
+    const wide = window.matchMedia('(min-width: 1025px)');
+    wideScreen = wide.matches;
+    shellReady = true;
+    const onWide = (e: MediaQueryListEvent) => (wideScreen = e.matches);
+    wide.addEventListener('change', onWide);
+    stopWideListener = () => wide.removeEventListener('change', onWide);
 
     // Breakage and speed, from the visitor's side. Both are no-ops for the
     // admin, for Do Not Track and for the owner's own browser (`canTrack`).
@@ -155,6 +182,7 @@
   onDestroy(() => {
     leaveRoom();
     stopFontLoader?.();
+    stopWideListener?.();
     stopPreviewListener?.();
     removeMessageListener?.();
     if (typeof document !== 'undefined') applyThemeHighlight(null);
@@ -263,7 +291,11 @@
        NOT emitted here as {@html <style>} — see the effect's comment. -->
 </svelte:head>
 
-<div class="min-h-screen bg-[#f8f1e7]">
+<div
+  class="min-h-screen bg-[#f8f1e7]"
+  class:with-section-bar={showSectionBar}
+  style:--section-bar-h={showSectionBar ? 'calc(64px + env(safe-area-inset-bottom, 0px))' : '0px'}
+>
   {#if showSiteHeader}
     <SiteHeader />
   {/if}
@@ -280,11 +312,21 @@
   {#if showSiteHeader}
     <SiteFooter />
   {/if}
+
+  {#if showSectionBar && shellReady && !wideScreen}
+    <SectionBar />
+  {/if}
+
+  {#if wantsDock}
+    {#await import('$lib/components/WorkDock.svelte') then { default: WorkDock }}
+      <WorkDock />
+    {/await}
+  {/if}
 </div>
 
 <style>
   .with-site-header {
-    padding-top: 68px;
+    padding-top: var(--site-header-height);
   }
 
   /* Matches SiteHeader's own desktop→mobile switch: below it the header shrinks
@@ -293,6 +335,11 @@
   @media (max-width: 1024px) {
     .with-site-header {
       padding-top: 58px;
+    }
+
+    /* Нижняя панель разделов закреплена и закрыла бы конец страницы. */
+    .with-section-bar {
+      padding-bottom: var(--section-bar-h);
     }
   }
 </style>

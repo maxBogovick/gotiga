@@ -492,6 +492,42 @@ async fn save_regular_media_file(
 mod tests {
     use super::*;
 
+    /// Рамка с вырезанным окном: после уменьшения окно остаётся прозрачным, а
+    /// кромка непрозрачной, и ширина равна `FRAME_SMALL_PX`.
+    #[test]
+    fn small_frame_keeps_the_window_open() {
+        let mut img = image::RgbaImage::from_pixel(1000, 1500, image::Rgba([200, 160, 90, 255]));
+        for y in 300..1200 {
+            for x in 200..800 {
+                // Цвет невидимых пикселей чёрный: именно он красил бы кромку.
+                img.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
+            }
+        }
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let small = build_small_frame(&png).unwrap();
+        let out = image::load_from_memory(&small).unwrap().to_rgba8();
+        assert_eq!(out.width(), FRAME_SMALL_PX);
+        assert_eq!(out.height(), 720);
+        assert!(out.get_pixel(240, 360).0[3] < 20, "the window must stay transparent");
+        assert!(out.get_pixel(10, 10).0[3] > 235, "the rim must stay opaque");
+        // Кромка у самого окна: цвет не темнеет от чёрных невидимых пикселей.
+        let rim = out.get_pixel(95, 360).0;
+        assert!(rim[3] > 200 && rim[0] > 150, "rim colour darkened: {rim:?}");
+    }
+
+    #[test]
+    fn small_frame_leaves_a_narrow_picture_alone() {
+        let img = image::RgbaImage::from_pixel(300, 400, image::Rgba([10, 20, 30, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert_eq!(build_small_frame(&png).unwrap(), png);
+    }
+
     #[test]
     fn maps_supported_extensions_to_media_subdirs() {
         assert_eq!(media_subdir_for_ext("jpg"), Some("images"));
@@ -1107,6 +1143,13 @@ pub async fn admin_reindex_embeddings(
 ) -> Result<Json<EmbedIndexSummary>> {
     let summary = service.reindex_all_embeddings().await?;
     Ok(Json(summary))
+}
+
+/// Admin: что у работ и байек не доделано (помощник админки).
+pub async fn admin_readiness(
+    State(service): State<AppService>,
+) -> Result<Json<ReadinessReport>> {
+    Ok(Json(service.admin_readiness().await?))
 }
 
 /// Admin: read a work's backstage visual caption (search-only; never public).
@@ -4165,6 +4208,36 @@ pub async fn save_reel_theme(
     Ok(Json(body))
 }
 
+pub async fn get_header_decor(State(service): State<AppService>) -> Result<Json<HeaderDecor>> {
+    Ok(Json(service.get_header_decor().await?))
+}
+
+pub async fn save_header_decor(
+    State(service): State<AppService>,
+    Json(body): Json<HeaderDecor>,
+) -> Result<Json<HeaderDecor>> {
+    Ok(Json(service.save_header_decor(body).await?))
+}
+
+pub async fn get_header_portrait(
+    State(service): State<AppService>,
+) -> Result<Json<HeaderPortraitShown>> {
+    Ok(Json(service.get_header_portrait_shown().await?))
+}
+
+pub async fn admin_get_header_portrait(
+    State(service): State<AppService>,
+) -> Result<Json<HeaderPortrait>> {
+    Ok(Json(service.get_header_portrait().await?))
+}
+
+pub async fn save_header_portrait(
+    State(service): State<AppService>,
+    Json(body): Json<HeaderPortrait>,
+) -> Result<Json<HeaderPortrait>> {
+    Ok(Json(service.save_header_portrait(body).await?))
+}
+
 pub async fn admin_get_reel_theme_presets(
     State(service): State<AppService>,
 ) -> Result<Json<Vec<ReelThemePreset>>> {
@@ -4716,6 +4789,13 @@ pub async fn list_tales(State(service): State<AppService>) -> Result<Json<Vec<Ga
     Ok(Json(service.list_tales_public().await?))
 }
 
+pub async fn section_counts(
+    State(service): State<AppService>,
+    Query(q): Query<SectionCountsQuery>,
+) -> Result<Json<SectionCounts>> {
+    Ok(Json(service.section_counts(q).await?))
+}
+
 pub async fn admin_reorder_tales(
     State(service): State<AppService>,
     Json(body): Json<ReorderTalesRequest>,
@@ -5110,6 +5190,100 @@ pub async fn admin_upload_battle_frame_art(
         })));
     }
     Err(AppError::BadRequest("No file field found".to_string()))
+}
+
+/// Ширина уменьшенной копии рамки. Карта на полке (261 px) и в клетке боя (140 px)
+/// на экране двойной плотности занимает до 522 px, этому хватает 480; лист взятия
+/// (400 px) читает полную картинку. Полная рамка весит 380–560 КБ, копия около 95.
+const FRAME_SMALL_PX: u32 = 480;
+
+/// Уменьшить рамку до `FRAME_SMALL_PX` по ширине. Рамка и так не шире — отдаётся
+/// как есть. Цвет перед уменьшением умножается на прозрачность и потом
+/// возвращается: иначе тёмный цвет невидимых пикселей отверстия красил бы
+/// его кромку.
+fn build_small_frame(data: &[u8]) -> Result<Vec<u8>> {
+    let decoded = image::load_from_memory(data)
+        .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
+    if decoded.width() <= FRAME_SMALL_PX {
+        return Ok(data.to_vec());
+    }
+    let rgba = decoded.to_rgba8();
+    let mut premultiplied = rgba.clone();
+    for p in premultiplied.pixels_mut() {
+        let a = p.0[3] as u32;
+        for c in 0..3 {
+            p.0[c] = ((p.0[c] as u32 * a + 127) / 255) as u8;
+        }
+    }
+    let height = ((rgba.height() as u64 * FRAME_SMALL_PX as u64) / rgba.width() as u64).max(1) as u32;
+    let mut small = image::imageops::resize(&premultiplied, FRAME_SMALL_PX, height, FilterType::Lanczos3);
+    for p in small.pixels_mut() {
+        let a = p.0[3] as u32;
+        if a > 0 && a < 255 {
+            for c in 0..3 {
+                p.0[c] = ((p.0[c] as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+    let out = encode_webp_rgba(&small);
+    Ok(if out.len() < data.len() { out } else { data.to_vec() })
+}
+
+/// Уменьшенная копия рамки: `/static/frames-s/<имя>.webp` отдаёт то, что лежит в
+/// `frames/<имя>.webp`, шириной не больше `FRAME_SMALL_PX`.
+///
+/// Копия делается при первом запросе и кладётся рядом на склад (`frames-s/`):
+/// ни переноса старых рамок, ни согласования выкладки с сервером не нужно, а
+/// перерисованная картинка (файл новее копии) пересобирается сама.
+pub async fn battle_frame_small(
+    State(config): State<Config>,
+    Path(file): Path<String>,
+) -> Result<impl IntoResponse> {
+    let stem = file
+        .strip_suffix(".webp")
+        .filter(|s| !s.is_empty() && s.len() <= 100)
+        .filter(|s| s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .ok_or_else(|| AppError::NotFound("Frame picture".into()))?;
+    let root = std::path::Path::new(&config.upload_dir);
+    let source = root.join("frames").join(format!("{stem}.webp"));
+    let small = root.join("frames-s").join(format!("{stem}.webp"));
+
+    let source_time = fs::metadata(&source)
+        .await
+        .map_err(|_| AppError::NotFound("Frame picture".into()))?
+        .modified()
+        .ok();
+    let small_time = fs::metadata(&small).await.ok().and_then(|m| m.modified().ok());
+    let fresh = match (source_time, small_time) {
+        (Some(src), Some(sm)) => sm >= src,
+        (_, Some(_)) => true,
+        _ => false,
+    };
+
+    let bytes = if fresh {
+        fs::read(&small).await.map_err(AppError::Io)?
+    } else {
+        let original = fs::read(&source).await.map_err(AppError::Io)?;
+        let built = tokio::task::spawn_blocking(move || build_small_frame(&original))
+            .await
+            .map_err(|e| AppError::Internal(format!("Frame processing task failed: {}", e)))??;
+        // Сначала во временный файл: читатель не должен увидеть половину картинки.
+        let relative = format!("frames-s/{stem}.webp");
+        let tmp = format!("frames-s/.{stem}-{}.tmp", Uuid::new_v4());
+        write_bytes(&config.upload_dir, &tmp, &built).await?;
+        fs::rename(root.join(&tmp), root.join(&relative))
+            .await
+            .map_err(AppError::Io)?;
+        built
+    };
+    Ok((
+        StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "image/webp"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=604800"),
+        ],
+        bytes,
+    ))
 }
 
 // === ДВИЖЕНИЯ ===

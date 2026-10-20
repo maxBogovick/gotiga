@@ -22,6 +22,8 @@
   import BattleLineup from '$lib/components/BattleLineup.svelte';
   import EtudeMap, { type EtudeKind } from '$lib/components/EtudeMap.svelte';
   import EtudeRoad from '$lib/components/EtudeRoad.svelte';
+  import { loadWorld, heroesOfEtude, talesOfWork, workHref, type World } from '$lib/world';
+  import { leafHref } from '$lib/gazette';
   import { matchChrome } from '$lib/stores/match-chrome.svelte';
   import type {
     BattleAction,
@@ -238,6 +240,25 @@
     const dest = challenge ? `/battles/etude?play=${challenge.id}` : '/battles/etude';
     return `/login?from=${encodeURIComponent(dest)}`;
   }
+
+  // Работы и байки героинь этюда: из этюда ведёт дорога к их историям.
+  let world = $state<World | null>(null);
+  onMount(() => {
+    loadWorld()
+      .then((w) => (world = w))
+      .catch(() => {});
+  });
+  const heroesOf = (c: BattleChallenge) =>
+    world
+      ? heroesOfEtude(world, c)
+          .slice(0, 4)
+          .map((card) => ({
+            card,
+            name: localized(card, 'title', $lang) || card.figurineName || '',
+            work: workHref(card),
+            tale: talesOfWork(world!, card.figurineId)[0] ?? null,
+          }))
+      : [];
 
   onMount(async () => {
     guestToken = authStore.token ? null : readGuest();
@@ -917,6 +938,18 @@
                     {/if}
                   </span>
                 {/if}
+                {#if heroesOf(challenge).length}
+                  <span class="heroes">
+                    {$t('worldEtudeHeroes')}:
+                    {#each heroesOf(challenge) as hero, i (hero.card.id)}{i > 0 ? ' · ' : ' '}{#if hero.work}<a
+                          href={hero.work}
+                          onclick={() => interact('world_link', 'etude_to_work')}>{hero.name}</a
+                        >{:else}{hero.name}{/if}{#if hero.tale}{' '}(<a
+                          href={leafHref(hero.tale, 'etude')}
+                          onclick={() => interact('world_link', 'etude_to_tale')}>{$t('worldTale')}</a
+                        >){/if}{/each}
+                  </span>
+                {/if}
               </div>
               {#if !signedIn && challenge.playerSide !== 'deck'}
                 <span class="reward">{$t('battleGuestNoReward')}</span>
@@ -1240,6 +1273,22 @@
 
   .kind {
     font-style: italic;
+  }
+
+  .heroes {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    color: #5b4638;
+  }
+  .heroes a {
+    color: #6f3b24;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(198, 95, 60, 0.35);
+  }
+  .heroes a:hover {
+    color: #34251c;
   }
 
   .apart {

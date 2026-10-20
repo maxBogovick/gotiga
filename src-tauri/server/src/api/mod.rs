@@ -210,6 +210,8 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             // A tale is a gazette leaf of kind `tale`; only its shelf is its own.
             // The leaf itself is still read through `/gazette/:slug`.
             .route("/tales", get(handlers::list_tales))
+            // Числа у пунктов шапки: работы, вестник, небылицы.
+            .route("/site/counts", get(handlers::section_counts))
             // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
             // The shelf and the five frames are the same for every visitor;
             // what a given person owns is not, and lives behind a session.
@@ -290,6 +292,12 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route(
                 "/admin/figurines/:id/generate-depth",
                 post(handlers::admin_generate_figurine_depth).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/readiness",
+                get(handlers::admin_readiness).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
                 ),
             )
@@ -442,6 +450,26 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                     config.clone(),
                     auth_middleware,
                 )),
+            )
+            // === HEADER DECOR ===
+            .route("/settings/header-decor", get(handlers::get_header_decor))
+            .route(
+                "/admin/settings/header-decor",
+                put(handlers::save_header_decor).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            // === HEADER PORTRAIT ===
+            .route("/settings/header-portrait", get(handlers::get_header_portrait))
+            .route(
+                "/admin/settings/header-portrait",
+                get(handlers::admin_get_header_portrait)
+                    .put(handlers::save_header_portrait)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
             )
             .route(
                 "/admin/settings/reel-theme-presets",
@@ -1815,7 +1843,9 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         // Live RSS of gazette leaves — separate from the Pinterest works channel.
         .route("/gazette/feed.xml", get(handlers::gazette_feed_rss))
         // Живая лента небылиц — для своей доски в Pinterest.
-        .route("/tales/feed.xml", get(handlers::tales_feed_rss));
+        .route("/tales/feed.xml", get(handlers::tales_feed_rss))
+        // Уменьшенные копии рамок для малых карт; делаются при первом запросе.
+        .route("/static/frames-s/:file", get(handlers::battle_frame_small));
     for subdir in [
         "images",
         "videos",

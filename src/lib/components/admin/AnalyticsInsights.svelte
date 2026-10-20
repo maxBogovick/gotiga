@@ -189,6 +189,24 @@
       .sort((a, b) => b.zeroEvents - a.zeroEvents)
       .slice(0, 10),
   );
+  // «Спросить сайт»: сколько спрашивали и о чём; вопросы без ответа — список того, чему учить сайт.
+  let askTotal = $derived(eventsOf('site_ask'));
+  let askKinds = $derived(
+    (() => {
+      const kinds = new Map<string, number>();
+      for (const r of rowsOf('site_ask')) {
+        const kind = r.detail.split(':')[1] ?? r.detail;
+        kinds.set(kind, (kinds.get(kind) ?? 0) + r.events);
+      }
+      return [...kinds.entries()].sort((a, b) => b[1] - a[1]);
+    })(),
+  );
+  let askMisses = $derived(
+    rowsOf('site_ask_miss')
+      .slice()
+      .sort((a, b) => b.events - a.events)
+      .slice(0, 20),
+  );
   let filters = $derived(rowsOf('filter').slice().sort((a, b) => b.events - a.events).slice(0, 12));
 
   /** `surface:place` rows folded into one histogram per surface. */
@@ -608,6 +626,35 @@
                   Searches that found nothing: {emptySearches.map((s) => `“${s.detail}” ×${s.zeroEvents}`).join(', ')}.
                   Each is a work to make, or a word to teach the archive.
                 </p>
+              {/if}
+            </div>
+          {/if}
+
+          {#if askTotal > 0 || askMisses.length}
+            <div class="card">
+              <h4>Ask the site <small class="muted">· {fmt(askTotal)} questions</small></h4>
+              {#if askKinds.length}
+                <ul class="bars">
+                  {#each askKinds as [kind, n]}
+                    <li>
+                      <span class="bar-label">{kind}</span>
+                      <span class="bar-track"><i style="width:{share(n, askKinds[0][1])}%"></i></span>
+                      <span class="bar-n">{fmt(n)}</span>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+              {#if askMisses.length}
+                <p class="mini-title">Questions the site could not answer</p>
+                <table class="mini">
+                  <thead><tr><th>Question</th><th class="right">Times</th></tr></thead>
+                  <tbody>
+                    {#each askMisses as m}
+                      <tr><td>{m.detail}</td><td class="right">{fmt(m.events)}</td></tr>
+                    {/each}
+                  </tbody>
+                </table>
+                <p class="muted small">Each is a kind of question to teach in <code>site-ask.ts</code>. Counted once per visit.</p>
               {/if}
             </div>
           {/if}

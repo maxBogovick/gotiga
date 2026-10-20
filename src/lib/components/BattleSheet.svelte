@@ -13,6 +13,10 @@
   import { fade } from 'svelte/transition';
   import { t, lang, localized } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
+  import { loadWorld, talesOfWork } from '$lib/world';
+  import { leafHref } from '$lib/gazette';
+  import { interact } from '$lib/analytics';
+  import type { GazetteLeaf } from '$lib/types/api';
   import BattleIcon from '$lib/components/BattleIcon.svelte';
   import {
     abilityCopy,
@@ -124,6 +128,15 @@
   let prices = $derived(pricesOf(card));
   let href = $derived(workHref(card));
   let workName = $derived(card.figurineName?.trim() || '');
+
+  // Байка о той же работе: лист карты ведёт к её истории, а не только к фото.
+  let tales = $state<GazetteLeaf[]>([]);
+  onMount(() => {
+    loadWorld()
+      .then((w) => (tales = talesOfWork(w, card.figurineId)))
+      .catch(() => {});
+  });
+  let tale = $derived(tales[0] ?? null);
   let rank = $derived(frameName(frameForCard(card, frames), $lang));
   let kindWord = $derived($t(kindLabelKey(card.kind)));
   let channelWord = $derived(
@@ -467,6 +480,11 @@
           {/if}
           {#if href}
             <a class="work" {href}>{workName || $t('battlesWorkLink')}</a>
+          {/if}
+          {#if tale}
+            <a class="work work--tale" href={leafHref(tale, 'card')} onclick={() => interact('world_link', 'card_to_tale')}
+              >{$t('worldCardTale')} →</a
+            >
           {/if}
         </footer>
       </div>
@@ -1010,6 +1028,11 @@
     color: #a08b64;
     text-decoration: none;
     border-bottom: 1px solid transparent;
+  }
+
+  .work--tale {
+    margin-left: 1rem;
+    font-style: italic;
   }
 
   .work:hover {

@@ -52,6 +52,7 @@
     visitLedger:     $t('adminHomeLayoutBlockVisitLedger'),
     noticeBoard:     $t('adminHomeLayoutBlockNoticeBoard'),
     gallery:         $t('adminHomeLayoutBlockGallery'),
+    sections:        $t('adminHomeLayoutBlockSections'),
     authorStory:     $t('adminHomeLayoutBlockAuthorStory'),
     correspondence:  $t('adminHomeLayoutBlockCorrespondence'),
     impressions:     $t('adminHomeLayoutBlockImpressions'),

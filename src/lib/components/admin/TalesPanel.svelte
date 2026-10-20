@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { adminReadiness } from '$lib/stores/admin-readiness.svelte';
   // The writing desk.
   //
   // Not a form. The gazette composer next door is a newsroom — kinds, feeds,
@@ -595,6 +596,8 @@
       slug = saved.slug;
       updatedAt = saved.updatedAt;
       savedAt = new Date();
+      // Помощник админки знает о пропусках только вышедших байек.
+      if (saved.status !== 'draft') adminReadiness.afterSave();
       // Clean only if nothing was typed while the request was in flight;
       // otherwise stay dirty and let the next autosave carry the rest.
       if (!stillTyping) {

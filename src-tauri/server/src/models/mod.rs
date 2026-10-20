@@ -332,6 +332,12 @@ pub struct FigurineListItemDto {
     /// Never a number, just a boolean.
     #[serde(default)]
     pub house_favorite: bool,
+    /// До трёх похожих работ, в порядке, который выбрал автор (таблица
+    /// `figurine_similar`). Заполняется только в основном списке работ: док на
+    /// главной читает их оттуда, а остальные списки (связанные, в работе, лента
+    /// слежения) пустые. В публичном ответе — только работы, видимые на сайте.
+    #[serde(default)]
+    pub similar_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,6 +413,42 @@ pub struct SemanticHit {
     pub id: String,
     /// Reciprocal Rank Fusion score (higher is closer). Not cosine.
     pub score: f32,
+}
+
+/// Помощник админки (`GET /admin/readiness`): что у работ и байек не доделано.
+/// В списках только то, у чего есть пропуски.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadinessReport {
+    pub works: Vec<WorkGaps>,
+    pub tales: Vec<TaleGaps>,
+    /// Модель поиска лежит в сборке, и пропуск `search` проверялся. Без неё
+    /// поиск по смыслу выключен, и «не обновлён» сказать нельзя.
+    pub search_checked: bool,
+}
+
+/// Пропуски одной работы: `photos` (ни одного фото), `cover` (нет обложки),
+/// `angle` (нет второго ракурса при двух фото и больше), `similar` (похожих
+/// меньше трёх), `search` (поиск не знает нынешний текст работы).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkGaps {
+    pub id: String,
+    pub name: String,
+    pub hidden: bool,
+    pub similar_count: i64,
+    pub gaps: Vec<String>,
+}
+
+/// Пропуски вышедшей или назначенной байки: `body_<язык>` (нет текста),
+/// `title_<язык>` (текст есть, заглавия нет), `photo` (нет фотографии).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaleGaps {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub gaps: Vec<String>,
 }
 
 /// Result of re-indexing figurine embeddings for semantic search.
@@ -525,6 +567,10 @@ pub struct FigurineDto {
     /// Same non-numeric principle: a boolean, never a count.
     #[serde(default)]
     pub house_favorite: bool,
+    /// До трёх похожих работ, выбранных автором (см. `FigurineListItemDto`). Форма
+    /// работы в админке читает их отсюда и присылает назад в `SaveFigurineRequest`.
+    #[serde(default)]
+    pub similar_ids: Vec<String>,
 }
 
 // ============================================================
@@ -1171,6 +1217,11 @@ pub struct SaveFigurineRequest {
     /// null to clear). Parsed to a timestamptz on save.
     #[serde(default)]
     pub first_look_until: Option<String>,
+    /// Похожие работы (до трёх, по порядку). `None` — поле не прислано, и прежний
+    /// выбор остаётся как есть: старая вкладка админки, не знающая этого поля,
+    /// иначе стирала бы его при каждом сохранении. `Some(vec![])` — очистить.
+    #[serde(default)]
+    pub similar_ids: Option<Vec<String>>,
     #[serde(default)]
     pub images: Vec<SaveImageRequest>,
     #[serde(default)]
@@ -3445,6 +3496,148 @@ pub struct ReelTheme {
     pub card_width: Option<f32>,
 }
 
+/// One picture at an edge of the site header.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderDecorSide {
+    /// `/static/…` path of the picture; empty or absent — nothing at this edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// Width of the picture box, in px (the picture fills the header's height).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// How much of the inner edge dissolves into the page, in % of the width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade: Option<u32>,
+}
+
+/// Pictures at the left and right edges of the desktop header.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderDecor {
+    #[serde(default)]
+    pub left: HeaderDecorSide,
+    #[serde(default)]
+    pub right: HeaderDecorSide,
+}
+
+/// One uploaded picture in the header portrait library: a composition (the
+/// background scene) or a photo (a cut-out person on a transparent ground).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderPortraitPicture {
+    pub id: String,
+    pub name: String,
+    /// `/static/…` path in the house store.
+    pub image: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Where a photo stands in a composition. Fractions of the composition, so the
+/// placement means the same at any size the picture is drawn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderPortraitPlace {
+    /// Centre of the photo, as a fraction of the composition's width.
+    pub x: f32,
+    /// Bottom edge of the photo, as a fraction of the composition's height.
+    pub y: f32,
+    /// Width of the photo, as a fraction of the composition's width.
+    pub size: f32,
+    #[serde(default)]
+    pub flip: bool,
+    /// How much of the photo's left and right edges dissolves, % of its width.
+    #[serde(default)]
+    pub fade_sides: u32,
+    /// How much of the photo's bottom edge dissolves, % of its height.
+    #[serde(default)]
+    pub fade_bottom: u32,
+    /// Strength of the shadow under the photo, 0–100.
+    #[serde(default)]
+    pub shadow: u32,
+}
+
+/// The part of the composition the header shows, as fractions of it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderPortraitCrop {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// A finished picture: the composition with the photo placed in it, flattened
+/// to one image. The placement is kept so it can be reopened and changed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderPortraitAsset {
+    pub id: String,
+    pub name: String,
+    /// `/static/…` path of the flattened picture.
+    pub image: String,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<HeaderPortraitPlace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<HeaderPortraitCrop>,
+}
+
+/// How the finished picture stands in the header: gaps beside it and how much
+/// of its left and right edges dissolves into the paper.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderPortraitEdge {
+    /// Gap between the window's left edge and the picture, px.
+    #[serde(default)]
+    pub gap_left: u32,
+    /// Gap between the picture and what follows it, px.
+    #[serde(default)]
+    pub gap_right: u32,
+    /// Dissolve of the picture's left edge, % of its width.
+    #[serde(default)]
+    pub fade_left: u32,
+    /// Dissolve of the picture's right edge, % of its width.
+    #[serde(default)]
+    pub fade_right: u32,
+}
+
+/// Library and finished pictures for the author's picture in the collapsed
+/// desktop header.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderPortrait {
+    #[serde(default)]
+    pub compositions: Vec<HeaderPortraitPicture>,
+    #[serde(default)]
+    pub photos: Vec<HeaderPortraitPicture>,
+    #[serde(default)]
+    pub assets: Vec<HeaderPortraitAsset>,
+    /// The finished picture the header shows; none — the author's photo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_id: Option<String>,
+    #[serde(default)]
+    pub edge: HeaderPortraitEdge,
+}
+
+/// What visitors get: only the picture the header shows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderPortraitShown {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    #[serde(default)]
+    pub edge: HeaderPortraitEdge,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReelThemePreset {
@@ -3661,6 +3854,37 @@ pub struct GazetteLeavesPage {
     pub total: i64,
     pub page: i64,
     pub per_page: i64,
+}
+
+/// Сколько на одной полке и сколько из этого появилось после метки, которую
+/// назвал посетитель. `latest` — дата самой новой записи: браузер хранит её,
+/// а не свои часы, и разница часов с сервером ничего не сдвигает.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionCount {
+    pub total: i64,
+    pub fresh: i64,
+    pub latest: Option<DateTime<Utc>>,
+}
+
+/// Числа для шапки: работы, листы вестника (без небылиц) и небылицы.
+#[derive(Debug, Serialize)]
+pub struct SectionCounts {
+    pub works: SectionCount,
+    pub gazette: SectionCount,
+    pub tales: SectionCount,
+}
+
+/// Метки «когда посетитель в последний раз смотрел эту полку». Пусто — меток
+/// нет, и новых не считается: сравнивать не с чем.
+#[derive(Debug, Deserialize)]
+pub struct SectionCountsQuery {
+    #[serde(rename = "worksSince")]
+    pub works_since: Option<DateTime<Utc>>,
+    #[serde(rename = "gazetteSince")]
+    pub gazette_since: Option<DateTime<Utc>>,
+    #[serde(rename = "talesSince")]
+    pub tales_since: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
