@@ -1165,7 +1165,73 @@ impl AppService {
             first_look_until: f.first_look_until,
             house_favorite,
             similar_ids: Vec::new(),
+            translations: std::collections::HashMap::new(),
         }
+    }
+
+    /// Запомнить язык записи и человека. Незнакомый код молча пропускается:
+    /// язык — удобство, а не условие, и запись из-за него не падает.
+    async fn note_lang(&self, table: &'static str, id: Uuid, user: Option<Uuid>, raw: Option<&str>) {
+        let Some(lang) = raw.and_then(crate::lang::Lang::parse) else {
+            return;
+        };
+        if let Err(e) = self.repo.remember_lang(table, id, user, lang.code()).await {
+            tracing::warn!("could not remember the language of {table} {id}: {e}");
+        }
+    }
+
+    /// На каком языке писать о записи: её язык, язык человека, английский.
+    async fn lang_for(&self, table: &'static str, id: Uuid) -> crate::lang::Lang {
+        self.repo
+            .lang_of_record(table, id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|l| crate::lang::Lang::parse(&l))
+            .unwrap_or_default()
+    }
+
+    /// Тексты работ на других языках для готового списка карточек — только
+    /// поля списка. Один запрос на весь список.
+    async fn add_list_translations(&self, items: &mut [FigurineListItemDto]) -> Result<()> {
+        let ids: Vec<Uuid> = items.iter().filter_map(|i| Uuid::parse_str(&i.id).ok()).collect();
+        let mut all = self.repo.get_figurine_translations(&ids).await?;
+        for item in items.iter_mut() {
+            let Ok(id) = Uuid::parse_str(&item.id) else { continue };
+            item.translations = all
+                .remove(&id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(lang, t)| (lang, t.for_list()))
+                .filter(|(_, t)| !t.is_empty())
+                .collect();
+        }
+        Ok(())
+    }
+
+    /// Названия одной работы на других языках, по строковому номеру. Номер не
+    /// разобрался — названий нет: ответ из-за этого не падает.
+    async fn name_translations_of(&self, id: &str) -> std::collections::HashMap<String, String> {
+        let Ok(uuid) = Uuid::parse_str(id.trim()) else {
+            return Default::default();
+        };
+        self.repo
+            .get_figurine_name_translations(&[uuid])
+            .await
+            .ok()
+            .and_then(|mut m| m.remove(&uuid))
+            .unwrap_or_default()
+    }
+
+    /// Название работы на языке человека: перевод, а без него — английское.
+    async fn figurine_name_in(&self, id: Uuid, english: &str, lang: crate::lang::Lang) -> String {
+        if lang == crate::lang::Lang::En {
+            return english.to_string();
+        }
+        self.name_translations_of(&id.to_string())
+            .await
+            .remove(lang.code())
+            .unwrap_or_else(|| english.to_string())
     }
 
     /// Batch "House Favorite" lookup for a list of figurines about to be
@@ -1216,6 +1282,7 @@ impl AppService {
         let favorites = self.house_favorite_ids(&ids).await?;
         // Публично показываются только похожие, которые сами на людях.
         let mut similar = self.repo.get_similar_for_figurines(&ids, !visible_only).await?;
+        let mut translations = self.repo.get_figurine_translations(&ids).await?;
         let items = figurines
             .into_iter()
             .map(|f| {
@@ -1228,8 +1295,14 @@ impl AppService {
                     .into_iter()
                     .map(|u| u.to_string())
                     .collect();
+                let texts = translations.remove(&f.id).unwrap_or_default();
                 let mut item = self.to_list_item(f, face, detail, favorite);
                 item.similar_ids = similar_ids;
+                item.translations = texts
+                    .into_iter()
+                    .map(|(lang, t)| (lang, t.for_list()))
+                    .filter(|(_, t)| !t.is_empty())
+                    .collect();
                 item
             })
             .collect();
@@ -1250,7 +1323,7 @@ impl AppService {
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
         let details = self.repo.get_detail_images_for_figurines(&ids).await?;
         let favorites = self.house_favorite_ids(&ids).await?;
-        Ok(figurines
+        let mut items: Vec<FigurineListItemDto> = figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
@@ -1258,7 +1331,9 @@ impl AppService {
                 let favorite = favorites.contains(&f.id);
                 self.to_list_item(f, face, detail, favorite)
             })
-            .collect())
+            .collect();
+        self.add_list_translations(&mut items).await?;
+        Ok(items)
     }
 
     pub async fn list_in_progress_figurines(&self) -> Result<Vec<FigurineListItemDto>> {
@@ -1271,7 +1346,7 @@ impl AppService {
         let faces = self.repo.get_face_images_for_figurines(&ids).await?;
         let details = self.repo.get_detail_images_for_figurines(&ids).await?;
         let favorites = self.house_favorite_ids(&ids).await?;
-        Ok(figurines
+        let mut items: Vec<FigurineListItemDto> = figurines
             .into_iter()
             .map(|f| {
                 let face = faces.get(&f.id);
@@ -1279,7 +1354,9 @@ impl AppService {
                 let favorite = favorites.contains(&f.id);
                 self.to_list_item(f, face, detail, favorite)
             })
-            .collect())
+            .collect();
+        self.add_list_translations(&mut items).await?;
+        Ok(items)
     }
 
     pub async fn get_figurine_details(&self, id: String, is_admin: bool) -> Result<FigurineDto> {
@@ -1335,11 +1412,15 @@ impl AppService {
                 self.to_list_item(r, face, detail, favorite)
             })
             .collect();
+        let mut related_items = related_items;
+        self.add_list_translations(&mut related_items).await?;
 
+        let mut alt_translations = self.repo.get_image_alt_translations(uuid).await?;
         let image_dtos = images
             .into_iter()
             .map(|i| {
                 let i_id_str = i.id.to_string();
+                let alt_translations = alt_translations.remove(&i.id).unwrap_or_default();
                 ImageDto {
                     id: i_id_str.clone(),
                     image_type: i.image_type,
@@ -1362,6 +1443,7 @@ impl AppService {
                     reveal_radius: i.reveal_radius,
                     darkness: i.darkness,
                     alt_text: i.alt_text,
+                    alt_translations,
                 }
             })
             .collect();
@@ -1432,6 +1514,12 @@ impl AppService {
                 .into_iter()
                 .map(|u| u.to_string())
                 .collect(),
+            translations: self
+                .repo
+                .get_figurine_translations(&[uuid])
+                .await?
+                .remove(&uuid)
+                .unwrap_or_default(),
         })
     }
 
@@ -1564,7 +1652,14 @@ impl AppService {
 
     /// Concatenate a figurine's curatorial fields into the text that gets
     /// embedded — ordered loosely by descriptive weight; blank/NULL fields drop.
-    fn curatorial_text(f: &Figurine) -> String {
+    ///
+    /// Translated name and short text are appended in a fixed language order
+    /// (`FigurineTextDto::LANGS`), so a query in Spanish or German finds the
+    /// work by meaning too, and the fingerprint changes when a translation does.
+    pub(crate) fn curatorial_text(
+        f: &Figurine,
+        texts: Option<&std::collections::HashMap<String, crate::models::FigurineTextDto>>,
+    ) -> String {
         let opt = |s: &Option<String>| -> Option<String> {
             s.as_ref()
                 .map(|v| v.trim().to_string())
@@ -1597,6 +1692,16 @@ impl AppService {
         if let Some(y) = f.year {
             parts.push(y.to_string());
         }
+        if let Some(texts) = texts {
+            for lang in crate::models::FigurineTextDto::LANGS {
+                let Some(t) = texts.get(lang) else { continue };
+                for field in [opt(&t.name), opt(&t.short_text)] {
+                    if let Some(v) = field {
+                        parts.push(v);
+                    }
+                }
+            }
+        }
         parts.retain(|p| !p.is_empty());
         parts.join(". ")
     }
@@ -1621,7 +1726,8 @@ impl AppService {
             return Ok(false);
         };
         let model = crate::embed::model_name();
-        let text = Self::curatorial_text(&fig);
+        let texts = self.repo.get_figurine_translations(&[id]).await?.remove(&id);
+        let text = Self::curatorial_text(&fig, texts.as_ref());
         let hash = Self::text_hash(&model, &text);
 
         let existing: Option<String> = sqlx::query_scalar(
@@ -2270,6 +2376,11 @@ impl AppService {
             .map(|r| crate::models::ShowingRoomDto {
                 id: r.id.to_string(),
                 name: r.name,
+                name_ru: r.name_ru.filter(|s| !s.trim().is_empty()),
+                name_uk: r.name_uk.filter(|s| !s.trim().is_empty()),
+                name_es: r.name_es.filter(|s| !s.trim().is_empty()),
+                name_de: r.name_de.filter(|s| !s.trim().is_empty()),
+                name_it: r.name_it.filter(|s| !s.trim().is_empty()),
                 open_from_min: r.open_from_min,
                 open_until_min: r.open_until_min,
                 open_days_mask: r.open_days_mask,
@@ -2285,6 +2396,14 @@ impl AppService {
         req: crate::models::SaveShowingRoomRequest,
     ) -> Result<()> {
         let room_id = req.id.clone();
+        for name in [&req.name_ru, &req.name_uk, &req.name_es, &req.name_de, &req.name_it]
+            .into_iter()
+            .flatten()
+        {
+            if name.trim().chars().count() > 200 {
+                return Err(AppError::BadRequest("Room name is longer than 200 characters".into()));
+            }
+        }
         let count = self.repo.get_showing_room_count().await?;
         self.repo.upsert_showing_room(&req, count).await?;
         Self::log_domain_event("showing_room_saved", "showing_room", room_id, "ok");
@@ -2341,6 +2460,8 @@ impl AppService {
     }
 
     pub async fn save_home_content(&self, content: HomeContent) -> Result<()> {
+        let before = self.repo.get_home_content().await?.unwrap_or_default();
+        let content = content.keep_translations(&before);
         self.repo.save_home_content(&content).await?;
         Self::log_domain_event("home_content_saved", "setting", "home_content", "ok");
         Ok(())
@@ -2353,6 +2474,8 @@ impl AppService {
     }
 
     pub async fn save_author_profile(&self, profile: AuthorProfile) -> Result<()> {
+        let before = self.repo.get_author_profile().await?.unwrap_or_default();
+        let profile = profile.keep_translations(&before);
         self.repo.save_author_profile(&profile).await?;
         Self::log_domain_event("author_profile_saved", "setting", "author_profile", "ok");
         Ok(())
@@ -2388,6 +2511,7 @@ impl AppService {
         } else {
             self.repo.save_order(order, user_id).await?
         };
+        self.note_lang("orders", saved.id, user_id, order.lang.as_deref()).await;
         self.observability
             .record_business_event("order_created", "ok");
         Self::log_domain_event("order_created", "order", saved.id, "ok");
@@ -2467,13 +2591,15 @@ impl AppService {
             && let Ok(Some(order)) = self.repo.get_order_by_id(id).await
             && let Some(user_id) = order.user_id
         {
-            let subject = format!("Ответ на ваш запрос — {}", order.figurine_name);
+            let lang = self.lang_for("orders", order.id).await;
+            let name = match Uuid::parse_str(&order.figurine_id) {
+                Ok(fid) => self.figurine_name_in(fid, &order.figurine_name, lang).await,
+                Err(_) => order.figurine_name.clone(),
+            };
+            let (subject, said) = order_reply_words(lang, &name);
             let body = match order.admin_notes.as_deref() {
-                Some(n) if !n.is_empty() => format!(
-                    "Ваш запрос по «{}» получил ответ.\n\n{}",
-                    order.figurine_name, n
-                ),
-                _ => format!("Ваш запрос по «{}» получил ответ.", order.figurine_name),
+                Some(n) if !n.is_empty() => format!("{said}\n\n{n}"),
+                _ => said,
             };
             let _ = self
                 .repo
@@ -2583,11 +2709,13 @@ impl AppService {
         let Some(c) = cert else {
             return Ok(None);
         };
+        let figurine_name_translations = self.name_translations_of(&c.figurine_id).await;
         Ok(Some(PublicCertificateDto {
             token: c.token,
             certificate_number: c.certificate_number,
             figurine_id: c.figurine_id,
             figurine_name: c.figurine_name,
+            figurine_name_translations,
             issued_at: c.issued_at,
             revoked: c.revoked_at.is_some(),
         }))
@@ -2766,6 +2894,9 @@ impl AppService {
                         "A petition for a new figurine",
                         "Прошение о новой фигурке",
                         "Прохання про нову фігурку",
+                        "Solicitud de una figura nueva",
+                        "Anfrage für eine neue Figur",
+                        "Richiesta di una nuova figura",
                     )
                     .to_string()
             };
@@ -2847,7 +2978,14 @@ impl AppService {
         {
             let lang = crate::lang::Lang::parse(&existing.lang).unwrap_or_default();
             let titled = !existing.title.trim().is_empty();
-            let subject = lang.pick("Petition removed", "Прошение снято", "Прохання знято");
+            let subject = lang.pick(
+                "Petition removed",
+                "Прошение снято",
+                "Прохання знято",
+                "Solicitud retirada",
+                "Anfrage entfernt",
+                "Richiesta ritirata",
+            );
             let body = match (lang, titled) {
                 (crate::lang::Lang::En, true) => format!(
                     "Your petition “{}” has been removed by the archive keeper. You are welcome to send a new one.",
@@ -2864,6 +3002,21 @@ impl AppService {
                     existing.title
                 ),
                 (crate::lang::Lang::Uk, false) => "Ваше прохання знято зберігачем архіву. Ви можете надіслати нове.".to_string(),
+                (crate::lang::Lang::Es, true) => format!(
+                    "Su solicitud «{}» ha sido retirada del archivo. Puede enviar una nueva.",
+                    existing.title
+                ),
+                (crate::lang::Lang::Es, false) => "Su solicitud ha sido retirada del archivo. Puede enviar una nueva.".to_string(),
+                (crate::lang::Lang::De, true) => format!(
+                    "Ihre Anfrage „{}“ wurde aus dem Archiv entfernt. Sie können gern eine neue senden.",
+                    existing.title
+                ),
+                (crate::lang::Lang::De, false) => "Ihre Anfrage wurde aus dem Archiv entfernt. Sie können gern eine neue senden.".to_string(),
+                (crate::lang::Lang::It, true) => format!(
+                    "La sua richiesta «{}» è stata ritirata dall’archivio. Può inviarne una nuova.",
+                    existing.title
+                ),
+                (crate::lang::Lang::It, false) => "La sua richiesta è stata ritirata dall’archivio. Può inviarne una nuova.".to_string(),
             };
             let _ = self
                 .repo
@@ -2945,21 +3098,33 @@ impl AppService {
                         "Your petition is accepted — the master takes up the work.",
                         "Ваше прошение принято — мастер берётся за работу.",
                         "Ваше прохання прийнято — майстер береться за роботу.",
+                        "Su solicitud ha sido aceptada: la autora empieza el trabajo.",
+                        "Ihre Anfrage ist angenommen: die Künstlerin beginnt mit der Arbeit.",
+                        "La sua richiesta è stata accettata: l’autrice inizia il lavoro.",
                     )),
                     CommissionStatus::InProgress => Some(lang.pick(
                         "The master has begun your figurine.",
                         "Мастер приступил к вашей фигурке.",
                         "Майстер приступив до вашої фігурки.",
+                        "La autora ha empezado su figura.",
+                        "Die Künstlerin hat mit Ihrer Figur begonnen.",
+                        "L’autrice ha iniziato la sua figura.",
                     )),
                     CommissionStatus::Completed => Some(lang.pick(
                         "Your figurine is finished.",
                         "Ваша фигурка завершена.",
                         "Вашу фігурку завершено.",
+                        "Su figura está terminada.",
+                        "Ihre Figur ist fertig.",
+                        "La sua figura è finita.",
                     )),
                     CommissionStatus::Declined => Some(lang.pick(
                         "Regrettably, the master will not take up this petition.",
                         "К сожалению, мастер не возьмётся за это прошение.",
                         "На жаль, майстер не візьметься за це прохання.",
+                        "Lamentablemente, la autora no aceptará esta solicitud.",
+                        "Leider wird die Künstlerin diese Anfrage nicht annehmen.",
+                        "Purtroppo l’autrice non accetterà questa richiesta.",
                     )),
                     _ => None,
                 };
@@ -2981,7 +3146,14 @@ impl AppService {
                         let subject = if !c.title.trim().is_empty() {
                             c.title.clone()
                         } else {
-                            lang.pick("Your petition", "Ваше прошение", "Ваше прохання")
+                            lang.pick(
+                                "Your petition",
+                                "Ваше прошение",
+                                "Ваше прохання",
+                                "Su solicitud",
+                                "Ihre Anfrage",
+                                "La sua richiesta",
+                            )
                                 .to_string()
                         };
                         let _ = self
@@ -3335,7 +3507,7 @@ impl AppService {
             .get_detail_images_for_figurines(&present_ids)
             .await?;
         let favorites = self.house_favorite_ids(&present_ids).await?;
-        Ok(present_ids
+        let mut items: Vec<FigurineListItemDto> = present_ids
             .into_iter()
             .filter_map(|id| by_id.remove(&id))
             .map(|f| {
@@ -3344,7 +3516,9 @@ impl AppService {
                 let favorite = favorites.contains(&f.id);
                 self.to_list_item(f, face, detail, favorite)
             })
-            .collect())
+            .collect();
+        self.add_list_translations(&mut items).await?;
+        Ok(items)
     }
 
     pub async fn create_booking(
@@ -3392,6 +3566,7 @@ impl AppService {
                     "These dates conflict with existing showings or confirmed bookings".to_string(),
                 )
             })?;
+        self.note_lang("figurine_bookings", booking.id, user_id, req.lang.as_deref()).await;
         self.observability
             .record_business_event("booking_created", "ok");
         Self::log_domain_event("booking_created", "booking", booking.id, "ok");
@@ -3659,48 +3834,34 @@ impl AppService {
         let Some(user_id) = booking.user_id else {
             return;
         };
-        let (subject, body) = match status {
+        let lang = self.lang_for("figurine_bookings", booking.id).await;
+        let name = self.figurine_name_in(booking.figurine_id, &booking.figurine_name, lang).await;
+        let Some((subject, base)) =
+            booking_status_words(lang, status, &name, &booking.starts_at.to_string(), &booking.ends_at.to_string())
+        else {
+            return;
+        };
+        let (extra_label, extra) = match status {
             BookingStatus::Confirmed => (
-                format!("Бронирование подтверждено — {}", booking.figurine_name),
-                {
-                    let base = format!(
-                        "Ваш запрос на бронирование «{}» ({} — {}) подтверждён.",
-                        booking.figurine_name, booking.starts_at, booking.ends_at,
-                    );
-                    match curator_conditions {
-                        Some(c) if !c.is_empty() => format!("{}\n\nУсловия куратора: {}", base, c),
-                        _ => base,
-                    }
-                },
+                lang.pick(
+                    "The curator's conditions",
+                    "Условия куратора",
+                    "Умови куратора",
+                    "Condiciones del comisario",
+                    "Bedingungen der Kuratorin",
+                    "Condizioni della curatrice",
+                ),
+                curator_conditions,
             ),
             BookingStatus::Rejected => (
-                format!("Бронирование отклонено — {}", booking.figurine_name),
-                {
-                    let base = format!(
-                        "Ваш запрос на бронирование «{}» ({} — {}) отклонён.",
-                        booking.figurine_name, booking.starts_at, booking.ends_at,
-                    );
-                    match admin_notes {
-                        Some(n) if !n.is_empty() => format!("{}\n\nПримечание: {}", base, n),
-                        _ => base,
-                    }
-                },
+                lang.pick("Note", "Примечание", "Примітка", "Nota", "Anmerkung", "Nota"),
+                admin_notes,
             ),
-            BookingStatus::Cancelled => (
-                format!("Бронирование отменено — {}", booking.figurine_name),
-                format!(
-                    "Бронирование «{}» ({} — {}) отменено.",
-                    booking.figurine_name, booking.starts_at, booking.ends_at,
-                ),
-            ),
-            BookingStatus::Completed => (
-                format!("Бронирование завершено — {}", booking.figurine_name),
-                format!(
-                    "Бронирование «{}» ({} — {}) завершено. Спасибо!",
-                    booking.figurine_name, booking.starts_at, booking.ends_at,
-                ),
-            ),
-            _ => return,
+            _ => ("", None),
+        };
+        let body = match extra {
+            Some(x) if !x.is_empty() => format!("{base}\n\n{extra_label}: {x}"),
+            _ => base,
         };
         let _ = self
             .repo
@@ -5796,6 +5957,9 @@ impl AppService {
                         "That link has gone cold. Sign up again on the site.",
                         "Ссылка остыла. Оформите подписку на сайте заново.",
                         "Посилання охололо. Оформіть підписку на сайті заново.",
+                        "El enlace ha caducado. Vuelva a suscribirse en el sitio.",
+                        "Der Link ist abgelaufen. Bitte melden Sie sich auf der Website erneut an.",
+                        "Il link è scaduto. Si iscriva di nuovo sul sito.",
                     ),
                 )
                 .await;
@@ -5827,6 +5991,15 @@ impl AppService {
             Lang::Uk => format!(
                 "<b>Ви в книзі дому</b>\nКоли на полиці з’явиться нова небилиця, я напишу сюди — без галасу й поспіху.\n\nЩоб більше не отримувати: /stop або {door}"
             ),
+            Lang::Es => format!(
+                "<b>Está suscrito</b>\nCuando aparezca un cuento nuevo en el sitio, le escribiré aquí. Nada más.\n\nPara no recibir más: /stop o {door}"
+            ),
+            Lang::De => format!(
+                "<b>Sie sind angemeldet</b>\nWenn auf der Website eine neue Geschichte erscheint, schreibe ich Ihnen hier. Sonst nichts.\n\nKeine weiteren Nachrichten: /stop oder {door}"
+            ),
+            Lang::It => format!(
+                "<b>È iscritto</b>\nQuando sul sito comparirà un nuovo racconto, le scriverò qui. Nient’altro.\n\nPer non riceverne più: /stop o {door}"
+            ),
         }
     }
 
@@ -5838,12 +6011,18 @@ impl AppService {
                 "Done — I will not write again. You can return from the site.",
                 "Готово: больше писать не буду. Вернуться можно на сайте.",
                 "Готово: більше писати не буду. Повернутися можна на сайті.",
+                "Hecho: no volveré a escribirle. Puede volver a suscribirse en el sitio.",
+                "Erledigt: Ich schreibe Ihnen nicht mehr. Wieder anmelden können Sie sich auf der Website.",
+                "Fatto: non le scriverò più. Può iscriversi di nuovo sul sito.",
             )
         } else {
             lang.pick(
                 "You are not in the house book.",
                 "Вы и так не в книге дома.",
                 "Ви й так не в книзі дому.",
+                "No está suscrito.",
+                "Sie sind nicht angemeldet.",
+                "Non è iscritto.",
             )
         };
         bot.say(chat, text).await;
@@ -5955,6 +6134,9 @@ impl AppService {
                 Some(&note.title_en),
                 Some(&note.title_ru),
                 Some(&note.title_uk),
+                Some(&note.title_es),
+                Some(&note.title_de),
+                Some(&note.title_it),
             )
             .unwrap_or_default();
             let dek = crate::tales::in_lang(
@@ -5962,6 +6144,9 @@ impl AppService {
                 note.dek_en.as_deref(),
                 note.dek_ru.as_deref(),
                 note.dek_uk.as_deref(),
+                note.dek_es.as_deref(),
+                note.dek_de.as_deref(),
+                note.dek_it.as_deref(),
             );
             let link = format!("{site}/tales/{}?src=telegram_book", note.slug);
             let (text, button) = crate::tales::compose_book_note(lang, &title, dek.as_deref());
@@ -6014,6 +6199,9 @@ impl AppService {
                     "This bot signs you in. Start on the site: it shows a word, and I will ask for it here.",
                     "Это бот входа. Начните вход на сайте — он покажет слово, и я спрошу его здесь.",
                     "Це бот входу. Почніть вхід на сайті — він покаже слово, і я спитаю його тут.",
+                    "Este bot sirve para entrar. Empiece en el sitio: le mostrará una palabra, y yo se la preguntaré aquí.",
+                    "Dieser Bot meldet Sie an. Beginnen Sie auf der Website: Sie zeigt ein Wort, und ich frage hier danach.",
+                    "Questo bot serve per accedere. Inizi sul sito: le mostrerà una parola, e io gliela chiederò qui.",
                 ),
             )
             .await;
@@ -6030,6 +6218,9 @@ impl AppService {
             "That word has gone cold. Start again on the site.",
             "Слово остыло. Начните вход на сайте заново.",
             "Слово охололо. Почніть вхід на сайті заново.",
+            "La palabra ha caducado. Vuelva a empezar en el sitio.",
+            "Das Wort ist abgelaufen. Beginnen Sie auf der Website noch einmal.",
+            "La parola è scaduta. Ricominci sul sito.",
         );
         let Ok(Some(row)) = self.repo.find_telegram_login_code(&code).await else {
             bot.say(msg.chat.id, cold).await;
@@ -6081,11 +6272,29 @@ impl AppService {
                 esc(&row.word),
                 from_line("Звідки"),
             ),
+            crate::lang::Lang::Es => format!(
+                "<b>Entrar en el sitio</b>\nPalabra: <b>{}</b>{}\n\nSi el sitio muestra otra palabra o usted no ha empezado a entrar, pulse «No soy yo».",
+                esc(&row.word),
+                from_line("Desde"),
+            ),
+            crate::lang::Lang::De => format!(
+                "<b>Anmeldung auf der Website</b>\nWort: <b>{}</b>{}\n\nWenn die Website ein anderes Wort zeigt oder Sie die Anmeldung nicht begonnen haben, drücken Sie „Nicht ich“.",
+                esc(&row.word),
+                from_line("Von"),
+            ),
+            crate::lang::Lang::It => format!(
+                "<b>Accesso al sito</b>\nParola: <b>{}</b>{}\n\nSe il sito mostra un’altra parola o non ha iniziato lei l’accesso, prema «Non sono io».",
+                esc(&row.word),
+                from_line("Da"),
+            ),
         };
         let (yes, no) = match lang {
             crate::lang::Lang::Ru => ("Это я, войти", "Не я"),
             crate::lang::Lang::En => ("It's me, sign in", "Not me"),
             crate::lang::Lang::Uk => ("Це я, увійти", "Не я"),
+            crate::lang::Lang::Es => ("Soy yo, entrar", "No soy yo"),
+            crate::lang::Lang::De => ("Ich bin es, anmelden", "Nicht ich"),
+            crate::lang::Lang::It => ("Sono io, accedi", "Non sono io"),
         };
 
         let message_id = bot.ask(msg.chat.id, &note, yes, no, &code).await;
@@ -6129,16 +6338,37 @@ impl AppService {
 
         if let crate::telegram::Answer::No(_) = answer {
             let _ = self.repo.telegram_login_refused(&code, cb.from.id).await;
-            bot.ack(&cb.id, lang.pick("Cancelled", "Вход отменён", "Вхід скасовано")).await;
+            bot.ack(&cb.id, lang.pick(
+                "Cancelled",
+                "Вход отменён",
+                "Вхід скасовано",
+                "Cancelado",
+                "Abgebrochen",
+                "Annullato",
+            )).await;
             settle(
-                lang.pick("Sign-in cancelled.", "Вход отменён.", "Вхід скасовано.")
+                lang.pick(
+                    "Sign-in cancelled.",
+                    "Вход отменён.",
+                    "Вхід скасовано.",
+                    "Entrada cancelada.",
+                    "Anmeldung abgebrochen.",
+                    "Accesso annullato.",
+                )
                     .to_string(),
             )
             .await;
             return;
         }
 
-        let cold = lang.pick("That word has gone cold", "Слово остыло", "Слово охололо");
+        let cold = lang.pick(
+            "That word has gone cold",
+            "Слово остыло",
+            "Слово охололо",
+            "La palabra ha caducado",
+            "Das Wort ist abgelaufen",
+            "La parola è scaduta",
+        );
         let Ok(Some(row)) = self.repo.find_telegram_login_code(&code).await else {
             bot.ack(&cb.id, cold).await;
             return;
@@ -6162,7 +6392,14 @@ impl AppService {
                 let Ok(token) = self.open_session(user_id, &ctx).await else {
                     bot.ack(
                         &cb.id,
-                        lang.pick("Something went wrong", "Не получилось", "Не вдалося"),
+                        lang.pick(
+                            "Something went wrong",
+                            "Не получилось",
+                            "Не вдалося",
+                            "Algo ha fallado",
+                            "Das hat nicht geklappt",
+                            "Qualcosa non ha funzionato",
+                        ),
                     )
                     .await;
                     return;
@@ -6181,7 +6418,7 @@ impl AppService {
                 }
                 Self::log_domain_event("telegram_login", "user", user_id, "ok");
 
-                bot.ack(&cb.id, lang.pick("Done", "Готово", "Готово")).await;
+                bot.ack(&cb.id, lang.pick("Done", "Готово", "Готово", "Hecho", "Erledigt", "Fatto")).await;
                 // Возвращать надо ВО ВКЛАДКУ, а не «на сайт»: сессия лежит
                 // для того браузера, который просил вход, и открытая по ссылке
                 // новая вкладка показала бы главную не вошедшему — то есть
@@ -6194,8 +6431,18 @@ impl AppService {
                         "Done. Go back to the browser tab where you started — it has already let you in.",
                         "Готово. Вернитесь во вкладку браузера, где начинали вход, — она уже впустила вас.",
                         "Готово. Поверніться до вкладки браузера, де починали вхід, — вона вже впустила вас.",
+                        "Hecho. Vuelva a la pestaña del navegador donde empezó: ya le ha dejado entrar.",
+                        "Erledigt. Kehren Sie zum Browser-Tab zurück, in dem Sie begonnen haben: Dort sind Sie bereits angemeldet.",
+                        "Fatto. Torni alla scheda del browser in cui ha iniziato: l’accesso è già avvenuto.",
                     ),
-                    lang.pick("If that tab is closed", "Если вкладка закрыта", "Якщо вкладку закрито"),
+                    lang.pick(
+                        "If that tab is closed",
+                        "Если вкладка закрыта",
+                        "Якщо вкладку закрито",
+                        "Si cerró esa pestaña",
+                        "Falls der Tab geschlossen ist",
+                        "Se la scheda è chiusa",
+                    ),
                     crate::telegram::esc(back)
                 ))
                 .await;
@@ -6208,10 +6455,20 @@ impl AppService {
                     "There is no name for this Telegram yet. A new name is made on the sign-up page — tick your age there, then sign in again.",
                     "Для этого Telegram у нас ещё нет имени. Новое имя заводится на странице регистрации: отметьте там возраст и войдите снова.",
                     "Для цього Telegram у нас іще немає імені. Нове ім’я заводиться на сторінці реєстрації: позначте там вік і увійдіть знову.",
+                    "Todavía no hay una cuenta para este Telegram. Las cuentas nuevas se crean en la página de registro: confirme allí su edad y vuelva a entrar.",
+                    "Für dieses Telegram gibt es noch kein Konto. Neue Konten entstehen auf der Registrierungsseite: Bestätigen Sie dort Ihr Alter und melden Sie sich erneut an.",
+                    "Per questo Telegram non c’è ancora un account. Gli account nuovi si creano nella pagina di registrazione: confermi lì la sua età e acceda di nuovo.",
                 );
                 bot.ack(
                     &cb.id,
-                    lang.pick("Age needs confirming", "Нужно подтвердить возраст", "Потрібно підтвердити вік"),
+                    lang.pick(
+                        "Age needs confirming",
+                        "Нужно подтвердить возраст",
+                        "Потрібно підтвердити вік",
+                        "Hay que confirmar la edad",
+                        "Das Alter muss bestätigt werden",
+                        "Bisogna confermare l’età",
+                    ),
                 )
                 .await;
                 settle(said.to_string()).await;
@@ -6222,8 +6479,18 @@ impl AppService {
                         "This Telegram is already linked to another account",
                         "Этот Telegram уже привязан к другому имени",
                         "Цей Telegram уже прив’язано до іншого імені",
+                        "Este Telegram ya está vinculado a otra cuenta",
+                        "Dieses Telegram ist bereits mit einem anderen Konto verbunden",
+                        "Questo Telegram è già collegato a un altro account",
                     ),
-                    _ => lang.pick("Could not sign in", "Войти не удалось", "Увійти не вдалося"),
+                    _ => lang.pick(
+                        "Could not sign in",
+                        "Войти не удалось",
+                        "Увійти не вдалося",
+                        "No se ha podido entrar",
+                        "Anmeldung fehlgeschlagen",
+                        "Accesso non riuscito",
+                    ),
                 };
                 bot.ack(&cb.id, said).await;
                 settle(said.to_string()).await;
@@ -6379,12 +6646,15 @@ impl AppService {
 
     pub async fn get_user_bookings(&self, user_id: Uuid) -> Result<Vec<UserBookingDto>> {
         let bookings = self.repo.get_user_bookings(user_id).await?;
+        let ids: Vec<Uuid> = bookings.iter().map(|b| b.figurine_id).collect();
+        let names = self.repo.get_figurine_name_translations(&ids).await?;
         Ok(bookings
             .into_iter()
             .map(|b| UserBookingDto {
                 id: b.id.to_string(),
                 figurine_id: b.figurine_id.to_string(),
                 figurine_name: b.figurine_name,
+                figurine_name_translations: names.get(&b.figurine_id).cloned().unwrap_or_default(),
                 starts_at: b.starts_at.to_string(),
                 ends_at: b.ends_at.to_string(),
                 status: b.status,
@@ -6516,14 +6786,24 @@ impl AppService {
 
     pub async fn get_user_orders(&self, user_id: Uuid) -> Result<Vec<UserOrderDto>> {
         let orders = self.repo.get_user_orders(user_id).await?;
+        let ids: Vec<Uuid> = orders
+            .iter()
+            .filter_map(|o| Uuid::parse_str(&o.figurine_id.to_string()).ok())
+            .collect();
+        let names = self.repo.get_figurine_name_translations(&ids).await?;
         Ok(orders
             .into_iter()
             .map(|o| {
                 let certificate = Self::certificate_dto(&o);
+                let figurine_name_translations = Uuid::parse_str(&o.figurine_id.to_string())
+                    .ok()
+                    .and_then(|id| names.get(&id).cloned())
+                    .unwrap_or_default();
                 UserOrderDto {
                     id: o.id.to_string(),
                     figurine_id: o.figurine_id,
                     figurine_name: o.figurine_name,
+                    figurine_name_translations,
                     mode: o.mode,
                     status: o.status,
                     created_at: o.created_at.to_rfc3339(),
@@ -6875,6 +7155,33 @@ impl AppService {
                      Більше студія поштою не пише: решта чекає на вас у домі."
                 ),
             ),
+            Lang::Es => (
+                "Su marco ha entrado en el juego",
+                format!(
+                    "«{work}» ha sido aprobado.\n\nRecibe una tirada de licencias con su nombre, \
+                     para siempre. Sus trabajos: {site}/studio/gallery\n\n\
+                     Esta carta se envía una sola vez, cuando uno de sus trabajos entra en el juego. \
+                     El estudio no le escribe nada más por correo: el resto le espera en el sitio."
+                ),
+            ),
+            Lang::De => (
+                "Ihr Rahmen wurde ins Spiel aufgenommen",
+                format!(
+                    "„{work}“ ist bestätigt.\n\nEr erhält eine Auflage von Lizenzen mit Ihrem Namen, \
+                     dauerhaft. Ihre Arbeiten: {site}/studio/gallery\n\n\
+                     Dieser Brief kommt nur einmal, wenn eine Ihrer Arbeiten ins Spiel aufgenommen wird. \
+                     Sonst schreibt Ihnen das Studio keine E-Mails: Alles Weitere finden Sie auf der Website."
+                ),
+            ),
+            Lang::It => (
+                "La sua cornice è entrata nel gioco",
+                format!(
+                    "«{work}» è stata approvata.\n\nRiceve una tiratura di licenze con il suo nome, \
+                     per sempre. I suoi lavori: {site}/studio/gallery\n\n\
+                     Questa lettera arriva una sola volta, quando un suo lavoro entra nel gioco. \
+                     Lo studio non le scrive altro per posta: il resto la aspetta sul sito."
+                ),
+            ),
         };
 
         self.send_mail(to, subject, body_text).await
@@ -7040,15 +7347,18 @@ impl AppService {
             }
             parts.join(" · ")
         };
-        let note = if where_from.is_empty() {
-            "<b>Новый вход</b>\nВ ваше имя только что вошли знаками.".to_string()
-        } else {
-            format!(
-                "<b>Новый вход</b>\nВ ваше имя только что вошли знаками.\nОткуда: {}",
-                crate::telegram::esc(&where_from)
-            )
-        };
+        let svc = self.clone();
+        let user_id = user.id;
         tokio::spawn(async move {
+            let lang = svc
+                .repo
+                .user_lang(user_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|l| crate::lang::Lang::parse(&l))
+                .unwrap_or_default();
+            let note = new_door_note(lang, &where_from);
             bot.say(chat, &note).await;
         });
     }
@@ -7514,6 +7824,7 @@ impl AppService {
             ));
         }
         let (entry, position) = self.repo.add_to_waitlist(uuid, &req, user_id).await?;
+        self.note_lang("figurine_waitlist", entry.id, user_id, req.lang.as_deref()).await;
         self.observability
             .record_business_event("waitlist_joined", "ok");
         Self::log_domain_event("waitlist_joined", "waitlist", entry.id, "ok");
@@ -7567,14 +7878,12 @@ impl AppService {
             return Ok(serde_json::json!({ "notified": 0 }));
         }
         let figurine_name = entries[0].figurine_name.clone();
-        let subject = format!("Фигурина «{}» снова доступна", figurine_name);
-        let body = format!(
-            "Хорошие новости — фигурина «{}», которую вы ждали, снова доступна.\n\nПосетите архив, чтобы узнать подробности.",
-            figurine_name
-        );
         let mut notified = 0u64;
         for entry in &entries {
             if let Some(uid) = entry.user_id {
+                let lang = self.lang_for("figurine_waitlist", entry.id).await;
+                let name = self.figurine_name_in(uuid, &figurine_name, lang).await;
+                let (subject, body) = waitlist_words(lang, &name);
                 let _ = self
                     .repo
                     .create_thread(uid, "waitlist", None, &subject, &body, true, &[])
@@ -7771,6 +8080,33 @@ impl AppService {
                      без вашого переходу за посиланням не прийде нічого. Посилання діє тиждень."
                 ),
             ),
+            Lang::Es => (
+                "Confirme su dirección para la lista de correo",
+                format!(
+                    "Alguien ha escrito esta dirección en la lista de correo del sitio. Si fue usted, \
+                     abra el enlace y las cartas del taller empezarán a llegar aquí:\n{link}\n\n\
+                     Si no escribió nada, ignore esta carta: sin abrir el enlace no se enviará nada. \
+                     El enlace vale una semana."
+                ),
+            ),
+            Lang::De => (
+                "Bestätigen Sie Ihre Adresse für die Mailingliste",
+                format!(
+                    "Diese Adresse wurde in die Mailingliste der Website eingetragen. Wenn Sie das waren, \
+                     öffnen Sie den Link, und Briefe aus der Werkstatt kommen künftig hierher:\n{link}\n\n\
+                     Wenn Sie nichts eingetragen haben, ignorieren Sie diesen Brief einfach: Ohne den Link \
+                     zu öffnen, wird nichts gesendet. Der Link gilt eine Woche."
+                ),
+            ),
+            Lang::It => (
+                "Confermi il suo indirizzo per la lista di posta",
+                format!(
+                    "Questo indirizzo è stato inserito nella lista di posta del sito. Se è stato lei, \
+                     apra il link e le lettere del laboratorio cominceranno ad arrivare qui:\n{link}\n\n\
+                     Se non ha inserito nulla, ignori questa lettera: senza aprire il link non verrà \
+                     inviato niente. Il link vale una settimana."
+                ),
+            ),
         };
         self.say_or_send(&sub.email, subject, body, &link).await
     }
@@ -7964,6 +8300,12 @@ impl AppService {
             (Lang::Ru, false) => "Ваше имя вписано в книгу дома",
             (Lang::En, false) => "Your name is in the house book",
             (Lang::Uk, false) => "Ваше ім’я вписане до книги дому",
+            (Lang::Es, true) => "El próximo cuento le llegará por correo",
+            (Lang::De, true) => "Die nächste Geschichte kommt per E-Mail",
+            (Lang::It, true) => "Il prossimo racconto le arriverà per posta",
+            (Lang::Es, false) => "Está en la lista de correo",
+            (Lang::De, false) => "Sie stehen in der Mailingliste",
+            (Lang::It, false) => "È nella lista di posta",
         };
         let body_text = match (lang, after_tale) {
             (Lang::Ru, true) => format!(
@@ -8001,6 +8343,42 @@ impl AppService {
                  Тепер вісті з майстерні — нові роботи, нові небилиці, відчинення показів — \
                  знаходитимуть вас першими. Без галасу й поспіху.\n\n\
                  Якщо забажаєте, щоб дім забув ваше ім’я, ці двері завжди відчинені:\n{unsub}",
+            ),
+            (Lang::Es, true) => format!(
+                "Su dirección está guardada.\n\n\
+                 Cuando aparezca un cuento nuevo en el sitio, le llegará aquí por correo. \
+                 De vez en cuando, con él, noticias del taller.\n\n\
+                 Para salir de la lista en cualquier momento:\n{unsub}",
+            ),
+            (Lang::De, true) => format!(
+                "Ihre Adresse ist gespeichert.\n\n\
+                 Wenn auf der Website eine neue Geschichte erscheint, kommt sie per E-Mail hierher. \
+                 Ab und zu, zusammen mit ihr, Neuigkeiten aus der Werkstatt.\n\n\
+                 Austragen können Sie sich jederzeit hier:\n{unsub}",
+            ),
+            (Lang::It, true) => format!(
+                "Il suo indirizzo è salvato.\n\n\
+                 Quando sul sito comparirà un nuovo racconto, le arriverà qui per posta. \
+                 Ogni tanto, insieme a esso, notizie dal laboratorio.\n\n\
+                 Per uscire dalla lista in qualsiasi momento:\n{unsub}",
+            ),
+            (Lang::Es, false) => format!(
+                "Su dirección está guardada.\n\n\
+                 Las noticias del taller (obras nuevas, cuentos nuevos, nuevas exposiciones) \
+                 le llegarán a usted primero. Sin prisas y sin ruido.\n\n\
+                 Para salir de la lista en cualquier momento:\n{unsub}",
+            ),
+            (Lang::De, false) => format!(
+                "Ihre Adresse ist gespeichert.\n\n\
+                 Neuigkeiten aus der Werkstatt (neue Arbeiten, neue Geschichten, neue Vorführungen) \
+                 erreichen Sie jetzt zuerst. Ohne Eile und ohne Lärm.\n\n\
+                 Austragen können Sie sich jederzeit hier:\n{unsub}",
+            ),
+            (Lang::It, false) => format!(
+                "Il suo indirizzo è salvato.\n\n\
+                 Le notizie dal laboratorio (opere nuove, racconti nuovi, nuove esposizioni) \
+                 arriveranno prima a lei. Senza fretta e senza rumore.\n\n\
+                 Per uscire dalla lista in qualsiasi momento:\n{unsub}",
             ),
         };
 
@@ -8206,7 +8584,7 @@ impl AppService {
                 continue;
             }
             if self
-                .send_sketch_laid_email(&watch, figurine_name, &handle)
+                .send_sketch_laid_email(&watch, figurine_id, figurine_name, &handle)
                 .await
                 .is_ok()
             {
@@ -8222,9 +8600,14 @@ impl AppService {
     async fn send_sketch_laid_email(
         &self,
         watch: &crate::models::GazetteWatch,
+        figurine_id: Uuid,
         figurine_name: &str,
         figurine_handle: &str,
     ) -> Result<()> {
+        // Имя работы — на языке письма, без перевода — английское.
+        let lang = crate::lang::Lang::parse(&watch.lang).unwrap_or_default();
+        let figurine_name = self.figurine_name_in(figurine_id, figurine_name, lang).await;
+        let figurine_name = figurine_name.as_str();
         use lettre::message::header::ContentType;
         use lettre::{AsyncTransport, Message};
 
@@ -8272,6 +8655,30 @@ impl AppService {
                      Якщо більше не хочете листів про цю роботу:\n{leave}"
                 ),
             ),
+            Lang::Es => (
+                format!("«{figurine_name}» ya está en el sitio"),
+                format!(
+                    "La obra está terminada y ya está en el sitio.\n\n\
+                     «{figurine_name}»:\n{work}\n\n\
+                     Si ya no quiere cartas sobre esta obra:\n{leave}"
+                ),
+            ),
+            Lang::De => (
+                format!("„{figurine_name}“ ist jetzt auf der Website"),
+                format!(
+                    "Die Arbeit ist fertig und auf der Website zu sehen.\n\n\
+                     „{figurine_name}“:\n{work}\n\n\
+                     Wenn Sie keine Briefe mehr zu dieser Arbeit möchten:\n{leave}"
+                ),
+            ),
+            Lang::It => (
+                format!("«{figurine_name}» è ora sul sito"),
+                format!(
+                    "L’opera è finita ed è sul sito.\n\n\
+                     «{figurine_name}»:\n{work}\n\n\
+                     Se non desidera più lettere su quest’opera:\n{leave}"
+                ),
+            ),
         };
 
         let email = Message::builder()
@@ -8304,6 +8711,7 @@ impl AppService {
         figurine_id: &str,
         comment_body: &str,
         reply: &str,
+        lang: crate::lang::Lang,
     ) -> Result<()> {
         use lettre::message::header::ContentType;
         use lettre::{AsyncTransport, Message};
@@ -8325,13 +8733,14 @@ impl AppService {
             self.config.public_url.trim_end_matches('/'),
             figurine_id
         );
+        let (subject, yours, answer, view) = impression_reply_words(lang, figurine_name);
         let body_text = format!(
-            "Your impression of «{figurine_name}»:\n\n\
+            "{yours}\n\n\
             {comment_body}\n\n\
             — — —\n\n\
-            Author's reply:\n\n\
+            {answer}\n\n\
             {reply}\n\n\
-            View the figurine: {figurine_url}",
+            {view}: {figurine_url}",
         );
 
         let email = Message::builder()
@@ -8342,7 +8751,7 @@ impl AppService {
             .to(to
                 .parse()
                 .map_err(|_| AppError::Internal("Invalid recipient address".into()))?)
-            .subject(format!("Re: Your impression of «{figurine_name}»"))
+            .subject(subject)
             .header(ContentType::TEXT_PLAIN)
             .body(body_text)
             .map_err(|e| AppError::Internal(format!("Email build error: {e}")))?;
@@ -8425,7 +8834,8 @@ impl AppService {
             (name, req.author_email.clone(), None)
         };
 
-        self.repo
+        let comment = self
+            .repo
             .insert_comment(
                 figurine_id,
                 user_id,
@@ -8434,6 +8844,7 @@ impl AppService {
                 body,
             )
             .await?;
+        self.note_lang("figurine_comments", comment.id, user_id, req.lang.as_deref()).await;
         Self::log_domain_event("comment_submitted", "figurine", figurine_id, "ok");
 
         let figurine_name = self
@@ -8543,13 +8954,16 @@ impl AppService {
         let reply_is_new = admin_reply.map(|r| !r.trim().is_empty()).unwrap_or(false);
         if reply_is_new && let Some(email) = prev.author_email.as_deref() {
             let fid = prev.figurine_id.to_string();
+            let lang = self.lang_for("figurine_comments", prev.id).await;
+            let name = self.figurine_name_in(prev.figurine_id, &figurine_name, lang).await;
             let _ = self
                 .send_reply_email(
                     email,
-                    &figurine_name,
+                    &name,
                     &fid,
                     &prev.body,
                     admin_reply.unwrap_or(""),
+                    lang,
                 )
                 .await;
         }
@@ -8718,6 +9132,9 @@ impl AppService {
                     tale_title_en: c.tale_title_en,
                     tale_title_ru: c.tale_title_ru,
                     tale_title_uk: c.tale_title_uk,
+                    tale_title_es: c.tale_title_es,
+                    tale_title_de: c.tale_title_de,
+                    tale_title_it: c.tale_title_it,
                     tale_slug: c.tale_slug,
                     author_name: c.author_name,
                     author_email: c.author_email,
@@ -9047,7 +9464,7 @@ impl AppService {
                 });
         }
         let mut out = Vec::with_capacity(polls.len());
-        for (id, state, opened_at, closed_at, winner, slug, title_en, title_ru, title_uk) in polls {
+        for (id, state, opened_at, closed_at, winner, slug, title_en, title_ru, title_uk, title_es, title_de, title_it) in polls {
             let candidates = by_poll.remove(&id).unwrap_or_default();
             let letters = candidates.iter().map(|c| c.letters).sum();
             out.push(crate::models::AdminTalePollDto {
@@ -9063,6 +9480,9 @@ impl AppService {
                             title_en,
                             title_ru,
                             title_uk: title_uk.unwrap_or_default(),
+                            title_es: title_es.unwrap_or_default(),
+                            title_de: title_de.unwrap_or_default(),
+                            title_it: title_it.unwrap_or_default(),
                         })
                     }
                     _ => None,
@@ -9225,24 +9645,38 @@ impl AppService {
                 continue;
             };
             let lang = crate::lang::Lang::parse(&letter.lang).unwrap_or_default();
-            let pick = |en_side: Option<&str>, ru_side: Option<&str>, uk_side: Option<&str>| {
-                crate::tales::in_lang(lang, en_side, ru_side, uk_side)
+            let pick = |en: Option<&str>,
+                        ru: Option<&str>,
+                        uk: Option<&str>,
+                        es: Option<&str>,
+                        de: Option<&str>,
+                        it: Option<&str>| {
+                crate::tales::in_lang(lang, en, ru, uk, es, de, it)
             };
             let title = pick(
                 Some(&letter.title_en),
                 Some(&letter.title_ru),
                 Some(&letter.title_uk),
+                Some(&letter.title_es),
+                Some(&letter.title_de),
+                Some(&letter.title_it),
             )
             .unwrap_or_default();
             let dek = pick(
                 letter.dek_en.as_deref(),
                 letter.dek_ru.as_deref(),
                 letter.dek_uk.as_deref(),
+                letter.dek_es.as_deref(),
+                letter.dek_de.as_deref(),
+                letter.dek_it.as_deref(),
             );
             let original = pick(
                 letter.original_title_en.as_deref(),
                 letter.original_title_ru.as_deref(),
                 letter.original_title_uk.as_deref(),
+                letter.original_title_es.as_deref(),
+                letter.original_title_de.as_deref(),
+                letter.original_title_it.as_deref(),
             );
             // `src` остаётся в замере посещений (§ 18): по нему видно, сколько
             // людей привело письмо.
@@ -9328,6 +9762,9 @@ impl AppService {
                 Some(&note.title_en),
                 Some(&note.title_ru),
                 Some(&note.title_uk),
+                Some(&note.title_es),
+                Some(&note.title_de),
+                Some(&note.title_it),
             )
             .unwrap_or_default();
             let original = crate::tales::in_lang(
@@ -9335,6 +9772,9 @@ impl AppService {
                 note.original_title_en.as_deref(),
                 note.original_title_ru.as_deref(),
                 note.original_title_uk.as_deref(),
+                note.original_title_es.as_deref(),
+                note.original_title_de.as_deref(),
+                note.original_title_it.as_deref(),
             );
             // Свой `src`, отдельный от канала: по нему видно, сколько людей
             // привели записки (§ 18).
@@ -9782,14 +10222,26 @@ impl AppService {
             title_en: row.title_en,
             title_ru: row.title_ru,
             title_uk: row.title_uk,
+            title_es: row.title_es,
+            title_de: row.title_de,
+            title_it: row.title_it,
             dek_en: row.dek_en,
             dek_ru: row.dek_ru,
             dek_uk: row.dek_uk,
+            dek_es: row.dek_es,
+            dek_de: row.dek_de,
+            dek_it: row.dek_it,
             body_en: row.body_en,
             body_ru: row.body_ru,
             body_uk: row.body_uk,
+            body_es: row.body_es,
+            body_de: row.body_de,
+            body_it: row.body_it,
             figurine_id: row.figurine_id.map(|u| u.to_string()),
             figurine_name: row.figurine_name,
+            figurine_name_translations: crate::models::parse_name_translations(
+                row.figurine_name_translations.as_deref(),
+            ),
             figurine_slug: row.figurine_slug,
             href: row.href,
             source_name: row.source_name,
@@ -10054,8 +10506,17 @@ impl AppService {
                 p.expected_from,
                 p.expected_to,
                 &p.title_uk,
+                &p.title_es,
+                &p.title_de,
+                &p.title_it,
                 p.dek_uk.as_deref(),
+                p.dek_es.as_deref(),
+                p.dek_de.as_deref(),
+                p.dek_it.as_deref(),
                 p.body_uk.as_deref(),
+                p.body_es.as_deref(),
+                p.body_de.as_deref(),
+                p.body_it.as_deref(),
             )
             .await?;
         Self::log_domain_event("gazette_leaf_created", "gazette_leaf", rec.id, "ok");
@@ -10107,8 +10568,17 @@ impl AppService {
                 p.expected_from,
                 p.expected_to,
                 &p.title_uk,
+                &p.title_es,
+                &p.title_de,
+                &p.title_it,
                 p.dek_uk.as_deref(),
+                p.dek_es.as_deref(),
+                p.dek_de.as_deref(),
+                p.dek_it.as_deref(),
                 p.body_uk.as_deref(),
+                p.body_es.as_deref(),
+                p.body_de.as_deref(),
+                p.body_it.as_deref(),
             )
             .await?;
         Self::log_domain_event("gazette_leaf_updated", "gazette_leaf", rec.id, "ok");
@@ -10208,7 +10678,13 @@ impl AppService {
         if outcome.send_confirmation {
             let svc = self.clone();
             let w = watch.clone();
-            let work = leaf.figurine_name.clone().unwrap_or_default();
+            // Имя работы — на языке письма, без перевода — английское.
+            let work = crate::models::parse_name_translations(
+                leaf.figurine_name_translations.as_deref(),
+            )
+            .remove(lang)
+            .or_else(|| leaf.figurine_name.clone())
+            .unwrap_or_default();
             tokio::spawn(async move {
                 if let Err(e) = svc.send_watch_confirmation(&w, &work, &key).await {
                     tracing::warn!("watch confirmation letter not sent: {e}");
@@ -10277,6 +10753,33 @@ impl AppService {
                      переходу за посиланням не прийде нічого. Посилання діє тиждень."
                 ),
             ),
+            Lang::Es => (
+                "Confirme su dirección: le escribiremos cuando la obra esté terminada".to_string(),
+                format!(
+                    "Esta dirección pidió un aviso cuando «{work}» esté terminada. Si fue usted, \
+                     abra el enlace:\n{link}\n\n\
+                     Si no pidió nada, ignore esta carta: sin abrir el enlace no se enviará nada. \
+                     El enlace vale una semana."
+                ),
+            ),
+            Lang::De => (
+                "Bestätigen Sie Ihre Adresse: Wir schreiben, wenn die Arbeit fertig ist".to_string(),
+                format!(
+                    "Für diese Adresse wurde eine Nachricht erbeten, sobald „{work}“ fertig ist. \
+                     Wenn Sie das waren, öffnen Sie den Link:\n{link}\n\n\
+                     Wenn Sie nichts erbeten haben, ignorieren Sie diesen Brief: Ohne den Link zu \
+                     öffnen, wird nichts gesendet. Der Link gilt eine Woche."
+                ),
+            ),
+            Lang::It => (
+                "Confermi il suo indirizzo: le scriveremo quando l’opera sarà finita".to_string(),
+                format!(
+                    "Questo indirizzo ha chiesto un avviso quando «{work}» sarà finita. Se è stato lei, \
+                     apra il link:\n{link}\n\n\
+                     Se non ha chiesto nulla, ignori questa lettera: senza aprire il link non verrà \
+                     inviato niente. Il link vale una settimana."
+                ),
+            ),
         };
         self.say_or_send(&watch.email, &subject, body, &link).await
     }
@@ -10296,6 +10799,9 @@ impl AppService {
             title_en: leaf.title_en,
             title_ru: leaf.title_ru,
             title_uk: leaf.title_uk,
+            title_es: leaf.title_es,
+            title_de: leaf.title_de,
+            title_it: leaf.title_it,
             notified: w.notified_at.is_some(),
             confirmed: w.confirmed_at.is_some(),
         }))
@@ -10326,6 +10832,9 @@ impl AppService {
                 title_en: w.title_en,
                 title_ru: w.title_ru,
                 title_uk: w.title_uk,
+                title_es: w.title_es,
+                title_de: w.title_de,
+                title_it: w.title_it,
                 cancel_token: w.cancel_token,
                 notified_at: w.notified_at.map(|t| t.to_rfc3339()),
                 created_at: w.created_at.to_rfc3339(),
@@ -10351,9 +10860,11 @@ impl AppService {
             requester_phone: None,
             message: None,
             mode: OrderMode::Notify,
+            lang: Some(watch.lang.clone()),
             age_confirmed: true,
         };
-        self.repo.upsert_notify_order(&req, watch.user_id).await?;
+        let saved = self.repo.upsert_notify_order(&req, watch.user_id).await?;
+        self.note_lang("orders", saved.id, watch.user_id, req.lang.as_deref()).await;
         Ok(())
     }
 
@@ -10608,12 +11119,21 @@ impl AppService {
             title_en: title.clone(),
             title_ru: title,
             title_uk: String::new(),
+            title_es: String::new(),
+            title_de: String::new(),
+            title_it: String::new(),
             dek_en: None,
             dek_ru: None,
             dek_uk: None,
+            dek_es: None,
+            dek_de: None,
+            dek_it: None,
             body_en: None,
             body_ru: None,
             body_uk: None,
+            body_es: None,
+            body_de: None,
+            body_it: None,
             figurine_id: None,
             href: Some(cutting.url.clone()),
             source_name: Some(cutting.source_name.clone()),
@@ -10645,15 +11165,23 @@ impl AppService {
         let mut title_en = crate::gazette::clamp_title(&req.title_en);
         let mut title_ru = crate::gazette::clamp_title(&req.title_ru);
         let title_uk = crate::gazette::clamp_title(&req.title_uk);
+        let title_es = crate::gazette::clamp_title(&req.title_es);
+        let title_de = crate::gazette::clamp_title(&req.title_de);
+        let title_it = crate::gazette::clamp_title(&req.title_it);
         if title_en.is_empty() && title_ru.is_empty() {
-            // A leaf written only in Ukrainian still needs a title in the two
-            // columns that cannot be empty (they key the address and the
-            // neighbours); the Ukrainian one stands in for both.
-            if title_uk.is_empty() {
+            // A leaf written only in Ukrainian (or Spanish, German, Italian)
+            // still needs a title in the two columns that cannot be empty (they
+            // key the address and the neighbours); the first written one stands
+            // in for both.
+            let Some(stand_in) = [&title_uk, &title_es, &title_de, &title_it]
+                .into_iter()
+                .find(|t| !t.is_empty())
+                .cloned()
+            else {
                 return Err(AppError::BadRequest("A title is required".into()));
-            }
-            title_en = title_uk.clone();
-            title_ru = title_uk.clone();
+            };
+            title_en = stand_in.clone();
+            title_ru = stand_in;
         }
         if title_en.is_empty() {
             title_en = title_ru.clone();
@@ -10708,8 +11236,17 @@ impl AppService {
             body_en: crate::gazette::clamp_body(req.body_en.as_deref()),
             body_ru: crate::gazette::clamp_body(req.body_ru.as_deref()),
             title_uk,
+            title_es,
+            title_de,
+            title_it,
             dek_uk: crate::gazette::clamp_dek(req.dek_uk.as_deref()),
+            dek_es: crate::gazette::clamp_dek(req.dek_es.as_deref()),
+            dek_de: crate::gazette::clamp_dek(req.dek_de.as_deref()),
+            dek_it: crate::gazette::clamp_dek(req.dek_it.as_deref()),
             body_uk: crate::gazette::clamp_body(req.body_uk.as_deref()),
+            body_es: crate::gazette::clamp_body(req.body_es.as_deref()),
+            body_de: crate::gazette::clamp_body(req.body_de.as_deref()),
+            body_it: crate::gazette::clamp_body(req.body_it.as_deref()),
             figurine_id,
             href: req
                 .href
@@ -10768,6 +11305,9 @@ impl AppService {
             race_name_en: row.race_name_en,
             race_name_ru: row.race_name_ru,
             race_name_uk: row.race_name_uk,
+            race_name_es: row.race_name_es,
+            race_name_de: row.race_name_de,
+            race_name_it: row.race_name_it,
             race_icon_url: row.race_icon_url,
             race_level_frames: row.race_level_frames,
             race_motion_wear: row.race_motion_wear,
@@ -10775,15 +11315,27 @@ impl AppService {
             type_en: row.type_en,
             type_ru: row.type_ru,
             type_uk: row.type_uk,
+            type_es: row.type_es,
+            type_de: row.type_de,
+            type_it: row.type_it,
             title_en: row.title_en,
             title_ru: row.title_ru,
             title_uk: row.title_uk,
+            title_es: row.title_es,
+            title_de: row.title_de,
+            title_it: row.title_it,
             effect_en: row.effect_en,
             effect_ru: row.effect_ru,
             effect_uk: row.effect_uk,
+            effect_es: row.effect_es,
+            effect_de: row.effect_de,
+            effect_it: row.effect_it,
             lore_en: row.lore_en,
             lore_ru: row.lore_ru,
             lore_uk: row.lore_uk,
+            lore_es: row.lore_es,
+            lore_de: row.lore_de,
+            lore_it: row.lore_it,
             cost: row.cost,
             power: row.power,
             health: row.health,
@@ -10818,6 +11370,9 @@ impl AppService {
             minted: row.minted,
             figurine_id: row.figurine_id.map(|id| id.to_string()),
             figurine_name: row.figurine_name,
+            figurine_name_translations: crate::models::parse_name_translations(
+                row.figurine_name_translations.as_deref(),
+            ),
             figurine_slug: row.figurine_slug,
             created_at: row.created_at.to_rfc3339(),
             updated_at: row.updated_at.to_rfc3339(),
@@ -11323,9 +11878,15 @@ impl AppService {
             title_en: e.title_en.clone(),
             title_ru: e.title_ru.clone(),
             title_uk: e.title_uk.clone(),
+            title_es: e.title_es.clone(),
+            title_de: e.title_de.clone(),
+            title_it: e.title_it.clone(),
             note_en: e.note_en.clone(),
             note_ru: e.note_ru.clone(),
             note_uk: e.note_uk.clone(),
+            note_es: e.note_es.clone(),
+            note_de: e.note_de.clone(),
+            note_it: e.note_it.clone(),
             rule: e.rule.clone(),
             threshold: e.threshold,
             currency: e.currency.clone(),
@@ -11471,6 +12032,9 @@ impl AppService {
         let title_en = Self::clamp_text(&req.title_en, crate::battles::ERRAND_TITLE_MAX);
         let title_ru = Self::clamp_text(&req.title_ru, crate::battles::ERRAND_TITLE_MAX);
         let title_uk = Self::clamp_text(&req.title_uk, crate::battles::ERRAND_TITLE_MAX);
+        let title_es = Self::clamp_text(&req.title_es, crate::battles::ERRAND_TITLE_MAX);
+        let title_de = Self::clamp_text(&req.title_de, crate::battles::ERRAND_TITLE_MAX);
+        let title_it = Self::clamp_text(&req.title_it, crate::battles::ERRAND_TITLE_MAX);
         // Оба языка, а не «хотя бы один»: пустой английский когда-то заполняли
         // русским, и английская полка печатала кириллицу как английский.
         if title_en.is_empty() || title_ru.is_empty() {
@@ -11488,9 +12052,15 @@ impl AppService {
             title_en,
             title_ru,
             title_uk,
+            title_es,
+            title_de,
+            title_it,
             note_en: note(&req.note_en),
             note_ru: note(&req.note_ru),
             note_uk: note(&req.note_uk),
+            note_es: note(&req.note_es),
+            note_de: note(&req.note_de),
+            note_it: note(&req.note_it),
             rule: req.rule.clone(),
             threshold,
             currency: req.currency.clone(),
@@ -11573,9 +12143,15 @@ impl AppService {
             title_en: errand.title_en.clone(),
             title_ru: errand.title_ru.clone(),
             title_uk: errand.title_uk.clone(),
+            title_es: errand.title_es.clone(),
+            title_de: errand.title_de.clone(),
+            title_it: errand.title_it.clone(),
             note_en: errand.note_en.clone(),
             note_ru: errand.note_ru.clone(),
             note_uk: errand.note_uk.clone(),
+            note_es: errand.note_es.clone(),
+            note_de: errand.note_de.clone(),
+            note_it: errand.note_it.clone(),
             rule: errand.rule.clone(),
             threshold: errand.threshold,
             currency: errand.currency.clone(),
@@ -11767,7 +12343,7 @@ impl AppService {
 
     /// Запомнить язык работы. Не свойство рамы, а свойство разговора о ней.
     pub async fn set_studio_frame_lang(&self, user: Uuid, id: Uuid, lang: &str) -> Result<()> {
-        let lang = crate::lang::Lang::parse(lang).unwrap_or(crate::lang::Lang::Ru).code();
+        let lang = crate::lang::Lang::parse(lang).unwrap_or_default().code();
         self.repo.set_studio_frame_lang(user, id, lang).await
     }
 
@@ -12662,7 +13238,7 @@ impl AppService {
     ) -> Result<crate::models::StudioCardDto> {
         let settings = self.studio_admit(user_id).await?;
         let clean = Self::clean_studio_card(body)?;
-        let lang = crate::lang::Lang::parse(lang).unwrap_or(crate::lang::Lang::Ru).code();
+        let lang = crate::lang::Lang::parse(lang).unwrap_or_default().code();
         match id {
             None => {
                 // Потолок незаконченных — СВОИМ числом, а не рамочным: карта
@@ -13050,9 +13626,15 @@ impl AppService {
                 name_en: race.name_en.clone(),
                 name_ru: race.name_ru.clone(),
                 name_uk: race.name_uk.clone(),
+                name_es: race.name_es.clone(),
+                name_de: race.name_de.clone(),
+                name_it: race.name_it.clone(),
                 note_en: race.note_en.clone(),
                 note_ru: race.note_ru.clone(),
                 note_uk: race.note_uk.clone(),
+                note_es: race.note_es.clone(),
+                note_de: race.note_de.clone(),
+                note_it: race.note_it.clone(),
                 icon_url: race.icon_url.clone(),
                 level_frames: None,
                 motion_wear: None,
@@ -13229,11 +13811,14 @@ impl AppService {
         let Some(row) = self.repo.get_studio_card_any(card).await? else {
             return Ok(());
         };
-        let lang = Lang::parse(&row.lang).unwrap_or(Lang::Ru);
+        let lang = Lang::parse(&row.lang).unwrap_or_default();
         let field = match lang {
             Lang::En => "titleEn",
             Lang::Ru => "titleRu",
             Lang::Uk => "titleUk",
+            Lang::Es => "titleEs",
+            Lang::De => "titleDe",
+            Lang::It => "titleIt",
         };
         // Названа карта могла быть не на языке работы: тогда берётся любое
         // написанное, лишь бы записка не называла её пустотой.
@@ -13249,6 +13834,9 @@ impl AppService {
             .or_else(|| named("titleEn"))
             .or_else(|| named("titleRu"))
             .or_else(|| named("titleUk"))
+            .or_else(|| named("titleEs"))
+            .or_else(|| named("titleDe"))
+            .or_else(|| named("titleIt"))
             .unwrap_or("")
             .to_string();
         let word = word.unwrap_or("");
@@ -13283,6 +13871,36 @@ impl AppService {
                 "Карту взято в гру",
                 format!("«{name}» стоїть на полиці з вашим ім’ям, і перший її примірник — ваш."),
             ),
+            ("denied", Lang::Es) => (
+                "Su carta ha vuelto a usted",
+                format!(
+                    "«{name}» todavía no sale a la estantería. La autora escribe: {word}\n\nHa vuelto a sus borradores: corríjala y preséntela de nuevo."
+                ),
+            ),
+            ("denied", Lang::De) => (
+                "Ihre Karte ist zurück bei Ihnen",
+                format!(
+                    "„{name}“ kommt noch nicht ins Regal. Die Autorin schreibt: {word}\n\nSie liegt wieder in Ihren Entwürfen: Überarbeiten Sie sie und reichen Sie sie erneut ein."
+                ),
+            ),
+            ("denied", Lang::It) => (
+                "La sua carta è tornata a lei",
+                format!(
+                    "«{name}» non va ancora sullo scaffale. L’autrice scrive: {word}\n\nÈ tornata nelle sue bozze: la corregga e la presenti di nuovo."
+                ),
+            ),
+            ("approved", Lang::Es) => (
+                "Su carta ha entrado en el juego",
+                format!("«{name}» está en la estantería con su nombre, y el primer ejemplar es suyo."),
+            ),
+            ("approved", Lang::De) => (
+                "Ihre Karte ist im Spiel",
+                format!("„{name}“ steht mit Ihrem Namen im Regal, und das erste Exemplar gehört Ihnen."),
+            ),
+            ("approved", Lang::It) => (
+                "La sua carta è entrata nel gioco",
+                format!("«{name}» è sullo scaffale con il suo nome, e il primo esemplare è suo."),
+            ),
             _ => return Ok(()),
         };
         let _ = self
@@ -13316,14 +13934,21 @@ impl AppService {
         let Some((user, _, slug, lang, name)) = self.repo.studio_frame_owner(frame).await? else {
             return Ok(());
         };
-        let lang = Lang::parse(&lang).unwrap_or(Lang::Ru);
+        let lang = Lang::parse(&lang).unwrap_or_default();
         let word = word.unwrap_or("");
-        let page = |prefix_ru: &str, prefix_en: &str, prefix_uk: &str| {
+        let page = || {
             slug.as_deref()
                 .map(|s| {
                     format!(
                         "\n\n{}: /studio/authors/{s}",
-                        lang.pick(prefix_en, prefix_ru, prefix_uk)
+                        lang.pick(
+                            "Your page",
+                            "Ваша страница",
+                            "Ваша сторінка",
+                            "Su página",
+                            "Ihre Seite",
+                            "La sua pagina",
+                        )
                     )
                 })
                 .unwrap_or_default()
@@ -13381,21 +14006,21 @@ impl AppService {
                 "Работа взята в игру",
                 format!(
                     "«{name}» утверждена. Она получает тираж лицензий и ваше имя на них — навсегда.{}",
-                    page("Ваша страница", "Your page", "Ваша сторінка")
+                    page()
                 ),
             ),
             ("approved", Lang::En) => (
                 "Taken into the game",
                 format!(
                     "“{name}” is approved. It gets a run of licences with your name on them — for good.{}",
-                    page("Ваша страница", "Your page", "Ваша сторінка")
+                    page()
                 ),
             ),
             ("approved", Lang::Uk) => (
                 "Роботу взято в гру",
                 format!(
                     "«{name}» затверджена. Вона отримує наклад ліцензій і ваше ім’я на них — назавжди.{}",
-                    page("Ваша страница", "Your page", "Ваша сторінка")
+                    page()
                 ),
             ),
             ("struck", Lang::Ru) => (
@@ -13421,6 +14046,99 @@ impl AppService {
             ("chosen", Lang::Uk) => (
                 "Робота в трійці тижня",
                 format!("«{name}» увійшла до трійки сезону й пішла господареві на рішення."),
+            ),
+            ("admitted", Lang::Es) => (
+                "Su trabajo está en la temporada",
+                format!("«{name}» ha sido admitido y ya está en la temporada: se ve en la galería y la gente lo valora."),
+            ),
+            ("admitted", Lang::De) => (
+                "Ihre Arbeit ist in der Saison",
+                format!("„{name}“ ist zugelassen und bereits in der Saison: Sie ist in der Galerie zu sehen und wird bewertet."),
+            ),
+            ("admitted", Lang::It) => (
+                "Il suo lavoro è nella stagione",
+                format!("«{name}» è stato ammesso ed è già nella stagione: si vede nella galleria e viene valutato."),
+            ),
+            ("admittedOnly", Lang::Es) => (
+                "Su trabajo es público",
+                format!(
+                    "«{name}» ha sido admitido: se ve en la galería. No ha entrado en la temporada porque esta semana ya tiene un trabajo en ella. Podrá presentarlo en la próxima."
+                ),
+            ),
+            ("admittedOnly", Lang::De) => (
+                "Ihre Arbeit ist öffentlich",
+                format!(
+                    "„{name}“ ist zugelassen und in der Galerie zu sehen. In die Saison ist sie nicht gekommen, weil Sie diese Woche schon eine Arbeit darin haben. In der nächsten Saison geht es."
+                ),
+            ),
+            ("admittedOnly", Lang::It) => (
+                "Il suo lavoro è pubblico",
+                format!(
+                    "«{name}» è stato ammesso: si vede nella galleria. Non è entrato nella stagione perché questa settimana ha già un lavoro in gara. Potrà presentarlo nella prossima."
+                ),
+            ),
+            ("denied", Lang::Es) => (
+                "Su trabajo ha vuelto a usted",
+                format!(
+                    "«{name}» todavía no se publica. La autora escribe: {word}\n\nHa vuelto a sus borradores: corríjalo y preséntelo de nuevo."
+                ),
+            ),
+            ("denied", Lang::De) => (
+                "Ihre Arbeit ist zurück bei Ihnen",
+                format!(
+                    "„{name}“ wird noch nicht veröffentlicht. Die Autorin schreibt: {word}\n\nSie liegt wieder in Ihren Entwürfen: Überarbeiten Sie sie und reichen Sie sie erneut ein."
+                ),
+            ),
+            ("denied", Lang::It) => (
+                "Il suo lavoro è tornato a lei",
+                format!(
+                    "«{name}» non viene ancora pubblicato. L’autrice scrive: {word}\n\nÈ tornato nelle sue bozze: lo corregga e lo presenti di nuovo."
+                ),
+            ),
+            ("approved", Lang::Es) => (
+                "Su trabajo ha entrado en el juego",
+                format!(
+                    "«{name}» ha sido aprobado. Recibe una tirada de licencias con su nombre, para siempre.{}",
+                    page()
+                ),
+            ),
+            ("approved", Lang::De) => (
+                "Ihre Arbeit ist im Spiel",
+                format!(
+                    "„{name}“ ist bestätigt. Sie erhält eine Auflage von Lizenzen mit Ihrem Namen, dauerhaft.{}",
+                    page()
+                ),
+            ),
+            ("approved", Lang::It) => (
+                "Il suo lavoro è entrato nel gioco",
+                format!(
+                    "«{name}» è stato approvato. Riceve una tiratura di licenze con il suo nome, per sempre.{}",
+                    page()
+                ),
+            ),
+            ("struck", Lang::Es) => (
+                "Su trabajo ha sido retirado",
+                format!("«{name}» ya no es público. Motivo: {word}"),
+            ),
+            ("struck", Lang::De) => (
+                "Ihre Arbeit wurde entfernt",
+                format!("„{name}“ ist nicht mehr öffentlich. Grund: {word}"),
+            ),
+            ("struck", Lang::It) => (
+                "Il suo lavoro è stato ritirato",
+                format!("«{name}» non è più pubblico. Motivo: {word}"),
+            ),
+            ("chosen", Lang::Es) => (
+                "Entre los tres de la semana",
+                format!("«{name}» está entre los tres mejores de la temporada y ha pasado a la autora para su decisión."),
+            ),
+            ("chosen", Lang::De) => (
+                "Unter den drei der Woche",
+                format!("„{name}“ ist unter den drei besten der Saison und liegt jetzt der Autorin zur Entscheidung vor."),
+            ),
+            ("chosen", Lang::It) => (
+                "Tra i tre della settimana",
+                format!("«{name}» è tra i tre migliori della stagione ed è passato all’autrice per la decisione."),
             ),
             _ => return Ok(()),
         };
@@ -13534,7 +14252,7 @@ impl AppService {
                     && let Some(to) = who.email.clone()
                 {
                     let svc = self.clone();
-                    let lang = crate::lang::Lang::parse(&lang).unwrap_or(crate::lang::Lang::Ru);
+                    let lang = crate::lang::Lang::parse(&lang).unwrap_or_default();
                     tokio::spawn(async move {
                         if let Err(e) = svc.send_studio_approved_email(&to, &name, lang).await {
                             tracing::warn!("Studio approval email failed: {e}");
@@ -14891,9 +15609,21 @@ impl AppService {
             lore_en: crate::battles::clamp_lore(req.lore_en.as_deref()),
             lore_ru: crate::battles::clamp_lore(req.lore_ru.as_deref()),
             type_uk: crate::battles::clamp_type(req.type_uk.as_deref()),
+            type_es: crate::battles::clamp_type(req.type_es.as_deref()),
+            type_de: crate::battles::clamp_type(req.type_de.as_deref()),
+            type_it: crate::battles::clamp_type(req.type_it.as_deref()),
             title_uk: crate::battles::clamp_title(&req.title_uk),
+            title_es: crate::battles::clamp_title(&req.title_es),
+            title_de: crate::battles::clamp_title(&req.title_de),
+            title_it: crate::battles::clamp_title(&req.title_it),
             effect_uk: crate::battles::clamp_effect(req.effect_uk.as_deref()),
+            effect_es: crate::battles::clamp_effect(req.effect_es.as_deref()),
+            effect_de: crate::battles::clamp_effect(req.effect_de.as_deref()),
+            effect_it: crate::battles::clamp_effect(req.effect_it.as_deref()),
             lore_uk: crate::battles::clamp_lore(req.lore_uk.as_deref()),
+            lore_es: crate::battles::clamp_lore(req.lore_es.as_deref()),
+            lore_de: crate::battles::clamp_lore(req.lore_de.as_deref()),
+            lore_it: crate::battles::clamp_lore(req.lore_it.as_deref()),
             cost,
             power,
             health,
@@ -15086,7 +15816,7 @@ impl AppService {
 
         // Имена карт по слугу. Из админской полки, а не из публичной: партия
         // могла быть сыграна картой, которую с тех пор сняли.
-        let titles: std::collections::HashMap<String, (String, String, String)> = self
+        let titles: std::collections::HashMap<String, [String; 6]> = self
             .repo
             .list_battle_cards_admin(crate::battles::SHELF_CARDS)
             .await?
@@ -15094,7 +15824,14 @@ impl AppService {
             .map(|c| {
                 (
                     c.slug.clone(),
-                    (c.title_ru.clone(), c.title_en.clone(), c.title_uk.clone()),
+                    [
+                        c.title_ru.clone(),
+                        c.title_en.clone(),
+                        c.title_uk.clone(),
+                        c.title_es.clone(),
+                        c.title_de.clone(),
+                        c.title_it.clone(),
+                    ],
                 )
             })
             .collect();
@@ -15118,6 +15855,9 @@ impl AppService {
                         challenge_id: key.clone(),
                         title_ru: row.title_ru.clone(),
                         title_uk: row.title_uk.clone(),
+                        title_es: row.title_es.clone(),
+                        title_de: row.title_de.clone(),
+                        title_it: row.title_it.clone(),
                         title_en: row.title_en.clone(),
                         played: 0,
                         guest_won: 0,
@@ -15159,9 +15899,12 @@ impl AppService {
                         let tally = cards.entry(slug.clone()).or_insert_with(|| {
                             crate::models::BattleCardTally {
                                 slug: slug.clone(),
-                                title_ru: named.map(|t| t.0.clone()),
-                                title_en: named.map(|t| t.1.clone()),
-                                title_uk: named.map(|t| t.2.clone()),
+                                title_ru: named.map(|t| t[0].clone()),
+                                title_en: named.map(|t| t[1].clone()),
+                                title_uk: named.map(|t| t[2].clone()),
+                                title_es: named.map(|t| t[3].clone()),
+                                title_de: named.map(|t| t[4].clone()),
+                                title_it: named.map(|t| t[5].clone()),
                                 played: 0,
                                 won: 0,
                                 lost: 0,
@@ -15186,6 +15929,9 @@ impl AppService {
                 challenge_id: key,
                 title_ru: row.title_ru.clone(),
                 title_uk: row.title_uk.clone(),
+                title_es: row.title_es.clone(),
+                title_de: row.title_de.clone(),
+                title_it: row.title_it.clone(),
                 title_en: row.title_en.clone(),
                 outcome: row.outcome.clone(),
                 rounds: row.rounds,
@@ -15303,9 +16049,15 @@ impl AppService {
             title_en: row.title_en,
             title_ru: row.title_ru,
             title_uk: row.title_uk,
+            title_es: row.title_es,
+            title_de: row.title_de,
+            title_it: row.title_it,
             note_en: row.note_en,
             note_ru: row.note_ru,
             note_uk: row.note_uk,
+            note_es: row.note_es,
+            note_de: row.note_de,
+            note_it: row.note_it,
             setup: serde_json::from_str(&row.setup).unwrap_or_default(),
             bot_depth: crate::battles::clamp_bot_depth(row.bot_depth),
             reward_dust: row.reward_dust,
@@ -15399,6 +16151,9 @@ impl AppService {
             title_ru = title_en.clone();
         }
         let title_uk = crate::battles::clamp_title(&req.title_uk);
+        let title_es = crate::battles::clamp_title(&req.title_es);
+        let title_de = crate::battles::clamp_title(&req.title_de);
+        let title_it = crate::battles::clamp_title(&req.title_it);
 
         if !crate::battles::valid_player_side(&req.player_side) {
             return Err(AppError::BadRequest("Unknown side for the guest".into()));
@@ -15439,8 +16194,26 @@ impl AppService {
                         .map(str::trim)
                         .filter(|s| !s.is_empty()),
                     title_uk: &title_uk,
+                    title_es: &title_es,
+                    title_de: &title_de,
+                    title_it: &title_it,
                     note_uk: req
                         .note_uk
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty()),
+                    note_es: req
+                        .note_es
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty()),
+                    note_de: req
+                        .note_de
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty()),
+                    note_it: req
+                        .note_it
                         .as_deref()
                         .map(str::trim)
                         .filter(|s| !s.is_empty()),
@@ -16267,9 +17040,15 @@ impl AppService {
             name_en: row.name_en,
             name_ru: row.name_ru,
             name_uk: row.name_uk,
+            name_es: row.name_es,
+            name_de: row.name_de,
+            name_it: row.name_it,
             rules_en: row.rules_en,
             rules_ru: row.rules_ru,
             rules_uk: row.rules_uk,
+            rules_es: row.rules_es,
+            rules_de: row.rules_de,
+            rules_it: row.rules_it,
             icon_url: row.icon_url,
             point_value: row.point_value,
             sort_order: row.sort_order,
@@ -16298,7 +17077,13 @@ impl AppService {
                 p.icon_url.as_deref(),
                 p.point_value,
                 &p.name_uk,
+                &p.name_es,
+                &p.name_de,
+                &p.name_it,
                 p.rules_uk.as_deref(),
+                p.rules_es.as_deref(),
+                p.rules_de.as_deref(),
+                p.rules_it.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_keyword_created", "battle_keyword", rec.id, "ok");
@@ -16324,7 +17109,13 @@ impl AppService {
                 p.icon_url.as_deref(),
                 p.point_value,
                 &p.name_uk,
+                &p.name_es,
+                &p.name_de,
+                &p.name_it,
                 p.rules_uk.as_deref(),
+                p.rules_es.as_deref(),
+                p.rules_de.as_deref(),
+                p.rules_it.as_deref(),
             )
             .await?;
         Self::log_domain_event("battle_keyword_updated", "battle_keyword", rec.id, "ok");
@@ -16383,7 +17174,13 @@ impl AppService {
             rules_en: rules(req.rules_en.as_deref()),
             rules_ru: rules(req.rules_ru.as_deref()),
             name_uk: cut(&req.name_uk, crate::battles::KEYWORD_NAME_MAX),
+            name_es: cut(&req.name_es, crate::battles::KEYWORD_NAME_MAX),
+            name_de: cut(&req.name_de, crate::battles::KEYWORD_NAME_MAX),
+            name_it: cut(&req.name_it, crate::battles::KEYWORD_NAME_MAX),
             rules_uk: rules(req.rules_uk.as_deref()),
+            rules_es: rules(req.rules_es.as_deref()),
+            rules_de: rules(req.rules_de.as_deref()),
+            rules_it: rules(req.rules_it.as_deref()),
             icon_url: req
                 .icon_url
                 .as_deref()
@@ -16403,9 +17200,15 @@ impl AppService {
             name_en: row.name_en,
             name_ru: row.name_ru,
             name_uk: row.name_uk,
+            name_es: row.name_es,
+            name_de: row.name_de,
+            name_it: row.name_it,
             note_en: row.note_en,
             note_ru: row.note_ru,
             note_uk: row.note_uk,
+            note_es: row.note_es,
+            note_de: row.note_de,
+            note_it: row.note_it,
             icon_url: row.icon_url,
             level_frames: row.level_frames,
             motion_wear: row.motion_wear,
@@ -16440,7 +17243,13 @@ impl AppService {
                 p.level_frames.as_deref(),
                 p.motion_wear.as_deref(),
                 &p.name_uk,
+                &p.name_es,
+                &p.name_de,
+                &p.name_it,
                 p.note_uk.as_deref(),
+                p.note_es.as_deref(),
+                p.note_de.as_deref(),
+                p.note_it.as_deref(),
                 damage.flatten().as_deref(),
             )
             .await?;
@@ -16472,7 +17281,13 @@ impl AppService {
                 p.level_frames.as_deref(),
                 p.motion_wear.as_deref(),
                 &p.name_uk,
+                &p.name_es,
+                &p.name_de,
+                &p.name_it,
                 p.note_uk.as_deref(),
+                p.note_es.as_deref(),
+                p.note_de.as_deref(),
+                p.note_it.as_deref(),
                 damage.as_ref().map(|d| d.as_deref()),
             )
             .await?;
@@ -17211,7 +18026,13 @@ impl AppService {
             note_en: note(req.note_en.as_deref()),
             note_ru: note(req.note_ru.as_deref()),
             name_uk: cut(&req.name_uk),
+            name_es: cut(&req.name_es),
+            name_de: cut(&req.name_de),
+            name_it: cut(&req.name_it),
             note_uk: note(req.note_uk.as_deref()),
+            note_es: note(req.note_es.as_deref()),
+            note_de: note(req.note_de.as_deref()),
+            note_it: note(req.note_it.as_deref()),
             icon_url,
             level_frames,
             motion_wear,
@@ -17231,7 +18052,13 @@ struct PreparedKeyword {
     rules_en: Option<String>,
     rules_ru: Option<String>,
     name_uk: String,
+    name_es: String,
+    name_de: String,
+    name_it: String,
     rules_uk: Option<String>,
+    rules_es: Option<String>,
+    rules_de: Option<String>,
+    rules_it: Option<String>,
     icon_url: Option<String>,
     point_value: Option<f64>,
 }
@@ -17243,7 +18070,13 @@ struct PreparedRace {
     note_en: Option<String>,
     note_ru: Option<String>,
     name_uk: String,
+    name_es: String,
+    name_de: String,
+    name_it: String,
     note_uk: Option<String>,
+    note_es: Option<String>,
+    note_de: Option<String>,
+    note_it: Option<String>,
     icon_url: Option<String>,
     level_frames: Option<String>,
     motion_wear: Option<String>,
@@ -17262,8 +18095,17 @@ struct PreparedGazetteLeaf {
     body_en: Option<String>,
     body_ru: Option<String>,
     title_uk: String,
+    title_es: String,
+    title_de: String,
+    title_it: String,
     dek_uk: Option<String>,
+    dek_es: Option<String>,
+    dek_de: Option<String>,
+    dek_it: Option<String>,
     body_uk: Option<String>,
+    body_es: Option<String>,
+    body_de: Option<String>,
+    body_it: Option<String>,
     figurine_id: Option<Uuid>,
     href: Option<String>,
     source_name: Option<String>,
@@ -17318,6 +18160,11 @@ fn normalize_tale_scene(mut scene: TaleScene) -> Result<TaleScene> {
     for f in &mut scene.frames {
         f.url = f.url.trim().to_string();
         f.caption = f.caption.trim().chars().take(200).collect();
+        f.caption_ru = f.caption_ru.trim().chars().take(200).collect();
+        f.caption_uk = f.caption_uk.trim().chars().take(200).collect();
+        f.caption_es = f.caption_es.trim().chars().take(200).collect();
+        f.caption_de = f.caption_de.trim().chars().take(200).collect();
+        f.caption_it = f.caption_it.trim().chars().take(200).collect();
     }
     if scene.frames.len() < 2 {
         return Err(AppError::BadRequest("A scene needs at least two frames".into()));
@@ -17368,7 +18215,16 @@ mod tale_scene_tests {
     use super::*;
 
     fn frame(url: &str) -> TaleSceneFrame {
-        TaleSceneFrame { url: url.into(), caption: String::new(), position: String::new() }
+        TaleSceneFrame {
+            url: url.into(),
+            caption: String::new(),
+            caption_ru: String::new(),
+            caption_uk: String::new(),
+            caption_es: String::new(),
+            caption_de: String::new(),
+            caption_it: String::new(),
+            position: String::new(),
+        }
     }
 
     fn scene(frames: Vec<TaleSceneFrame>, transitions: Vec<TaleSceneTransition>) -> TaleScene {
@@ -17435,4 +18291,123 @@ impl LoanInputs {
             .filter_map(|c| c.id.parse().ok().map(|id| (id, c.tier)))
             .collect()
     }
+}
+
+// ── Words the server writes to visitors, one place per message ─────────────
+
+fn quoted(lang: crate::lang::Lang, name: &str) -> String {
+    match lang {
+        crate::lang::Lang::En => format!("“{name}”"),
+        crate::lang::Lang::De => format!("„{name}“"),
+        _ => format!("«{name}»"),
+    }
+}
+
+/// Тема и первая строка записки «на ваш запрос ответили».
+fn order_reply_words(lang: crate::lang::Lang, name: &str) -> (String, String) {
+    use crate::lang::Lang;
+    let q = quoted(lang, name);
+    match lang {
+        Lang::En => (format!("A reply to your request — {name}"), format!("Your request about {q} has a reply.")),
+        Lang::Ru => (format!("Ответ на ваш запрос — {name}"), format!("Ваш запрос по {q} получил ответ.")),
+        Lang::Uk => (format!("Відповідь на ваш запит — {name}"), format!("Ваш запит щодо {q} отримав відповідь.")),
+        Lang::Es => (format!("Respuesta a su consulta — {name}"), format!("Su consulta sobre {q} tiene respuesta.")),
+        Lang::De => (format!("Antwort auf Ihre Anfrage — {name}"), format!("Ihre Anfrage zu {q} wurde beantwortet.")),
+        Lang::It => (format!("Risposta alla sua richiesta — {name}"), format!("La sua richiesta su {q} ha ricevuto una risposta.")),
+    }
+}
+
+/// Тема и текст записки о брони; `None` — о таком состоянии не пишут.
+fn booking_status_words(
+    lang: crate::lang::Lang,
+    status: &BookingStatus,
+    name: &str,
+    from: &str,
+    to: &str,
+) -> Option<(String, String)> {
+    use crate::lang::Lang;
+    let q = quoted(lang, name);
+    let words = match (status, lang) {
+        (BookingStatus::Confirmed, Lang::En) => (format!("Booking confirmed — {name}"), format!("Your booking request for {q} ({from} — {to}) is confirmed.")),
+        (BookingStatus::Confirmed, Lang::Ru) => (format!("Бронирование подтверждено — {name}"), format!("Ваш запрос на бронирование {q} ({from} — {to}) подтверждён.")),
+        (BookingStatus::Confirmed, Lang::Uk) => (format!("Бронювання підтверджено — {name}"), format!("Ваш запит на бронювання {q} ({from} — {to}) підтверджено.")),
+        (BookingStatus::Confirmed, Lang::Es) => (format!("Reserva confirmada — {name}"), format!("Su solicitud de reserva de {q} ({from} — {to}) está confirmada.")),
+        (BookingStatus::Confirmed, Lang::De) => (format!("Reservierung bestätigt — {name}"), format!("Ihre Reservierungsanfrage für {q} ({from} — {to}) ist bestätigt.")),
+        (BookingStatus::Confirmed, Lang::It) => (format!("Prenotazione confermata — {name}"), format!("La sua richiesta di prenotazione di {q} ({from} — {to}) è confermata.")),
+        (BookingStatus::Rejected, Lang::En) => (format!("Booking declined — {name}"), format!("Your booking request for {q} ({from} — {to}) has been declined.")),
+        (BookingStatus::Rejected, Lang::Ru) => (format!("Бронирование отклонено — {name}"), format!("Ваш запрос на бронирование {q} ({from} — {to}) отклонён.")),
+        (BookingStatus::Rejected, Lang::Uk) => (format!("Бронювання відхилено — {name}"), format!("Ваш запит на бронювання {q} ({from} — {to}) відхилено.")),
+        (BookingStatus::Rejected, Lang::Es) => (format!("Reserva rechazada — {name}"), format!("Su solicitud de reserva de {q} ({from} — {to}) ha sido rechazada.")),
+        (BookingStatus::Rejected, Lang::De) => (format!("Reservierung abgelehnt — {name}"), format!("Ihre Reservierungsanfrage für {q} ({from} — {to}) wurde abgelehnt.")),
+        (BookingStatus::Rejected, Lang::It) => (format!("Prenotazione rifiutata — {name}"), format!("La sua richiesta di prenotazione di {q} ({from} — {to}) è stata rifiutata.")),
+        (BookingStatus::Cancelled, Lang::En) => (format!("Booking cancelled — {name}"), format!("The booking of {q} ({from} — {to}) is cancelled.")),
+        (BookingStatus::Cancelled, Lang::Ru) => (format!("Бронирование отменено — {name}"), format!("Бронирование {q} ({from} — {to}) отменено.")),
+        (BookingStatus::Cancelled, Lang::Uk) => (format!("Бронювання скасовано — {name}"), format!("Бронювання {q} ({from} — {to}) скасовано.")),
+        (BookingStatus::Cancelled, Lang::Es) => (format!("Reserva cancelada — {name}"), format!("La reserva de {q} ({from} — {to}) está cancelada.")),
+        (BookingStatus::Cancelled, Lang::De) => (format!("Reservierung storniert — {name}"), format!("Die Reservierung von {q} ({from} — {to}) ist storniert.")),
+        (BookingStatus::Cancelled, Lang::It) => (format!("Prenotazione annullata — {name}"), format!("La prenotazione di {q} ({from} — {to}) è annullata.")),
+        (BookingStatus::Completed, Lang::En) => (format!("Booking completed — {name}"), format!("The booking of {q} ({from} — {to}) is completed. Thank you.")),
+        (BookingStatus::Completed, Lang::Ru) => (format!("Бронирование завершено — {name}"), format!("Бронирование {q} ({from} — {to}) завершено. Спасибо!")),
+        (BookingStatus::Completed, Lang::Uk) => (format!("Бронювання завершено — {name}"), format!("Бронювання {q} ({from} — {to}) завершено. Дякуємо!")),
+        (BookingStatus::Completed, Lang::Es) => (format!("Reserva terminada — {name}"), format!("La reserva de {q} ({from} — {to}) ha terminado. Gracias.")),
+        (BookingStatus::Completed, Lang::De) => (format!("Reservierung abgeschlossen — {name}"), format!("Die Reservierung von {q} ({from} — {to}) ist abgeschlossen. Danke.")),
+        (BookingStatus::Completed, Lang::It) => (format!("Prenotazione conclusa — {name}"), format!("La prenotazione di {q} ({from} — {to}) è conclusa. Grazie.")),
+        _ => return None,
+    };
+    Some(words)
+}
+
+/// Записка тем, кто ждал работу в очереди.
+fn waitlist_words(lang: crate::lang::Lang, name: &str) -> (String, String) {
+    use crate::lang::Lang;
+    let q = quoted(lang, name);
+    match lang {
+        Lang::En => (format!("{q} is available again"), format!("{q}, which you were waiting for, is available again.\n\nThe details are in the archive.")),
+        Lang::Ru => (format!("Фигурина {q} снова доступна"), format!("Хорошие новости — фигурина {q}, которую вы ждали, снова доступна.\n\nПосетите архив, чтобы узнать подробности.")),
+        Lang::Uk => (format!("Фігурка {q} знову доступна"), format!("Фігурка {q}, на яку ви чекали, знову доступна.\n\nПодробиці — в архіві.")),
+        Lang::Es => (format!("{q} vuelve a estar disponible"), format!("{q}, la obra que esperaba, vuelve a estar disponible.\n\nLos detalles están en el archivo.")),
+        Lang::De => (format!("{q} ist wieder verfügbar"), format!("{q}, auf die Sie gewartet haben, ist wieder verfügbar.\n\nDie Einzelheiten finden Sie im Archiv.")),
+        Lang::It => (format!("{q} è di nuovo disponibile"), format!("{q}, l’opera che aspettava, è di nuovo disponibile.\n\nI dettagli sono nell’archivio.")),
+    }
+}
+
+/// Записка в Telegram о входе в имя знаками.
+fn new_door_note(lang: crate::lang::Lang, where_from: &str) -> String {
+    let head = lang.pick(
+        "<b>New sign-in</b>\nSomeone has just signed in to your account with the signs.",
+        "<b>Новый вход</b>\nВ ваше имя только что вошли знаками.",
+        "<b>Новий вхід</b>\nУ ваше ім’я щойно увійшли знаками.",
+        "<b>Nueva entrada</b>\nAlguien acaba de entrar en su cuenta con los signos.",
+        "<b>Neue Anmeldung</b>\nGerade hat sich jemand mit den Zeichen in Ihrem Konto angemeldet.",
+        "<b>Nuovo accesso</b>\nQualcuno ha appena effettuato l’accesso al suo account con i segni.",
+    );
+    if where_from.is_empty() {
+        return head.to_string();
+    }
+    let from = lang.pick("From", "Откуда", "Звідки", "Desde", "Von", "Da");
+    format!("{head}\n{from}: {}", crate::telegram::esc(where_from))
+}
+
+/// Тема и подписи письма с ответом на отзыв о работе.
+fn impression_reply_words(lang: crate::lang::Lang, name: &str) -> (String, String, &'static str, &'static str) {
+    use crate::lang::Lang;
+    let q = quoted(lang, name);
+    let (subject, yours) = match lang {
+        Lang::En => (format!("Re: Your impression of {q}"), format!("Your impression of {q}:")),
+        Lang::Ru => (format!("Ответ на ваш отзыв о {q}"), format!("Ваш отзыв о работе {q}:")),
+        Lang::Uk => (format!("Відповідь на ваш відгук про {q}"), format!("Ваш відгук про роботу {q}:")),
+        Lang::Es => (format!("Re: Su opinión sobre {q}"), format!("Su opinión sobre {q}:")),
+        Lang::De => (format!("Re: Ihre Bewertung von {q}"), format!("Ihre Bewertung von {q}:")),
+        Lang::It => (format!("Re: Il suo parere su {q}"), format!("Il suo parere su {q}:")),
+    };
+    let answer = lang.pick(
+        "The author's reply:",
+        "Ответ автора:",
+        "Відповідь автора:",
+        "Respuesta de la autora:",
+        "Antwort der Autorin:",
+        "Risposta dell’autrice:",
+    );
+    let view = lang.pick("The work", "Работа", "Робота", "La obra", "Die Arbeit", "L’opera");
+    (subject, yours, answer, view)
 }

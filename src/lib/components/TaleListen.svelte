@@ -23,7 +23,7 @@
 
   let supported = $state(false);
   let voice = $state<SpeechSynthesisVoice | null>(null);
-  let state = $state<'idle' | 'playing' | 'paused'>('idle');
+  let phase = $state<'idle' | 'playing' | 'paused'>('idle');
   let at = $state(0);
   let rateAt = $state(1);
   let chunks = $state<string[]>([]);
@@ -75,7 +75,7 @@
     void $lang;
     void title;
     if (supported) {
-      // Без `untrack` эффект следил бы и за `state`, и нажатие «Послушать» тут же его останавливало.
+      // Без `untrack` эффект следил бы и за `phase`, и нажатие «Послушать» тут же его останавливало.
       untrack(() => {
         stop(false);
         pickVoice();
@@ -88,7 +88,7 @@
   function speakFrom(i: number, mine: number) {
     if (mine !== token) return;
     if (i >= chunks.length) {
-      state = 'idle';
+      phase = 'idle';
       at = 0;
       interact('tale_listen', 'done');
       return;
@@ -117,7 +117,7 @@
     stop(false);
     chunks = spoken.flatMap(split);
     if (!chunks.length) return;
-    state = 'playing';
+    phase = 'playing';
     token += 1;
     interact('tale_listen', 'start');
     speakFrom(0, token);
@@ -126,19 +126,19 @@
   function stop(manual: boolean) {
     token += 1;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
-    if (state !== 'idle' && manual) interact('tale_listen', 'stop');
-    state = 'idle';
+    if (phase !== 'idle' && manual) interact('tale_listen', 'stop');
+    phase = 'idle';
     at = 0;
   }
 
   function toggle() {
-    if (state === 'idle') start();
-    else if (state === 'playing') {
+    if (phase === 'idle') start();
+    else if (phase === 'playing') {
       window.speechSynthesis.pause();
-      state = 'paused';
+      phase = 'paused';
     } else {
       window.speechSynthesis.resume();
-      state = 'playing';
+      phase = 'playing';
     }
   }
 
@@ -146,24 +146,24 @@
     rateAt = (rateAt + 1) % RATES.length;
   }
 
-  let progress = $derived(chunks.length && state !== 'idle' ? Math.min(100, Math.round((at / chunks.length) * 100)) : 0);
+  let progress = $derived(chunks.length && phase !== 'idle' ? Math.min(100, Math.round((at / chunks.length) * 100)) : 0);
 </script>
 
 {#if supported && voice}
   <div class="listen" role="group" aria-label={$t('talesListen')}>
-    <button type="button" class="play" onclick={toggle} aria-pressed={state === 'playing'}>
+    <button type="button" class="play" onclick={toggle} aria-pressed={phase === 'playing'}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        {#if state === 'playing'}
+        {#if phase === 'playing'}
           <path d="M8 5v14M16 5v14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
         {:else}
           <path d="M7 4.5v15l13-7.5z" fill="currentColor" />
         {/if}
       </svg>
       <span>
-        {#if state === 'idle'}{$t('talesListen')}{:else if state === 'playing'}{$t('talesListenPause')}{:else}{$t('talesListenResume')}{/if}
+        {#if phase === 'idle'}{$t('talesListen')}{:else if phase === 'playing'}{$t('talesListenPause')}{:else}{$t('talesListenResume')}{/if}
       </span>
     </button>
-    {#if state !== 'idle'}
+    {#if phase !== 'idle'}
       <button type="button" class="aux" onclick={() => stop(true)}>{$t('talesListenStop')}</button>
       <button type="button" class="aux rate" onclick={faster} aria-label={$t('talesListenSpeed')} title={$t('talesListenSpeed')}>
         {RATES[rateAt]}×

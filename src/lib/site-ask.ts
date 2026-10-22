@@ -12,6 +12,7 @@
 import { normalizeQuery } from '$lib/keeper-search';
 import { pageReply, wantsPage, type AskPage } from '$lib/site-ask-page';
 import { goReply, parseGo, type GoSpec } from '$lib/site-ask-go';
+import { matchReply, matchStart, wantsMatch } from '$lib/site-ask-match';
 import { leafCopy } from '$lib/gazette';
 import { readingMinutes } from '$lib/tales';
 import { cardRace, cardTitle, searchSite } from '$lib/site-search';
@@ -34,15 +35,23 @@ const SUMMARY_PHRASES = [
   'что здесь', 'что тут', 'что на сайте', 'о чем сайт', 'о чем этот', 'обзор', 'расскажи о себе',
   'підсумуй', 'стисло', 'що це за сайт', 'що тут', 'що на сайті', 'про що сайт', 'огляд',
   'summar', 'overview', 'briefly', 'about the site', 'about this site', 'what is this', 'what is here', "what's here", 'tell me about',
+  'resum', 'en pocas palabras', 'qué es este sitio', 'que es este sitio', 'qué hay aquí', 'que hay aqui', 'de qué va', 'de que va', 'sobre el sitio',
+  'zusammenfass', 'überblick', 'ueberblick', 'kurz:', 'was ist das für', 'was ist das fur', 'was gibt es hier', 'worum geht', 'über die seite',
+  'riassum', 'in breve', 'panoramica', 'che sito è', 'che sito e', 'cosa c’è qui', "cosa c'è qui", 'di cosa parla',
 ];
 const START_PHRASES = [
   'с чего начать', 'с чего начинать', 'что посмотреть', 'посоветуй', 'порекомендуй', 'что выбрать', 'что выбрать',
   'з чого почати', 'що подивитися', 'порадь', 'порекомендуй',
   'where to start', 'where do i start', 'what should i', 'recommend', 'suggest',
+  'por dónde empiezo', 'por donde empiezo', 'por dónde empezar', 'qué me recomiendas', 'que me recomiendas', 'qué ver', 'recomienda', 'sugiere',
+  'womit fange', 'wo fange ich an', 'wo anfangen', 'was empfiehlst', 'empfiehl', 'was soll ich',
+  'da dove comincio', 'da dove inizio', 'da dove cominciare', 'cosa mi consigli', 'consiglia', 'cosa guardare', 'suggerisci',
 ];
-const NEW_STEMS = ['нов', 'свеж', 'последн', 'останн', 'new', 'latest', 'recent', 'fresh'];
-const TALE_STEMS = ['почита', 'почит', 'байк', 'небыл', 'небил', 'рассказ', 'сказк', 'казк', 'истори', 'історі', 'оповід', 'tale', 'story', 'stories', 'read'];
-const PLAY_STEMS = ['игр', 'сыгра', 'играт', 'этюд', 'бой', 'боя', 'битв', 'гра', 'зіграт', 'грати', 'етюд', 'бій', 'game', 'play', 'etude', 'study', 'battle', 'карт', 'card'];
+const NEW_STEMS = ['нов', 'свеж', 'последн', 'останн', 'new', 'latest', 'recent', 'fresh', 'nuev', 'novedad', 'último', 'ultimo', 'neu', 'neuigkeit', 'nuov', 'novità', 'novita', 'ultim'];
+const TALE_STEMS = ['почита', 'почит', 'байк', 'небыл', 'небил', 'рассказ', 'сказк', 'казк', 'истори', 'історі', 'оповід', 'tale', 'story', 'stories', 'read',
+  'cuento', 'leer', 'lectura', 'historia', 'geschicht', 'lesen', 'lektüre', 'raccont', 'leggere', 'lettura', 'storia', 'storie'];
+const PLAY_STEMS = ['игр', 'сыгра', 'играт', 'этюд', 'бой', 'боя', 'битв', 'гра', 'зіграт', 'грати', 'етюд', 'бій', 'game', 'play', 'etude', 'study', 'battle', 'карт', 'card',
+  'jueg', 'jugar', 'étude', 'combate', 'batalla', 'carta', 'spiel', 'etüde', 'kampf', 'karte', 'gioc', 'battagl'];
 
 
 export type AboutKey = 'author' | 'order' | 'contact' | 'made' | 'rules' | 'tale' | 'gazette';
@@ -67,34 +76,51 @@ export interface AskParsed {
 const ABOUT_PHRASES: [AboutKey, string[]][] = [
   ['author', ['кто автор', 'кто делает', 'кто делал', 'кто создает', 'кто создал', 'кто мастер', 'кто вы', 'кто ты', 'об авторе', 'про автора',
     'who makes', 'who made', 'who is the author', 'who are you', 'about the author',
-    'хто автор', 'хто робить', 'хто ви', 'хто ти', 'про авторку']],
+    'хто автор', 'хто робить', 'хто ви', 'хто ти', 'про авторку',
+    'quién es la autora', 'quien es la autora', 'sobre la autora', 'quién hace las', 'quien hace las', 'quién eres', 'quien eres',
+    'wer ist die autorin', 'über die autorin', 'wer macht', 'wer bist du',
+    'chi è l’autrice', "chi è l'autrice", 'chi e l’autrice', 'sull’autrice', 'chi fa le', 'chi sei']],
   ['order', ['как заказать', 'как купить', 'как приобрести', 'как получить работу', 'как запросить', 'заказать работу', 'купить работу', 'хочу купить', 'хочу заказать',
     'доставк', 'оплат', 'депозит', 'сколько стоит', 'цена', 'цены', 'стоимость',
     'how to order', 'how to buy', 'how can i buy', 'how to acquire', 'commission', 'delivery', 'payment', 'how much', 'price',
-    'як замовити', 'як купити', 'як придбати', 'скільки коштує', 'ціна', 'ціни']],
+    'як замовити', 'як купити', 'як придбати', 'скільки коштує', 'ціна', 'ціни',
+    'cómo encargar', 'como encargar', 'encargar', 'cómo comprar', 'como comprar', 'comprar una obra', 'adquirir', 'envío', 'envio', 'pago', 'cuánto cuesta', 'cuanto cuesta', 'precio',
+    'wie bestelle', 'bestellen', 'kaufen', 'erwerben', 'versand', 'zahlung', 'was kostet', 'wie viel kostet', 'preis',
+    'come ordinare', 'ordinare', 'comprare', 'acquistare', 'spedizione', 'pagamento', 'quanto costa', 'prezzo']],
   ['contact', ['как связаться', 'как написать', 'написать автору', 'связаться с', 'контакт',
-    'how to contact', 'contact the author', 'get in touch', 'як зв’язатися', 'як звязатися', 'як написати', 'зв’язатися', 'зв’язок']],
+    'how to contact', 'contact the author', 'get in touch', 'як зв’язатися', 'як звязатися', 'як написати', 'зв’язатися', 'зв’язок',
+    'cómo contactar', 'como contactar', 'contactar', 'escribir a la autora', 'wie erreiche', 'kontakt', 'der autorin schreiben',
+    'come contattare', 'contattare', 'scrivere all’autrice']],
   ['made', ['из чего', 'из какого материала', 'материал', 'как сделан', 'как делаются', 'как лепит', 'какого размера', 'какой размер', 'размер',
     'made of', 'what material', 'how are they made', 'how is it made', 'techniq', 'what size', 'how big',
-    'з чого', 'з якого матеріалу', 'як зроблен', 'матеріал', 'якого розміру', 'розмір']],
+    'з чого', 'з якого матеріалу', 'як зроблен', 'матеріал', 'якого розміру', 'розмір',
+    'de qué están hechas', 'de que estan hechas', 'hechas de', 'hecho de', 'material', 'qué tamaño', 'que tamaño', 'tamaño',
+    'woraus', 'wie groß', 'wie gross', 'größe', 'groesse', 'wie gemacht',
+    'di che cosa sono', 'di cosa sono fatte', 'fatte di', 'materiale', 'dimensioni', 'quanto è grande', 'come sono fatte']],
   ['rules', ['как играть', 'правила', 'что такое этюд', 'что такое игра', 'как работает игра', 'how to play', 'rules', 'what is a study', 'how does the game',
-    'як грати', 'що таке етюд', 'що таке гра']],
-  ['tale', ['что такое небылиц', 'что такое байк', 'what is a tall tale', 'what are tall tales', 'що таке небилиц']],
-  ['gazette', ['что такое вестник', 'what is the gazette', 'що таке вісник']],
+    'як грати', 'що таке етюд', 'що таке гра',
+    'cómo se juega', 'como se juega', 'cómo jugar', 'como jugar', 'reglas', 'qué es un étude', 'que es un etude',
+    'wie spielt man', 'wie spiele ich', 'regeln', 'was ist eine etüde',
+    'come si gioca', 'come giocare', 'regole', 'cos’è un étude', "cos'è un étude"]],
+  ['tale', ['что такое небылиц', 'что такое байк', 'what is a tall tale', 'what are tall tales', 'що таке небилиц',
+    'qué es un cuento', 'que es un cuento', 'qué son los cuentos', 'was ist eine geschichte', 'was sind die geschichten', 'cos’è un racconto', "cos'è un racconto", 'cosa sono i racconti']],
+  ['gazette', ['что такое вестник', 'what is the gazette', 'що таке вісник', 'qué es la gaceta', 'que es la gaceta', 'was ist die zeitung', 'cos’è la gazzetta', "cos'è la gazzetta"]],
 ];
-const PRICE_WORDS = ['сколько стоит', 'цена', 'цены', 'стоимость', 'how much', 'price', 'скільки коштує', 'ціна', 'ціни'];
+const PRICE_WORDS = ['сколько стоит', 'цена', 'цены', 'стоимость', 'how much', 'price', 'скільки коштує', 'ціна', 'ціни',
+  'cuánto cuesta', 'cuanto cuesta', 'precio', 'was kostet', 'wie viel kostet', 'preis', 'quanto costa', 'prezzo'];
 
-const COUNT_TRIGGERS = ['сколько', 'скільки', 'how many', 'количество', 'кількість'];
+const COUNT_TRIGGERS = ['сколько', 'скільки', 'how many', 'количество', 'кількість', 'cuánt', 'cuant', 'wie viele', 'wie viel', 'anzahl', 'quant'];
 const FACT_STEMS: [FactKey, string[]][] = [
-  ['tales', ['небыл', 'небил', 'tale', 'байк', 'истори', 'історі']],
-  ['leaves', ['вестник', 'вісник', 'gazette', 'лист']],
-  ['cards', ['карт', 'card']],
-  ['etudes', ['этюд', 'етюд', 'stud', 'etude']],
-  ['races', ['расы', 'расам', 'расах', 'раси', 'race']],
-  ['works', ['работ', 'робіт', 'робот', 'work', 'figurin', 'кукл', 'фигур', 'ляльк', 'фігур']],
+  ['tales', ['небыл', 'небил', 'tale', 'байк', 'истори', 'історі', 'cuento', 'geschicht', 'raccont']],
+  ['leaves', ['вестник', 'вісник', 'gazette', 'лист', 'gaceta', 'hoja', 'zeitung', 'blätt', 'blatt', 'gazzett', 'fogli']],
+  ['cards', ['карт', 'card', 'carta', 'carte', 'karte']],
+  ['etudes', ['этюд', 'етюд', 'stud', 'etude', 'étude', 'etüde']],
+  ['races', ['расы', 'расам', 'расах', 'раси', 'race', 'raza', 'volk', 'völker', 'voelker', 'razz']],
+  ['works', ['работ', 'робіт', 'робот', 'work', 'figurin', 'кукл', 'фигур', 'ляльк', 'фігур', 'obra', 'figura', 'muñec', 'werk', 'figur', 'puppe', 'opera', 'opere', 'statuin', 'bambol']],
 ];
-const IN_PROGRESS = ['в работе', 'у роботі', 'in progress', 'в процессе', 'у процесі'];
-const EARLIEST = ['самая ранн', 'самая стар', 'самая перв', 'найраніш', 'найстарш', 'перша робота', 'earliest', 'oldest', 'first work', 'с какого года', 'з якого року', 'since when'];
+const IN_PROGRESS = ['в работе', 'у роботі', 'in progress', 'в процессе', 'у процесі', 'en proceso', 'in arbeit', 'in lavorazione'];
+const EARLIEST = ['самая ранн', 'самая стар', 'самая перв', 'найраніш', 'найстарш', 'перша робота', 'earliest', 'oldest', 'first work', 'с какого года', 'з якого року', 'since when',
+  'más antigua', 'mas antigua', 'primera obra', 'desde cuándo', 'desde cuando', 'früheste', 'frueheste', 'älteste', 'erstes werk', 'seit wann', 'più antica', 'piu antica', 'prima opera', 'da quando'];
 
 
 export function parseAsk(query: string): AskParsed {
@@ -113,6 +139,7 @@ export function parseAsk(query: string): AskParsed {
   if (!q) return { intent: 'none', topic: '', minutes };
   if (wantsPage(query)) return { intent: 'page', topic: '', minutes };
   if (has(SUMMARY_PHRASES)) return { intent: 'summary', topic: '', minutes };
+  if (wantsMatch(query)) return { intent: 'match', topic: '', minutes };
   if (has(START_PHRASES)) return { intent: 'start', topic: '', minutes };
 
   const go = parseGo(query);
@@ -165,28 +192,28 @@ function summaryReply(index: AskIndex, lang: Lang, gazetteTotal: number | null):
   const leaves = gazetteTotal ?? index.gazette.length;
 
   const first =
-    say(lang, 'Это витрина авторских готических миниатюр, а не магазин. ', 'Це вітрина авторських готичних мініатюр, а не магазин. ', 'This is a showcase of original gothic miniatures, not a shop. ') +
+    say(lang, 'Это витрина авторских готических миниатюр, а не магазин. ', 'Це вітрина авторських готичних мініатюр, а не магазин. ', 'This is a showcase of original gothic miniatures, not a shop. ', 'Es un escaparate de miniaturas góticas de autora, no una tienda. ', 'Dies ist eine Vitrine eigener gotischer Miniaturen, kein Laden. ', 'È una vetrina di miniature gotiche d’autrice, non un negozio. ') +
     (works.length
-      ? say(lang, `В собрании ${n_works(lang, works.length)}`, `У зібранні ${n_works(lang, works.length)}`, `The collection holds ${n_works(lang, works.length)}`) +
+      ? say(lang, `В собрании ${n_works(lang, works.length)}`, `У зібранні ${n_works(lang, works.length)}`, `The collection holds ${n_works(lang, works.length)}`, `La colección reúne ${n_works(lang, works.length)}`, `Die Sammlung umfasst ${n_works(lang, works.length)}`, `La raccolta conta ${n_works(lang, works.length)}`) +
         (inProgress
-          ? say(lang, `, из них ${inProgress} в работе`, `, з них ${inProgress} у роботі`, `, ${inProgress} of them still in progress`)
+          ? say(lang, `, из них ${inProgress} в работе`, `, з них ${inProgress} у роботі`, `, ${inProgress} of them still in progress`, `, ${inProgress} de ellas todavía en proceso`, `, davon ${inProgress} noch in Arbeit`, `, di cui ${inProgress} ancora in lavorazione`)
           : '') +
         (earliest
-          ? say(lang, `; самая ранняя — ${earliest} года.`, `; найраніша — ${earliest} року.`, `; the earliest is from ${earliest}.`)
+          ? say(lang, `; самая ранняя — ${earliest} года.`, `; найраніша — ${earliest} року.`, `; the earliest is from ${earliest}.`, `; la más antigua es de ${earliest}.`, `; das früheste stammt von ${earliest}.`, `; la più antica è del ${earliest}.`)
           : '.')
       : '');
 
   const beside: string[] = [];
   if (index.tales.length) beside.push(n_tales(lang, index.tales.length));
   if (leaves) beside.push(n_leaves(lang, leaves));
-  if (cards.length) beside.push(say(lang, `${n_cards(lang, cards.length)} в игре`, `${n_cards(lang, cards.length)} у грі`, `${n_cards(lang, cards.length)} in the game`));
+  if (cards.length) beside.push(say(lang, `${n_cards(lang, cards.length)} в игре`, `${n_cards(lang, cards.length)} у грі`, `${n_cards(lang, cards.length)} in the game`, `${n_cards(lang, cards.length)} en el juego`, `${n_cards(lang, cards.length)} im Spiel`, `${n_cards(lang, cards.length)} nel gioco`));
   if (etudes.length) {
     beside.push(
-      say(lang, `${n_etudes(lang, etudes.length)} — партии против компьютера`, `${n_etudes(lang, etudes.length)} — партії проти комп’ютера`, `${n_etudes(lang, etudes.length)} — games against the computer`),
+      say(lang, `${n_etudes(lang, etudes.length)} — партии против компьютера`, `${n_etudes(lang, etudes.length)} — партії проти комп’ютера`, `${n_etudes(lang, etudes.length)} — games against the computer`, `${n_etudes(lang, etudes.length)}: partidas contra el ordenador`, `${n_etudes(lang, etudes.length)} – Partien gegen den Computer`, `${n_etudes(lang, etudes.length)}: partite contro il computer`),
     );
   }
   const second = beside.length
-    ? say(lang, 'Рядом с работами: ', 'Поряд із роботами: ', 'Alongside the works: ') + joinList(lang, beside) + '.'
+    ? say(lang, 'Рядом с работами: ', 'Поряд із роботами: ', 'Alongside the works: ', 'Junto a las obras: ', 'Neben den Werken: ', 'Accanto alle opere: ') + joinList(lang, beside) + '.'
     : '';
 
   const races = new Map<string, number>();
@@ -196,27 +223,27 @@ function summaryReply(index: AskIndex, lang: Lang, gazetteTotal: number | null):
   }
   const topRaces = [...races.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([r]) => r);
   const third = topRaces.length >= 2
-    ? say(lang, `Чаще всего среди карт: ${topRaces.join(', ')}.`, `Найчастіше серед карт: ${topRaces.join(', ')}.`, `Most common among the cards: ${topRaces.join(', ')}.`)
+    ? say(lang, `Чаще всего среди карт: ${topRaces.join(', ')}.`, `Найчастіше серед карт: ${topRaces.join(', ')}.`, `Most common among the cards: ${topRaces.join(', ')}.`, `Lo más frecuente entre las cartas: ${topRaces.join(', ')}.`, `Am häufigsten unter den Karten: ${topRaces.join(', ')}.`, `Le più frequenti tra le carte: ${topRaces.join(', ')}.`)
     : '';
 
   const latestWork = newest(works, (w) => w.createdAt)[0];
   const latestTale = talesNewest(index)[0];
   const lastBits: string[] = [];
-  if (latestWork) lastBits.push(say(lang, `работа ${quote(workName(latestWork))}`, `робота ${quote(workName(latestWork))}`, `the work ${quote(workName(latestWork))}`));
-  if (latestTale) lastBits.push(say(lang, `небылица ${quote(leafTitle(latestTale, lang))}`, `небилиця ${quote(leafTitle(latestTale, lang))}`, `the tall tale ${quote(leafTitle(latestTale, lang))}`));
-  const fourth = lastBits.length ? say(lang, 'Последнее: ', 'Останнє: ', 'Latest: ') + joinList(lang, lastBits) + '.' : '';
+  if (latestWork) lastBits.push(say(lang, `работа ${quote(workName(latestWork))}`, `робота ${quote(workName(latestWork))}`, `the work ${quote(workName(latestWork))}`, `la obra ${quote(workName(latestWork))}`, `das Werk ${quote(workName(latestWork))}`, `l’opera ${quote(workName(latestWork))}`));
+  if (latestTale) lastBits.push(say(lang, `небылица ${quote(leafTitle(latestTale, lang))}`, `небилиця ${quote(leafTitle(latestTale, lang))}`, `the tall tale ${quote(leafTitle(latestTale, lang))}`, `el cuento ${quote(leafTitle(latestTale, lang))}`, `die Geschichte ${quote(leafTitle(latestTale, lang))}`, `il racconto ${quote(leafTitle(latestTale, lang))}`));
+  const fourth = lastBits.length ? say(lang, 'Последнее: ', 'Останнє: ', 'Latest: ', 'Lo último: ', 'Zuletzt: ', 'Le ultime novità: ') + joinList(lang, lastBits) + '.' : '';
 
   const links: AskLink[] = [];
-  if (latestWork) links.push(workLink(latestWork, lang, say(lang, 'новая работа', 'нова робота', 'newest work')));
+  if (latestWork) links.push(workLink(latestWork, lang, say(lang, 'новая работа', 'нова робота', 'newest work', 'obra más reciente', 'neuestes Werk', 'opera più recente')));
   if (latestTale) links.push(taleLink(latestTale, lang));
-  links.push({ kind: 'section', label: say(lang, 'Все работы', 'Усі роботи', 'All works'), hint: String(works.length), href: '/figurines' });
-  if (index.tales.length) links.push({ kind: 'section', label: say(lang, 'Небылицы', 'Небилиці', 'Tall tales'), hint: String(index.tales.length), href: '/tales' });
-  if (leaves) links.push({ kind: 'section', label: say(lang, 'Вестник', 'Вісник', 'Gazette'), hint: String(leaves), href: '/gazette' });
+  links.push({ kind: 'section', label: say(lang, 'Все работы', 'Усі роботи', 'All works', 'Todas las obras', 'Alle Werke', 'Tutte le opere'), hint: String(works.length), href: '/figurines' });
+  if (index.tales.length) links.push({ kind: 'section', label: say(lang, 'Небылицы', 'Небилиці', 'Tall tales', 'Cuentos', 'Geschichten', 'Racconti'), hint: String(index.tales.length), href: '/tales' });
+  if (leaves) links.push({ kind: 'section', label: say(lang, 'Вестник', 'Вісник', 'Gazette', 'Gaceta', 'Zeitung', 'Gazzetta'), hint: String(leaves), href: '/gazette' });
   const firstEtude = etudes[0];
   links.push(
     firstEtude
-      ? { kind: 'section', label: say(lang, 'Игра', 'Гра', 'The game'), hint: etudeTitle(firstEtude, lang), href: '/battles/etude' }
-      : { kind: 'section', label: say(lang, 'Игра', 'Гра', 'The game'), href: '/battles' },
+      ? { kind: 'section', label: say(lang, 'Игра', 'Гра', 'The game', 'El juego', 'Das Spiel', 'Il gioco'), hint: etudeTitle(firstEtude, lang), href: '/battles/etude' }
+      : { kind: 'section', label: say(lang, 'Игра', 'Гра', 'The game', 'El juego', 'Das Spiel', 'Il gioco'), href: '/battles' },
   );
 
   return { intent: 'summary', paragraphs: [first, second, third, fourth].filter(Boolean), links: links.slice(0, LINKS_MAX) };
@@ -238,8 +265,8 @@ function startReply(index: AskIndex, lang: Lang): AskReply {
   if (!work && !tale) {
     return {
       intent: 'start',
-      paragraphs: [say(lang, 'Пока на сайте нечего посоветовать: попробуйте открыть архив работ.', 'Поки на сайті нічого порадити: спробуйте відкрити архів робіт.', 'There is nothing to suggest yet: try the archive of works.')],
-      links: [{ kind: 'section', label: say(lang, 'Все работы', 'Усі роботи', 'All works'), href: '/figurines' }],
+      paragraphs: [say(lang, 'Пока на сайте нечего посоветовать: попробуйте открыть архив работ.', 'Поки на сайті нічого порадити: спробуйте відкрити архів робіт.', 'There is nothing to suggest yet: try the archive of works.', 'Todavía no hay nada que sugerir: mira el archivo de obras.', 'Noch gibt es nichts vorzuschlagen: Sieh im Archiv der Werke nach.', 'Non c’è ancora niente da suggerire: prova l’archivio delle opere.')],
+      links: [{ kind: 'section', label: say(lang, 'Все работы', 'Усі роботи', 'All works', 'Todas las obras', 'Alle Werke', 'Tutte le opere'), href: '/figurines' }],
     };
   }
 
@@ -251,21 +278,24 @@ function startReply(index: AskIndex, lang: Lang): AskReply {
   const parts: string[] = [];
   if (tale) {
     const min = readingMinutes(leafCopy(tale, lang).body);
-    parts.push(say(lang, `небылица ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`, `небилиця ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`, `the tall tale ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`));
+    parts.push(say(lang, `небылица ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`, `небилиця ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`, `the tall tale ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`, `el cuento ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`, `die Geschichte ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`, `il racconto ${quote(leafTitle(tale, lang))} (${short_min(lang, min)})`));
   }
-  if (card) parts.push(say(lang, 'карта в игре', 'карта у грі', 'a card in the game'));
+  if (card) parts.push(say(lang, 'карта в игре', 'карта у грі', 'a card in the game', 'una carta en el juego', 'eine Karte im Spiel', 'una carta nel gioco'));
 
   const lead = work
-    ? say(lang, `Начните с работы ${quote(workName(work))}`, `Почніть із роботи ${quote(workName(work))}`, `Start with the work ${quote(workName(work))}`)
-    : say(lang, 'Начните с небылицы', 'Почніть із небилиці', 'Start with a tall tale');
+    ? say(lang, `Начните с работы ${quote(workName(work))}`, `Почніть із роботи ${quote(workName(work))}`, `Start with the work ${quote(workName(work))}`, `Empieza por la obra ${quote(workName(work))}`, `Fang mit dem Werk ${quote(workName(work))} an`, `Comincia dall’opera ${quote(workName(work))}`)
+    : say(lang, 'Начните с небылицы', 'Почніть із небилиці', 'Start with a tall tale', 'Empieza por un cuento', 'Fang mit einer Geschichte an', 'Comincia da un racconto');
   const body = parts.length
-    ? say(lang, `: о ней есть ${joinList(lang, parts)}.`, `: про неї є ${joinList(lang, parts)}.`, `: it comes with ${joinList(lang, parts)}.`)
+    ? say(lang, `: о ней есть ${joinList(lang, parts)}.`, `: про неї є ${joinList(lang, parts)}.`, `: it comes with ${joinList(lang, parts)}.`, `: la acompañan ${joinList(lang, parts)}.`, `: Dazu gehören ${joinList(lang, parts)}.`, `: la accompagnano ${joinList(lang, parts)}.`)
     : '.';
   const order = say(
     lang,
     'Порядок простой: посмотреть, прочитать, сыграть.',
     'Порядок простий: подивитися, прочитати, зіграти.',
     'The order is simple: look, read, play.',
+    'El orden es sencillo: mirar, leer, jugar.',
+    'Der Ablauf ist einfach: ansehen, lesen, spielen.',
+    'L’ordine è semplice: guardare, leggere, giocare.',
   );
   return { intent: 'start', paragraphs: [lead + body, order], links };
 }
@@ -278,16 +308,16 @@ function newReply(index: AskIndex, lang: Lang): AskReply {
   const names = works.map((w) => quote(workName(w)));
   const sentences: string[] = [];
   if (names.length) {
-    sentences.push(say(lang, `Недавно в собрании появились: ${joinList(lang, names)}.`, `Нещодавно в зібранні з’явилися: ${joinList(lang, names)}.`, `Recently added to the collection: ${joinList(lang, names)}.`));
+    sentences.push(say(lang, `Недавно в собрании появились: ${joinList(lang, names)}.`, `Нещодавно в зібранні з’явилися: ${joinList(lang, names)}.`, `Recently added to the collection: ${joinList(lang, names)}.`, `Añadidas hace poco a la colección: ${joinList(lang, names)}.`, `Neu in der Sammlung: ${joinList(lang, names)}.`, `Aggiunte da poco alla raccolta: ${joinList(lang, names)}.`));
   }
   const reading: string[] = [];
-  if (tale) reading.push(say(lang, `небылица ${quote(leafTitle(tale, lang))}`, `небилиця ${quote(leafTitle(tale, lang))}`, `the tall tale ${quote(leafTitle(tale, lang))}`));
-  if (leaf) reading.push(say(lang, `в вестнике — ${quote(leafTitle(leaf, lang))}`, `у віснику — ${quote(leafTitle(leaf, lang))}`, `in the gazette ${quote(leafTitle(leaf, lang))}`));
+  if (tale) reading.push(say(lang, `небылица ${quote(leafTitle(tale, lang))}`, `небилиця ${quote(leafTitle(tale, lang))}`, `the tall tale ${quote(leafTitle(tale, lang))}`, `el cuento ${quote(leafTitle(tale, lang))}`, `die Geschichte ${quote(leafTitle(tale, lang))}`, `il racconto ${quote(leafTitle(tale, lang))}`));
+  if (leaf) reading.push(say(lang, `в вестнике — ${quote(leafTitle(leaf, lang))}`, `у віснику — ${quote(leafTitle(leaf, lang))}`, `in the gazette ${quote(leafTitle(leaf, lang))}`, `en la Gaceta ${quote(leafTitle(leaf, lang))}`, `in der Zeitung ${quote(leafTitle(leaf, lang))}`, `nella Gazzetta ${quote(leafTitle(leaf, lang))}`));
   if (reading.length) {
-    sentences.push(say(lang, `Из чтения новее всего: ${joinList(lang, reading)}.`, `З читання найновіше: ${joinList(lang, reading)}.`, `Newest reading: ${joinList(lang, reading)}.`));
+    sentences.push(say(lang, `Из чтения новее всего: ${joinList(lang, reading)}.`, `З читання найновіше: ${joinList(lang, reading)}.`, `Newest reading: ${joinList(lang, reading)}.`, `Lo más reciente para leer: ${joinList(lang, reading)}.`, `Neu zum Lesen: ${joinList(lang, reading)}.`, `Le letture più recenti: ${joinList(lang, reading)}.`));
   }
   if (!sentences.length) {
-    sentences.push(say(lang, 'Пока новых записей нет.', 'Поки нових записів немає.', 'Nothing new yet.'));
+    sentences.push(say(lang, 'Пока новых записей нет.', 'Поки нових записів немає.', 'Nothing new yet.', 'Todavía no hay nada nuevo.', 'Noch nichts Neues.', 'Ancora niente di nuovo.'));
   }
 
   const links: AskLink[] = [...works.map((w) => workLink(w, lang))];
@@ -305,8 +335,8 @@ function taleReply(index: AskIndex, lang: Lang, minutes: number | null): AskRepl
   if (!timed.length) {
     return {
       intent: 'tale',
-      paragraphs: [say(lang, 'Небылиц для чтения пока нет.', 'Небилиць для читання поки немає.', 'There are no tall tales to read yet.')],
-      links: [{ kind: 'section', label: say(lang, 'Небылицы', 'Небилиці', 'Tall tales'), href: '/tales' }],
+      paragraphs: [say(lang, 'Небылиц для чтения пока нет.', 'Небилиць для читання поки немає.', 'There are no tall tales to read yet.', 'Todavía no hay cuentos para leer.', 'Noch gibt es keine Geschichten zu lesen.', 'Non ci sono ancora racconti da leggere.')],
+      links: [{ kind: 'section', label: say(lang, 'Небылицы', 'Небилиці', 'Tall tales', 'Cuentos', 'Geschichten', 'Racconti'), href: '/tales' }],
     };
   }
 
@@ -320,6 +350,9 @@ function taleReply(index: AskIndex, lang: Lang, minutes: number | null): AskRepl
       `На ${n_minutes(lang, minutes)} подойдёт: ${joinList(lang, shown.map((x) => quote(leafTitle(x.l, lang))))}.`,
       `На ${n_minutes(lang, minutes)} підійде: ${joinList(lang, shown.map((x) => quote(leafTitle(x.l, lang))))}.`,
       `For ${n_minutes(lang, minutes)}, try ${joinList(lang, shown.map((x) => quote(leafTitle(x.l, lang))))}.`,
+      `Para ${n_minutes(lang, minutes)}: ${joinList(lang, shown.map((x) => quote(leafTitle(x.l, lang))))}.`,
+      `Für ${n_minutes(lang, minutes)} passt: ${joinList(lang, shown.map((x) => quote(leafTitle(x.l, lang))))}.`,
+      `Per ${n_minutes(lang, minutes)} va bene: ${joinList(lang, shown.map((x) => quote(leafTitle(x.l, lang))))}.`,
     );
   } else if (minutes) {
     text = say(
@@ -327,6 +360,9 @@ function taleReply(index: AskIndex, lang: Lang, minutes: number | null): AskRepl
       `Короче ${n_minutes(lang, minutes)} небылиц нет. Самая короткая — ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} чтения.`,
       `Коротших за ${n_minutes(lang, minutes)} небилиць немає. Найкоротша — ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} читання.`,
       `There is no tall tale shorter than ${n_minutes(lang, minutes)}. The shortest is ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} to read.`,
+      `No hay cuentos de menos de ${n_minutes(lang, minutes)}. El más corto es ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} de lectura.`,
+      `Keine Geschichte ist kürzer als ${n_minutes(lang, minutes)}. Die kürzeste ist ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} Lesezeit.`,
+      `Non ci sono racconti più brevi di ${n_minutes(lang, minutes)}. Il più breve è ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} di lettura.`,
     );
   } else {
     text = say(
@@ -334,10 +370,13 @@ function taleReply(index: AskIndex, lang: Lang, minutes: number | null): AskRepl
       `На полке ${n_tales(lang, index.tales.length)}. Самая короткая — ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} чтения.`,
       `На полиці ${n_tales(lang, index.tales.length)}. Найкоротша — ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} читання.`,
       `The shelf holds ${n_tales(lang, index.tales.length)}. The shortest is ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} to read.`,
+      `En el estante hay ${n_tales(lang, index.tales.length)}. El más corto es ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} de lectura.`,
+      `Im Regal stehen ${n_tales(lang, index.tales.length)}. Die kürzeste ist ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} Lesezeit.`,
+      `Sullo scaffale ci sono ${n_tales(lang, index.tales.length)}. Il più breve è ${quote(leafTitle(shown[0].l, lang))}, ${n_minutes(lang, shown[0].min)} di lettura.`,
     );
   }
   const links = shown.map((x) => taleLink(x.l, lang));
-  links.push({ kind: 'section', label: say(lang, 'Все небылицы', 'Усі небилиці', 'All tall tales'), hint: String(index.tales.length), href: '/tales' });
+  links.push({ kind: 'section', label: say(lang, 'Все небылицы', 'Усі небилиці', 'All tall tales', 'Todos los cuentos', 'Alle Geschichten', 'Tutti i racconti'), hint: String(index.tales.length), href: '/tales' });
   return { intent: 'tale', paragraphs: [text], links };
 }
 
@@ -352,6 +391,9 @@ function playReply(index: AskIndex, lang: Lang): AskReply {
       `В игре ${n_cards(lang, cards.length)}. Этюд — это партия против компьютера: вы расставляете карты и играете.`,
       `У грі ${n_cards(lang, cards.length)}. Етюд — це партія проти комп’ютера: ви розставляєте карти й граєте.`,
       `The game has ${n_cards(lang, cards.length)}. A study is a game against the computer: you place your cards and play.`,
+      `El juego tiene ${n_cards(lang, cards.length)}. Un étude es una partida contra el ordenador: colocas tus cartas y juegas.`,
+      `Im Spiel gibt es ${n_cards(lang, cards.length)}. Eine Etüde ist eine Partie gegen den Computer: Du stellst deine Karten auf und spielst.`,
+      `Il gioco ha ${n_cards(lang, cards.length)}. Un étude è una partita contro il computer: disponi le tue carte e giochi.`,
     ),
   ];
   if (first) {
@@ -361,33 +403,36 @@ function playReply(index: AskIndex, lang: Lang): AskReply {
         `Сейчас ${n_etudes(lang, etudes.length)}; первый — ${quote(etudeTitle(first, lang))}. Карты можно смотреть и без игры — на полке.`,
         `Зараз ${n_etudes(lang, etudes.length)}; перший — ${quote(etudeTitle(first, lang))}. Карти можна дивитися й без гри — на полиці.`,
         `There ${etudes.length === 1 ? 'is' : 'are'} ${n_etudes(lang, etudes.length)} now; the first is ${quote(etudeTitle(first, lang))}. You can also just look at the cards on the shelf.`,
+        `Ahora hay ${n_etudes(lang, etudes.length)}; el primero es ${quote(etudeTitle(first, lang))}. Las cartas también se pueden ver sin jugar, en el estante.`,
+        `Derzeit gibt es ${n_etudes(lang, etudes.length)}; die erste ist ${quote(etudeTitle(first, lang))}. Die Karten kannst du auch ohne Spiel im Regal ansehen.`,
+        `Ora ci sono ${n_etudes(lang, etudes.length)}; il primo è ${quote(etudeTitle(first, lang))}. Le carte si possono guardare anche senza giocare, sullo scaffale.`,
       ),
     );
   }
   const links: AskLink[] = [];
   if (first) links.push(etudeLink(first, lang));
-  links.push({ kind: 'section', label: say(lang, 'Полка карт', 'Полиця карт', 'Card shelf'), hint: String(cards.length), href: '/battles' });
-  if (etudes.length > 1) links.push({ kind: 'section', label: say(lang, 'Все этюды', 'Усі етюди', 'All studies'), hint: String(etudes.length), href: '/battles/etude' });
+  links.push({ kind: 'section', label: say(lang, 'Полка карт', 'Полиця карт', 'Card shelf', 'Estante de cartas', 'Kartenregal', 'Scaffale delle carte'), hint: String(cards.length), href: '/battles' });
+  if (etudes.length > 1) links.push({ kind: 'section', label: say(lang, 'Все этюды', 'Усі етюди', 'All studies', 'Todos los études', 'Alle Etüden', 'Tutti gli étude'), hint: String(etudes.length), href: '/battles/etude' });
   return { intent: 'play', paragraphs, links };
 }
 
 /** Вопросы, которые сайт умеет: из них «не умею» предлагает ближайшие к сказанному. */
 function examples(lang: Lang): string[] {
   return [
-    say(lang, 'Коротко: что это за сайт?', 'Коротко: що це за сайт?', 'Briefly, what is this site?'),
-    say(lang, 'Сколько работ на сайте?', 'Скільки робіт на сайті?', 'How many works are on the site?'),
-    say(lang, 'Что нового?', 'Що нового?', 'What is new?'),
-    say(lang, 'Что почитать за 5 минут?', 'Що почитати за 5 хвилин?', 'A tale to read in 5 minutes'),
-    say(lang, 'С чего начать?', 'З чого почати?', 'Where to start?'),
-    say(lang, 'Во что можно сыграть?', 'У що можна зіграти?', 'What can I play?'),
-    say(lang, 'Как играть?', 'Як грати?', 'How to play?'),
-    say(lang, 'Как заказать работу?', 'Як замовити роботу?', 'How to order a work?'),
-    say(lang, 'Из чего сделаны фигурки?', 'З чого зроблені фігурки?', 'What are the figurines made of?'),
-    say(lang, 'Кто автор?', 'Хто автор?', 'Who is the author?'),
-    say(lang, 'Как связаться с автором?', 'Як зв’язатися з автором?', 'How to contact the author?'),
-    say(lang, 'Какая самая ранняя работа?', 'Яка найраніша робота?', 'Which is the earliest work?'),
-    say(lang, 'Покажи ведьм', 'Покажи відьом', 'Show me a witch'),
-    say(lang, 'Сколько рас в игре?', 'Скільки рас у грі?', 'How many races are in the game?'),
+    say(lang, 'Коротко: что это за сайт?', 'Коротко: що це за сайт?', 'Briefly, what is this site?', 'En pocas palabras, ¿qué es este sitio?', 'Kurz: Was ist das für eine Seite?', 'In breve, che sito è questo?'),
+    say(lang, 'Сколько работ на сайте?', 'Скільки робіт на сайті?', 'How many works are on the site?', '¿Cuántas obras hay en el sitio?', 'Wie viele Werke gibt es auf der Seite?', 'Quante opere ci sono sul sito?'),
+    say(lang, 'Что нового?', 'Що нового?', 'What is new?', '¿Qué hay de nuevo?', 'Was gibt es Neues?', 'Che novità ci sono?'),
+    say(lang, 'Что почитать за 5 минут?', 'Що почитати за 5 хвилин?', 'A tale to read in 5 minutes', 'Un cuento para leer en 5 minutos', 'Eine Geschichte für 5 Minuten', 'Un racconto da leggere in 5 minuti'),
+    say(lang, 'С чего начать?', 'З чого почати?', 'Where to start?', '¿Por dónde empiezo?', 'Womit fange ich an?', 'Da dove comincio?'),
+    say(lang, 'Во что можно сыграть?', 'У що можна зіграти?', 'What can I play?', '¿A qué puedo jugar?', 'Was kann ich spielen?', 'A cosa posso giocare?'),
+    say(lang, 'Как играть?', 'Як грати?', 'How to play?', '¿Cómo se juega?', 'Wie spielt man?', 'Come si gioca?'),
+    say(lang, 'Как заказать работу?', 'Як замовити роботу?', 'How to order a work?', '¿Cómo encargar una obra?', 'Wie bestelle ich ein Werk?', 'Come ordinare un’opera?'),
+    say(lang, 'Из чего сделаны фигурки?', 'З чого зроблені фігурки?', 'What are the figurines made of?', '¿De qué están hechas las figuras?', 'Woraus sind die Figuren gemacht?', 'Di che cosa sono fatte le statuine?'),
+    say(lang, 'Кто автор?', 'Хто автор?', 'Who is the author?', '¿Quién es la autora?', 'Wer ist die Autorin?', 'Chi è l’autrice?'),
+    say(lang, 'Как связаться с автором?', 'Як зв’язатися з автором?', 'How to contact the author?', '¿Cómo contactar con la autora?', 'Wie erreiche ich die Autorin?', 'Come contattare l’autrice?'),
+    say(lang, 'Какая самая ранняя работа?', 'Яка найраніша робота?', 'Which is the earliest work?', '¿Cuál es la obra más antigua?', 'Welches ist das früheste Werk?', 'Qual è l’opera più antica?'),
+    say(lang, 'Покажи ведьм', 'Покажи відьом', 'Show me a witch', 'Enséñame una bruja', 'Zeig mir eine Hexe', 'Mostrami una strega'),
+    say(lang, 'Сколько рас в игре?', 'Скільки рас у грі?', 'How many races are in the game?', '¿Cuántas razas hay en el juego?', 'Wie viele Völker gibt es im Spiel?', 'Quante razze ci sono nel gioco?'),
   ];
 }
 
@@ -422,6 +467,9 @@ function noneReply(lang: Lang, topic: string, query: string): AskReply {
           `По запросу ${quote(topic)} ничего не нашлось. Попробуйте назвать героиню или материал («ведьма», «гном», «шерсть») или спросите так:`,
           `За запитом ${quote(topic)} нічого не знайшлося. Спробуйте назвати героїню або матеріал («відьма», «гном», «вовна») чи запитайте так:`,
           `Nothing found for ${quote(topic)}. Try a character or a material (“witch”, “gnome”, “wool”), or ask like this:`,
+          `No he encontrado nada para ${quote(topic)}. Prueba con un personaje o un material («bruja», «gnomo», «lana») o pregunta así:`,
+          `Zu ${quote(topic)} wurde nichts gefunden. Nenn eine Figur oder ein Material („Hexe“, „Gnom“, „Wolle“) oder frag so:`,
+          `Per ${quote(topic)} non ho trovato nulla. Prova con un personaggio o un materiale («strega», «gnomo», «lana») oppure chiedi così:`,
         ),
       ]
     : [
@@ -430,6 +478,9 @@ function noneReply(lang: Lang, topic: string, query: string): AskReply {
           'Такой вопрос я пока не умею. Я отвечаю по данным самого сайта: рассказываю о нём, считаю работы, небылицы и карты, ищу по темам, подсказываю, что почитать и во что сыграть. Например:',
           'Таке питання я поки не вмію. Я відповідаю за даними самого сайту: розповідаю про нього, рахую роботи, небилиці й карти, шукаю за темами, підказую, що почитати й у що зіграти. Наприклад:',
           'I cannot answer that yet. I answer from the site’s own data: I describe it, count works, tall tales and cards, search by topic, and suggest what to read and play. For example:',
+          'Todavía no sé responder a esa pregunta. Respondo con los datos del propio sitio: lo describo, cuento obras, cuentos y cartas, busco por temas y sugiero qué leer y a qué jugar. Por ejemplo:',
+          'Diese Frage kann ich noch nicht beantworten. Ich antworte aus den Daten der Seite selbst: Ich beschreibe sie, zähle Werke, Geschichten und Karten, suche nach Themen und schlage vor, was du lesen und spielen kannst. Zum Beispiel:',
+          'A questa domanda non so ancora rispondere. Rispondo con i dati del sito stesso: lo descrivo, conto opere, racconti e carte, cerco per temi e suggerisco cosa leggere e a cosa giocare. Per esempio:',
         ),
       ];
   return { intent: 'none', missed: true, paragraphs, links: nearestQuestions(lang, query) };
@@ -469,9 +520,12 @@ function searchReply(
           `Точных совпадений по запросу ${quote(topic)} нет. Ближе всего по смыслу: ${joinList(lang, near.map((f) => quote(workName(f.item))))}. Если это не то, назовите героиню или материал.`,
           `Точних збігів за запитом ${quote(topic)} немає. Найближче за змістом: ${joinList(lang, near.map((f) => quote(workName(f.item))))}. Якщо це не те, назвіть героїню або матеріал.`,
           `No exact match for ${quote(topic)}. Closest in meaning: ${joinList(lang, near.map((f) => quote(workName(f.item))))}. If that is not it, name a character or a material.`,
+          `No hay coincidencias exactas para ${quote(topic)}. Lo más cercano en sentido: ${joinList(lang, near.map((f) => quote(workName(f.item))))}. Si no es eso, nombra un personaje o un material.`,
+          `Keine genauen Treffer für ${quote(topic)}. Am nächsten im Sinn: ${joinList(lang, near.map((f) => quote(workName(f.item))))}. Wenn das nicht passt, nenn eine Figur oder ein Material.`,
+          `Nessuna corrispondenza esatta per ${quote(topic)}. Il più vicino nel senso: ${joinList(lang, near.map((f) => quote(workName(f.item))))}. Se non è questo, nomina un personaggio o un materiale.`,
         ),
       ],
-      links: near.map((f) => workLink(f.item, lang, say(lang, 'близко по смыслу', 'близько за змістом', 'close in meaning'))),
+      links: near.map((f) => workLink(f.item, lang, say(lang, 'близко по смыслу', 'близько за змістом', 'close in meaning', 'de sentido parecido', 'ähnlich im Sinn', 'simile nel senso'))),
     };
   }
 
@@ -482,16 +536,16 @@ function searchReply(
   if (cards.length) parts.push(n_cards(lang, cards.length));
 
   const top = works[0]
-    ? say(lang, `работа ${quote(workName(works[0].item))}`, `робота ${quote(workName(works[0].item))}`, `the work ${quote(workName(works[0].item))}`)
+    ? say(lang, `работа ${quote(workName(works[0].item))}`, `робота ${quote(workName(works[0].item))}`, `the work ${quote(workName(works[0].item))}`, `la obra ${quote(workName(works[0].item))}`, `das Werk ${quote(workName(works[0].item))}`, `l’opera ${quote(workName(works[0].item))}`)
     : tales[0]
-      ? say(lang, `небылица ${quote(leafTitle(tales[0].item, lang))}`, `небилиця ${quote(leafTitle(tales[0].item, lang))}`, `the tall tale ${quote(leafTitle(tales[0].item, lang))}`)
+      ? say(lang, `небылица ${quote(leafTitle(tales[0].item, lang))}`, `небилиця ${quote(leafTitle(tales[0].item, lang))}`, `the tall tale ${quote(leafTitle(tales[0].item, lang))}`, `el cuento ${quote(leafTitle(tales[0].item, lang))}`, `die Geschichte ${quote(leafTitle(tales[0].item, lang))}`, `il racconto ${quote(leafTitle(tales[0].item, lang))}`)
       : cards[0]
-        ? say(lang, `карта ${quote(cardTitle(cards[0].item, lang))}`, `карта ${quote(cardTitle(cards[0].item, lang))}`, `the card ${quote(cardTitle(cards[0].item, lang))}`)
-        : say(lang, `лист вестника ${quote(leafTitle(leaves[0].item, lang))}`, `аркуш вісника ${quote(leafTitle(leaves[0].item, lang))}`, `the gazette leaf ${quote(leafTitle(leaves[0].item, lang))}`);
+        ? say(lang, `карта ${quote(cardTitle(cards[0].item, lang))}`, `карта ${quote(cardTitle(cards[0].item, lang))}`, `the card ${quote(cardTitle(cards[0].item, lang))}`, `la carta ${quote(cardTitle(cards[0].item, lang))}`, `die Karte ${quote(cardTitle(cards[0].item, lang))}`, `la carta ${quote(cardTitle(cards[0].item, lang))}`)
+        : say(lang, `лист вестника ${quote(leafTitle(leaves[0].item, lang))}`, `аркуш вісника ${quote(leafTitle(leaves[0].item, lang))}`, `the gazette leaf ${quote(leafTitle(leaves[0].item, lang))}`, `la hoja de la Gaceta ${quote(leafTitle(leaves[0].item, lang))}`, `das Blatt der Zeitung ${quote(leafTitle(leaves[0].item, lang))}`, `il foglio della Gazzetta ${quote(leafTitle(leaves[0].item, lang))}`);
 
   const paragraphs = [
-    say(lang, `По запросу ${quote(topic)} нашлось: ${joinList(lang, parts)}.`, `За запитом ${quote(topic)} знайшлося: ${joinList(lang, parts)}.`, `For ${quote(topic)} I found ${joinList(lang, parts)}.`),
-    say(lang, `Ближе всего — ${top}.`, `Найближче — ${top}.`, `Closest: ${top}.`),
+    say(lang, `По запросу ${quote(topic)} нашлось: ${joinList(lang, parts)}.`, `За запитом ${quote(topic)} знайшлося: ${joinList(lang, parts)}.`, `For ${quote(topic)} I found ${joinList(lang, parts)}.`, `Para ${quote(topic)} he encontrado ${joinList(lang, parts)}.`, `Zu ${quote(topic)} habe ich ${joinList(lang, parts)} gefunden.`, `Per ${quote(topic)} ho trovato ${joinList(lang, parts)}.`),
+    say(lang, `Ближе всего — ${top}.`, `Найближче — ${top}.`, `Closest: ${top}.`, `Lo más cercano: ${top}.`, `Am nächsten: ${top}.`, `Il più vicino: ${top}.`),
   ];
 
   const links: AskLink[] = [];
@@ -515,11 +569,14 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
             'Все фигурки делает один автор: каждую он лепит, расписывает и одевает вручную, поэтому двух одинаковых нет.',
             'Усі фігурки робить один автор: кожну він ліпить, розписує й одягає вручну, тому двох однакових немає.',
             'Every figurine is made by one author, who sculpts, paints and dresses each by hand, so no two are alike.',
+            'Todas las figuras las hace una sola autora: cada una la modela, la pinta y la viste a mano, por eso no hay dos iguales.',
+            'Alle Figuren macht eine einzige Autorin: Jede modelliert, bemalt und kleidet sie von Hand, deshalb gleicht keine der anderen.',
+            'Tutte le statuine sono opera di una sola autrice: ognuna è modellata, dipinta e vestita a mano, per questo non ce ne sono due uguali.',
           ),
         ],
         links: [
-          sec(say(lang, 'Об авторе', 'Про автора', 'About the author'), '/author'),
-          sec(say(lang, 'Мастерская', 'Майстерня', 'The workshop'), '/workshop'),
+          sec(say(lang, 'Об авторе', 'Про автора', 'About the author', 'Sobre la autora', 'Über die Autorin', 'L’autrice'), '/author'),
+          sec(say(lang, 'Мастерская', 'Майстерня', 'The workshop', 'El taller', 'Die Werkstatt', 'Il laboratorio'), '/workshop'),
         ],
       };
     case 'order': {
@@ -529,13 +586,16 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
             'Цен на сайте нет: условия мастер называет лично в переписке. ',
             'Цін на сайті немає: умови майстер називає особисто в листуванні. ',
             'There are no prices on the site: the maker names the terms personally, in a message. ',
+            'En el sitio no hay precios: la autora indica las condiciones personalmente, por mensaje. ',
+            'Auf der Seite gibt es keine Preise: Die Bedingungen nennt die Autorin persönlich, per Nachricht. ',
+            'Sul sito non ci sono prezzi: le condizioni le indica l’autrice di persona, per messaggio. ',
           )
         : '';
       return {
         intent: 'about',
         paragraphs: [
           lead + text('acquireStep1Body'),
-          say(lang, 'Порядок такой: ', 'Порядок такий: ', 'The order is: ') +
+          say(lang, 'Порядок такой: ', 'Порядок такий: ', 'The order is: ', 'El orden es: ', 'Der Ablauf: ', 'L’ordine è questo: ') +
             [text('acquireStep1Title'), text('acquireStep2Title'), text('acquireStep3Title'), text('acquireStep4Title'), text('acquireStep5Title')].join(' → ') + '.',
           text('acquireStep5Body'),
         ],
@@ -555,9 +615,12 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
             'Написать автору можно кнопкой «Написать» в шапке или формой на главной странице. Автор читает каждое письмо и отвечает лично, обычно в течение дня.',
             'Написати авторові можна кнопкою «Написати» в шапці або формою на головній сторінці. Автор читає кожен лист і відповідає особисто, зазвичай протягом дня.',
             'You can write to the author with the “Write” button in the header or the form on the home page. The author reads every message and answers personally, usually within a day.',
+            'Puedes escribir a la autora con el botón «Escribir» de la cabecera o con el formulario de la página principal. La autora lee cada mensaje y responde personalmente, normalmente en un día.',
+            'Du erreichst die Autorin über die Schaltfläche „Schreiben“ in der Kopfzeile oder das Formular auf der Startseite. Die Autorin liest jede Nachricht und antwortet persönlich, meist innerhalb eines Tages.',
+            'Puoi scrivere all’autrice con il pulsante «Scrivi» nell’intestazione o con il modulo nella pagina principale. L’autrice legge ogni messaggio e risponde di persona, di solito entro un giorno.',
           ),
         ],
-        links: [sec(say(lang, 'Об авторе', 'Про автора', 'About the author'), '/author'), sec(text('acquireTitle'), '/acquire')],
+        links: [sec(say(lang, 'Об авторе', 'Про автора', 'About the author', 'Sobre la autora', 'Über die Autorin', 'L’autrice'), '/author'), sec(text('acquireTitle'), '/acquire')],
       };
     case 'made': {
       const mats = materialsOf(index, lang);
@@ -570,12 +633,18 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
               `Основа — ${joinList(lang, mats)}. Фигурки лепят, расписывают и одевают вручную, и каждая существует в единственном экземпляре.`,
               `Основа — ${joinList(lang, mats)}. Фігурки ліплять, розписують і одягають вручну, і кожна існує в єдиному екземплярі.`,
               `The base is ${joinList(lang, mats)}. The figurines are sculpted, painted and dressed by hand, and each exists in a single copy.`,
+              `La base es ${joinList(lang, mats)}. Las figuras se modelan, se pintan y se visten a mano, y cada una existe en un único ejemplar.`,
+              `Die Grundlage: ${joinList(lang, mats)}. Die Figuren werden von Hand modelliert, bemalt und gekleidet, und jede gibt es nur ein einziges Mal.`,
+              `La base è ${joinList(lang, mats)}. Le statuine sono modellate, dipinte e vestite a mano, e ognuna esiste in un solo esemplare.`,
             )
           : say(
               lang,
               'Фигурки лепят, расписывают и одевают вручную, и каждая существует в единственном экземпляре.',
               'Фігурки ліплять, розписують і одягають вручну, і кожна існує в єдиному екземплярі.',
               'The figurines are sculpted, painted and dressed by hand, and each exists in a single copy.',
+              'Las figuras se modelan, se pintan y se visten a mano, y cada una existe en un único ejemplar.',
+              'Die Figuren werden von Hand modelliert, bemalt und gekleidet, und jede gibt es nur ein einziges Mal.',
+              'Le statuine sono modellate, dipinte e vestite a mano, e ognuna esiste in un solo esemplare.',
             ),
       );
       if (h) {
@@ -586,13 +655,16 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
             `Размер — примерно ${range} см: точный написан на странице каждой работы.`,
             `Розмір — приблизно ${range} см: точний указано на сторінці кожної роботи.`,
             `Size is roughly ${range} cm: the exact figure is on each work’s page.`,
+            `El tamaño es de unos ${range} cm: el exacto figura en la página de cada obra.`,
+            `Die Größe beträgt etwa ${range} cm; die genaue steht auf der Seite jedes Werks.`,
+            `Le dimensioni sono di circa ${range} cm: quelle esatte sono sulla pagina di ogni opera.`,
           ),
         );
       }
       return {
         intent: 'about',
         paragraphs,
-        links: [sec(say(lang, 'Мастерская', 'Майстерня', 'The workshop'), '/workshop'), sec(say(lang, 'Все работы', 'Усі роботи', 'All works'), '/figurines')],
+        links: [sec(say(lang, 'Мастерская', 'Майстерня', 'The workshop', 'El taller', 'Die Werkstatt', 'Il laboratorio'), '/workshop'), sec(say(lang, 'Все работы', 'Усі роботи', 'All works', 'Todas las obras', 'Alle Werke', 'Tutte le opere'), '/figurines')],
       };
     }
     case 'rules':
@@ -604,15 +676,21 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
             'Этюд — партия против компьютера на небольшом поле. Вы расставляете карты и ходите по очереди; выигрывает тот, у кого остались карты, когда у противника их не осталось.',
             'Етюд — партія проти комп’ютера на невеликому полі. Ви розставляєте карти й ходите по черзі; виграє той, у кого залишилися карти, коли в противника їх не залишилося.',
             'A study is a game against the computer on a small field. You place your cards and take turns; whoever still has cards when the opponent has none wins.',
+            'Un étude es una partida contra el ordenador en un campo pequeño. Colocas tus cartas y se juega por turnos; gana quien conserva cartas cuando al rival no le queda ninguna.',
+            'Eine Etüde ist eine Partie gegen den Computer auf einem kleinen Feld. Du stellst deine Karten auf, und ihr zieht abwechselnd; es gewinnt, wer noch Karten hat, wenn der Gegner keine mehr hat.',
+            'Un étude è una partita contro il computer su un piccolo campo. Disponi le tue carte e si gioca a turno; vince chi ha ancora carte quando l’avversario non ne ha più.',
           ),
           say(
             lang,
             'У каждого этюда могут быть свои правила: они написаны на листе боя перед началом. Первые бои можно играть без входа.',
             'У кожного етюду можуть бути свої правила: вони написані на аркуші бою перед початком. Перші бої можна грати без входу.',
             'Each study may have its own rules: they are written on the battle sheet before it starts. The first battles can be played without signing in.',
+            'Cada étude puede tener sus propias reglas: están escritas en la hoja de combate antes de empezar. Los primeros combates se pueden jugar sin entrar.',
+            'Jede Etüde kann eigene Regeln haben: Sie stehen vor dem Start auf dem Kampfblatt. Die ersten Kämpfe kannst du ohne Anmeldung spielen.',
+            'Ogni étude può avere regole proprie: sono scritte sul foglio della battaglia prima dell’inizio. Le prime battaglie si possono giocare senza entrare.',
           ),
         ],
-        links: [sec(say(lang, 'Этюды', 'Етюди', 'Studies'), '/battles/etude'), sec(say(lang, 'Полка карт', 'Полиця карт', 'Card shelf'), '/battles')],
+        links: [sec(say(lang, 'Этюды', 'Етюди', 'Studies', 'Études', 'Etüden', 'Étude'), '/battles/etude'), sec(say(lang, 'Полка карт', 'Полиця карт', 'Card shelf', 'Estante de cartas', 'Kartenregal', 'Scaffale delle carte'), '/battles')],
       };
     case 'tale':
       return {
@@ -623,9 +701,12 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
             'Небылица — короткая история о фигурке. У многих небылиц есть своя работа, а у работы — карта в игре.',
             'Небилиця — коротка історія про фігурку. У багатьох небилиць є своя робота, а в роботи — карта в грі.',
             'A tall tale is a short story about a figurine. Many have a work of their own, and the work has a card in the game.',
+            'Un cuento es una historia breve sobre una figura. Muchos tienen su propia obra, y la obra tiene una carta en el juego.',
+            'Eine Geschichte ist ein kurzer Text über eine Figur. Viele haben ein eigenes Werk, und das Werk hat eine Karte im Spiel.',
+            'Un racconto è una breve storia su una statuina. Molti hanno una propria opera, e l’opera ha una carta nel gioco.',
           ),
         ],
-        links: [sec(say(lang, 'Небылицы', 'Небилиці', 'Tall tales'), '/tales', String(index.tales.length || ''))],
+        links: [sec(say(lang, 'Небылицы', 'Небилиці', 'Tall tales', 'Cuentos', 'Geschichten', 'Racconti'), '/tales', String(index.tales.length || ''))],
       };
     case 'gazette':
       return {
@@ -636,9 +717,12 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
             'Вестник — лента коротких листов: о том, что появилось в мастерской, и новости вокруг миниатюр. Небылицы — тоже листы, но у них своя полка.',
             'Вісник — стрічка коротких аркушів: про те, що з’явилося в майстерні, і новини довкола мініатюр. Небилиці — теж аркуші, але в них своя полиця.',
             'The gazette is a feed of short leaves: what has arrived in the workshop, and news around miniatures. Tall tales are leaves too, but they have their own shelf.',
+            'La Gaceta es una serie de hojas breves: lo que ha llegado al taller y noticias sobre miniaturas. Los cuentos también son hojas, pero tienen su propio estante.',
+            'Die Zeitung ist eine Folge kurzer Blätter: was in der Werkstatt neu ist und Neuigkeiten rund um Miniaturen. Geschichten sind auch Blätter, haben aber ihr eigenes Regal.',
+            'La Gazzetta è una serie di brevi fogli: cosa è arrivato nel laboratorio e notizie sulle miniature. Anche i racconti sono fogli, ma hanno il loro scaffale.',
           ),
         ],
-        links: [sec(say(lang, 'Вестник', 'Вісник', 'Gazette'), '/gazette'), sec(say(lang, 'Небылицы', 'Небилиці', 'Tall tales'), '/tales')],
+        links: [sec(say(lang, 'Вестник', 'Вісник', 'Gazette', 'Gaceta', 'Zeitung', 'Gazzetta'), '/gazette'), sec(say(lang, 'Небылицы', 'Небилиці', 'Tall tales', 'Cuentos', 'Geschichten', 'Racconti'), '/tales')],
       };
   }
 }
@@ -659,30 +743,30 @@ function countReply(index: AskIndex, lang: Lang, facts: FactKey[], gazetteTotal:
     switch (f) {
       case 'works':
         parts.push(n_works(lang, works.length));
-        links.push({ kind: 'section', label: say(lang, 'Все работы', 'Усі роботи', 'All works'), hint: String(works.length), href: '/figurines' });
+        links.push({ kind: 'section', label: say(lang, 'Все работы', 'Усі роботи', 'All works', 'Todas las obras', 'Alle Werke', 'Tutte le opere'), hint: String(works.length), href: '/figurines' });
         break;
       case 'inprogress':
         parts.push(
           inProgress
-            ? say(lang, `${n_works(lang, inProgress)} ещё в работе`, `${n_works(lang, inProgress)} ще в роботі`, `${n_works(lang, inProgress)} still in progress`)
-            : say(lang, 'работ «в работе» сейчас нет', 'робіт «у роботі» зараз немає', 'no works “in progress” right now'),
+            ? say(lang, `${n_works(lang, inProgress)} ещё в работе`, `${n_works(lang, inProgress)} ще в роботі`, `${n_works(lang, inProgress)} still in progress`, `${n_works(lang, inProgress)} todavía en proceso`, `${n_works(lang, inProgress)} noch in Arbeit`, `${n_works(lang, inProgress)} ancora in lavorazione`)
+            : say(lang, 'работ «в работе» сейчас нет', 'робіт «у роботі» зараз немає', 'no works “in progress” right now', 'ahora no hay obras «en proceso»', 'gerade keine Werke „in Arbeit“', 'al momento nessuna opera «in lavorazione»'),
         );
         break;
       case 'tales':
         parts.push(n_tales(lang, index.tales.length));
-        links.push({ kind: 'section', label: say(lang, 'Небылицы', 'Небилиці', 'Tall tales'), hint: String(index.tales.length), href: '/tales' });
+        links.push({ kind: 'section', label: say(lang, 'Небылицы', 'Небилиці', 'Tall tales', 'Cuentos', 'Geschichten', 'Racconti'), hint: String(index.tales.length), href: '/tales' });
         break;
       case 'leaves':
         parts.push(n_leaves(lang, leaves));
-        links.push({ kind: 'section', label: say(lang, 'Вестник', 'Вісник', 'Gazette'), hint: String(leaves), href: '/gazette' });
+        links.push({ kind: 'section', label: say(lang, 'Вестник', 'Вісник', 'Gazette', 'Gaceta', 'Zeitung', 'Gazzetta'), hint: String(leaves), href: '/gazette' });
         break;
       case 'cards':
-        parts.push(say(lang, `${n_cards(lang, cards.length)} в игре`, `${n_cards(lang, cards.length)} у грі`, `${n_cards(lang, cards.length)} in the game`));
-        links.push({ kind: 'section', label: say(lang, 'Полка карт', 'Полиця карт', 'Card shelf'), hint: String(cards.length), href: '/battles' });
+        parts.push(say(lang, `${n_cards(lang, cards.length)} в игре`, `${n_cards(lang, cards.length)} у грі`, `${n_cards(lang, cards.length)} in the game`, `${n_cards(lang, cards.length)} en el juego`, `${n_cards(lang, cards.length)} im Spiel`, `${n_cards(lang, cards.length)} nel gioco`));
+        links.push({ kind: 'section', label: say(lang, 'Полка карт', 'Полиця карт', 'Card shelf', 'Estante de cartas', 'Kartenregal', 'Scaffale delle carte'), hint: String(cards.length), href: '/battles' });
         break;
       case 'etudes':
         parts.push(n_etudes(lang, etudes.length));
-        links.push({ kind: 'section', label: say(lang, 'Этюды', 'Етюди', 'Studies'), hint: String(etudes.length), href: '/battles/etude' });
+        links.push({ kind: 'section', label: say(lang, 'Этюды', 'Етюди', 'Studies', 'Études', 'Etüden', 'Étude'), hint: String(etudes.length), href: '/battles/etude' });
         break;
       case 'races': {
         const byRace = new Map<string, number>();
@@ -698,12 +782,15 @@ function countReply(index: AskIndex, lang: Lang, facts: FactKey[], gazetteTotal:
               `Рас в игре ${list.length}: ${list.map(([r, n]) => `${r} (${n})`).join(', ')}.`,
               `Рас у грі ${list.length}: ${list.map(([r, n]) => `${r} (${n})`).join(', ')}.`,
               `The game has ${list.length} races: ${list.map(([r, n]) => `${r} (${n})`).join(', ')}.`,
+              `El juego tiene ${list.length} razas: ${list.map(([r, n]) => `${r} (${n})`).join(', ')}.`,
+              `Das Spiel hat ${list.length} Völker: ${list.map(([r, n]) => `${r} (${n})`).join(', ')}.`,
+              `Il gioco ha ${list.length} razze: ${list.map(([r, n]) => `${r} (${n})`).join(', ')}.`,
             ),
           );
         } else {
-          paragraphs.push(say(lang, 'Расы в игре пока не назначены.', 'Раси в грі поки не призначені.', 'No races are set in the game yet.'));
+          paragraphs.push(say(lang, 'Расы в игре пока не назначены.', 'Раси в грі поки не призначені.', 'No races are set in the game yet.', 'Todavía no hay razas en el juego.', 'Im Spiel gibt es noch keine Völker.', 'Nel gioco non ci sono ancora razze.'));
         }
-        links.push({ kind: 'section', label: say(lang, 'Полка карт', 'Полиця карт', 'Card shelf'), href: '/battles' });
+        links.push({ kind: 'section', label: say(lang, 'Полка карт', 'Полиця карт', 'Card shelf', 'Estante de cartas', 'Kartenregal', 'Scaffale delle carte'), href: '/battles' });
         break;
       }
       case 'earliest': {
@@ -716,11 +803,14 @@ function countReply(index: AskIndex, lang: Lang, facts: FactKey[], gazetteTotal:
               `Самая ранняя работа — ${quote(workName(first))}, ${first.year} года.`,
               `Найраніша робота — ${quote(workName(first))}, ${first.year} року.`,
               `The earliest work is ${quote(workName(first))}, from ${first.year}.`,
+              `La obra más antigua es ${quote(workName(first))}, de ${first.year}.`,
+              `Das früheste Werk ist ${quote(workName(first))}, von ${first.year}.`,
+              `L’opera più antica è ${quote(workName(first))}, del ${first.year}.`,
             ),
           );
           links.push(workLink(first, lang));
         } else {
-          paragraphs.push(say(lang, 'У работ не указан год.', 'У робіт не вказано рік.', 'The works have no year set.'));
+          paragraphs.push(say(lang, 'У работ не указан год.', 'У робіт не вказано рік.', 'The works have no year set.', 'Las obras no tienen año indicado.', 'Bei den Werken ist kein Jahr angegeben.', 'Le opere non hanno l’anno indicato.'));
         }
         break;
       }
@@ -729,7 +819,7 @@ function countReply(index: AskIndex, lang: Lang, facts: FactKey[], gazetteTotal:
 
   if (parts.length) {
     paragraphs.unshift(
-      say(lang, 'Сейчас на сайте: ', 'Зараз на сайті: ', 'On the site now: ') + joinList(lang, parts) + '.',
+      say(lang, 'Сейчас на сайте: ', 'Зараз на сайті: ', 'On the site now: ', 'Ahora en el sitio: ', 'Jetzt auf der Seite: ', 'Ora sul sito: ') + joinList(lang, parts) + '.',
     );
   }
   return { intent: 'count', paragraphs, links: links.slice(0, LINKS_MAX) };
@@ -751,9 +841,12 @@ export interface AskContext {
   text: (key: string) => string;
   /** Где человек сейчас: от этого зависит ответ на «о чём эта страница». */
   page?: AskPage;
+  /** Ответы подбора работы: пришли с кнопки выбора, а не с набранного вопроса. */
+  quiz?: string[];
 }
 
 export function answer(index: AskIndex, query: string, lang: Lang, ctx: AskContext): AskReply {
+  if (ctx.quiz) return matchReply(index, lang, ctx.quiz);
   const parsed = parseAsk(query);
   switch (parsed.intent) {
     case 'summary':
@@ -770,6 +863,8 @@ export function answer(index: AskIndex, query: string, lang: Lang, ctx: AskConte
       return parsed.topic
         ? searchReply(index, lang, parsed.topic, null, 'cards', 'play')
         : playReply(index, lang);
+    case 'match':
+      return matchStart(lang);
     case 'go':
       return goReply(index, lang, parsed.go as GoSpec);
     case 'page':

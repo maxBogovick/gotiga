@@ -1,0 +1,271 @@
+{
+  "kind": "cards",
+  "lang": "de",
+  "items": [
+    {
+      "key": "wizard-with-a-raven",
+      "id": "f3826a1c-58ba-43f6-a65b-0f73fc93a39e",
+      "title": "Gewittermagier",
+      "effect": "Blitz springt von Feind zu Feind: 3 Schaden dem ersten, dann zwei weiteren.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "storm",
+          "name": "Kettenblitz"
+        }
+      ]
+    },
+    {
+      "key": "the-creature",
+      "id": "b8fd1f43-5ca2-409c-8f69-7a03f3951a9b",
+      "title": "Der Genähte",
+      "effect": "Aus fremden Körperteilen genäht: Schläge gegen ihn sind um 1 schwächer."
+    },
+    {
+      "key": "red-vampire",
+      "id": "329544e9-0088-4dee-b7aa-b7fc2cd21fa6",
+      "title": "Blutroter Vampir",
+      "effect": "Jeder Schlag, der trifft, heilt ihn um 2. Rüstung 1.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "sip",
+          "name": "Schluck"
+        }
+      ]
+    },
+    {
+      "key": "dark-vampire",
+      "id": "c818cb1d-0fda-45ea-9980-77ce01b2b14b",
+      "title": "Dunkler Vampir",
+      "effect": "Blutung: Ein Feind verliert 2 Züge lang je 2 Leben pro Zug.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "bite",
+          "name": "Biss"
+        }
+      ]
+    },
+    {
+      "key": "old-mermaid",
+      "id": "0e281f79-0b86-42de-9c48-75d0319aa3ee",
+      "title": "Stumme Nixe",
+      "effect": "Nimmt einem Feind für 2 Züge seine Fähigkeiten.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "hush",
+          "name": "Verstummen"
+        }
+      ]
+    },
+    {
+      "key": "shaman",
+      "id": "54b407d5-49bf-492a-82dc-216817900c54",
+      "title": "Schamane",
+      "effect": "Heilt einen Verbündeten in Reichweite um 3.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "mend",
+          "name": "Genesung"
+        }
+      ]
+    },
+    {
+      "key": "old-wizard",
+      "id": "11a53efa-1020-4697-9ef9-73206de0245f",
+      "title": "Alter Magier",
+      "effect": "Stärkt einen Verbündeten: 2 Züge lang schlägt er um 2 stärker.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "boon",
+          "name": "Segen"
+        }
+      ]
+    },
+    {
+      "key": "yaga-with-a-bird",
+      "id": "343ce54f-0e79-484e-8243-a15796c4ad32",
+      "title": "Kleine Jaga",
+      "effect": "Versteckt sich: 2 Züge lang kann man sie nicht als Ziel wählen.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "hide",
+          "name": "Unsichtbarkeit"
+        }
+      ]
+    },
+    {
+      "key": "witch-with-a-key",
+      "id": "18a140d5-ff79-4212-a12b-fdd7d893e3ab",
+      "title": "Schlüsselhexe",
+      "effect": "Gift: Ein Feind verliert 3 Züge lang je 2 Leben pro Zug.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "poison",
+          "name": "Gift"
+        }
+      ]
+    },
+    {
+      "key": "gnome-axeman",
+      "id": "55946a68-01f3-4d6f-aa58-9a84551b1d22",
+      "title": "Axtträger",
+      "effect": "Schwere Axt: kräftiger Schlag, dichte Rüstung."
+    },
+    {
+      "key": "captain-salazar",
+      "id": "91c385bc-c500-424f-a3e8-959069f35e7f",
+      "title": "Kapitän Salazar",
+      "effect": "Markiert einen Feind: 2 Züge lang erleidet er 2 Schaden mehr.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "mark",
+          "name": "Jägerzeichen"
+        }
+      ]
+    },
+    {
+      "key": "old-vampire",
+      "id": "a431489a-d5e7-4f6d-b435-b19b9672e3f8",
+      "title": "Alter Vampir",
+      "effect": "Jeder Schlag, der trifft, heilt ihn um 2.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "sip",
+          "name": "Schluck"
+        }
+      ]
+    },
+    {
+      "key": "steam-mermaid",
+      "id": "b47a0d58-8d02-40be-b85c-94ac1fdfd3cb",
+      "title": "Seejungfrau",
+      "effect": "Hält einen Feind 1 Zug lang auf der Stelle fest.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "hold",
+          "name": "Festhalten"
+        }
+      ]
+    },
+    {
+      "key": "old-witch",
+      "id": "01411d5c-ee46-4605-acb4-be866c28d6bb",
+      "title": "Graue Hexe",
+      "effect": "Schwächt einen Feind: 2 Züge lang schlägt er um 2 schwächer.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "hex",
+          "name": "Verhexung"
+        }
+      ]
+    },
+    {
+      "key": "miner",
+      "id": "4aa93f09-415d-4488-9a2c-ba6feacd8080",
+      "title": "Erzhauer",
+      "effect": "Schlägt schwer mit der Spitzhacke."
+    },
+    {
+      "key": "forest-gnome",
+      "id": "81c6d411-8d00-4273-91ca-a8f421987a7a",
+      "title": "Waldschrat",
+      "effect": "Zäh: Schläge gegen ihn sind um 1 schwächer."
+    },
+    {
+      "key": "falconer",
+      "id": "c66e6faa-46d9-4568-8eb3-fdaabccd0fdf",
+      "title": "Falkner",
+      "effect": "Schießt aus der Ferne: trifft bis zu 3 Zellen weit."
+    },
+    {
+      "key": "hunchback",
+      "id": "627b5364-f4e1-416e-b03d-e9512ae98206",
+      "title": "Der Bucklige",
+      "effect": "Steht fest: Schläge gegen ihn sind um 1 schwächer."
+    },
+    {
+      "key": "gnome-with-a-pot",
+      "id": "c04a22d8-f130-44f7-9659-375a25328248",
+      "title": "Der Feldkoch",
+      "effect": "Warmes Essen: heilt einen Verbündeten nebenan 3 Züge lang um 1 pro Zug.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "stew",
+          "name": "Eintopf"
+        }
+      ]
+    },
+    {
+      "key": "granny-with-a-sheep",
+      "id": "cfeb1a3e-9417-46ec-95f1-e8317e58ce5c",
+      "title": "Alte Hirtin",
+      "effect": "Heilt einen Verbündeten nebenan um 2.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "heal",
+          "name": "Heilung"
+        }
+      ]
+    },
+    {
+      "key": "bagpiper",
+      "id": "fc76b1f6-b0c5-4fd7-bd5c-227bd44382e6",
+      "title": "Dudelsackpfeifer",
+      "effect": "Brummen: Ein Feind in Reichweite schlägt 2 Züge lang um 1 schwächer.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "drone",
+          "name": "Brummen"
+        }
+      ]
+    },
+    {
+      "key": "piper",
+      "id": "77b312a4-0db6-44ad-aad5-0a48f33fc1dd",
+      "title": "Rattenfänger",
+      "effect": "Melodie: Ein Verbündeter nebenan schlägt 2 Züge lang um 1 stärker.",
+      "abilities": [
+        {
+          "index": 0,
+          "id": "tune",
+          "name": "Melodie"
+        }
+      ]
+    },
+    {
+      "key": "fortress-wall",
+      "id": "ba08e58c-d8a7-45c1-8575-ff11b403ba4c",
+      "title": "Festungsmauer",
+      "type": "Bauwerk",
+      "effect": "Geht und schlägt nicht. Hält den Durchgang, solange sie steht."
+    },
+    {
+      "key": "siege-ram",
+      "id": "87130d0c-63fd-44c2-b7dc-306c9fffd77c",
+      "title": "Rammbock",
+      "type": "Belagerung",
+      "effect": "Trifft an der Rüstung vorbei."
+    },
+    {
+      "key": "watchtower",
+      "id": "0b46ec0b-632d-4bff-81f4-f26467450f5e",
+      "title": "Wachturm",
+      "type": "Bauwerk",
+      "effect": "Geht nicht. Schießt bis zu drei Zellen weit, auch über Mauern."
+    }
+  ]
+}

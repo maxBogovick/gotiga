@@ -8,7 +8,7 @@
   // словаря дома, и править его больше нельзя, потому что его уже носят чужие
   // карты.
   import { onMount } from 'svelte';
-  import { t, lang, localized } from '$lib/i18n';
+  import { t, lang, localized, labelInLang } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import StudioAsk from '$lib/components/studio/StudioAsk.svelte';
@@ -32,7 +32,11 @@
   let token = $derived(authStore.token);
 
   function empty(): SaveStudioRaceRequest {
-    return { nameEn: '', nameRu: '', nameUk: '', noteEn: '', noteRu: '', noteUk: '', iconUrl: null };
+    return {
+      nameEn: '', nameRu: '', nameUk: '', nameEs: '', nameDe: '', nameIt: '',
+      noteEn: '', noteRu: '', noteUk: '', noteEs: '', noteDe: '', noteIt: '',
+      iconUrl: null,
+    };
   }
 
   onMount(reload);
@@ -69,9 +73,15 @@
       nameEn: race.nameEn,
       nameRu: race.nameRu,
       nameUk: race.nameUk ?? '',
+      nameEs: race.nameEs ?? '',
+      nameDe: race.nameDe ?? '',
+      nameIt: race.nameIt ?? '',
       noteEn: race.noteEn ?? '',
       noteRu: race.noteRu ?? '',
       noteUk: race.noteUk ?? '',
+      noteEs: race.noteEs ?? '',
+      noteDe: race.noteDe ?? '',
+      noteIt: race.noteIt ?? '',
       iconUrl: race.iconUrl ?? null,
     };
   }
@@ -196,6 +206,30 @@
               {$t('studioRaceNoteUk')}
               <textarea bind:value={draft.noteUk} rows="2" maxlength="200"></textarea>
             </label>
+            <label class="field">
+              {labelInLang($t('studioRaceNameUk'), $t('studioLangEs'))}
+              <input bind:value={draft.nameEs} maxlength="60" />
+            </label>
+            <label class="field">
+              {labelInLang($t('studioRaceNoteUk'), $t('studioLangEs'))}
+              <textarea bind:value={draft.noteEs} rows="2" maxlength="200"></textarea>
+            </label>
+            <label class="field">
+              {labelInLang($t('studioRaceNameUk'), $t('studioLangDe'))}
+              <input bind:value={draft.nameDe} maxlength="60" />
+            </label>
+            <label class="field">
+              {labelInLang($t('studioRaceNoteUk'), $t('studioLangDe'))}
+              <textarea bind:value={draft.noteDe} rows="2" maxlength="200"></textarea>
+            </label>
+            <label class="field">
+              {labelInLang($t('studioRaceNameUk'), $t('studioLangIt'))}
+              <input bind:value={draft.nameIt} maxlength="60" />
+            </label>
+            <label class="field">
+              {labelInLang($t('studioRaceNoteUk'), $t('studioLangIt'))}
+              <textarea bind:value={draft.noteIt} rows="2" maxlength="200"></textarea>
+            </label>
           </div>
 
           <!-- Значок — из своего ящика: второго склада для этого нет. -->
@@ -254,7 +288,7 @@
                 <p class="mark" class:mark--lit={race.status === 'taken' || !!race.approvedAt}>
                   {markOf(race)}
                 </p>
-                {#if race.noteRu || race.noteEn}
+                {#if localized(race, 'note', $lang)}
                   <p class="word">{localized(race, 'note', $lang)}</p>
                 {/if}
                 {#if race.keeperWord}

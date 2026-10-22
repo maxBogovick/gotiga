@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, currentLocale } from '$lib/i18n';
   import type { ShowingDto, SaveShowingRequest } from '$lib/types/api';
 
   let { figurineId }: { figurineId: string } = $props();
@@ -90,7 +90,7 @@
   }
 
   function fmt(iso: string) {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(iso + 'T00:00:00').toLocaleDateString(currentLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
   // При смене выбранной фигурины компонент не ремаунтится (та же позиция в DOM),

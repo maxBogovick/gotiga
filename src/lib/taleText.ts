@@ -53,6 +53,15 @@ const STOP = new Set([
   'когда', 'если', 'потому', 'чтобы', 'этот', 'этой', 'этом', 'всё', 'все', 'всех', 'ещё', 'уже', 'даже', 'очень', 'можно', 'нужно', 'после',
   'який', 'яка', 'яке', 'були', 'було', 'буде', 'його', 'вона', 'вони', 'для', 'при', 'про', 'чи', 'також', 'тільки', 'коли', 'якщо', 'щоб',
   'this', 'that', 'with', 'from', 'have', 'were', 'was', 'will', 'they', 'them', 'their', 'there', 'then', 'than', 'when', 'what', 'which',
+  // es
+  'para', 'pero', 'como', 'cuando', 'porque', 'este', 'esta', 'esto', 'estos', 'estas', 'ella', 'ellos', 'ellas', 'eran', 'fueron', 'había',
+  'tenía', 'sobre', 'entre', 'también', 'solo', 'sólo', 'muy', 'todo', 'todos', 'todas', 'desde', 'hasta', 'donde', 'aunque', 'después', 'luego',
+  // de
+  'dass', 'nicht', 'eine', 'einer', 'einem', 'einen', 'dieser', 'diese', 'dieses', 'aber', 'auch', 'noch', 'schon', 'wenn', 'weil', 'oder',
+  'sein', 'seine', 'ihre', 'sind', 'waren', 'wurde', 'wird', 'haben', 'hatte', 'über', 'nach', 'dann', 'denn', 'sehr', 'alle', 'immer',
+  // it
+  'come', 'quando', 'perché', 'questo', 'questa', 'questi', 'queste', 'quello', 'quella', 'anche', 'ancora', 'già', 'sono', 'erano', 'aveva',
+  'avevano', 'della', 'delle', 'degli', 'dello', 'nella', 'nelle', 'sulla', 'tutto', 'tutti', 'tutte', 'molto', 'dopo', 'poi', 'mentre',
 ]);
 
 function sentencesOf(paragraph: string): string[] {

@@ -1015,7 +1015,19 @@ pub struct CardTrait {
     #[serde(default)]
     pub name_uk: String,
     #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
+    #[serde(default)]
     pub text_uk: String,
+    #[serde(default)]
+    pub text_es: String,
+    #[serde(default)]
+    pub text_de: String,
+    #[serde(default)]
+    pub text_it: String,
 }
 
 /// The properties of a card, as they will be stored.
@@ -1032,9 +1044,19 @@ pub fn normalize_traits(traits: &[CardTrait]) -> Option<String> {
             text_en: t.text_en.trim().chars().take(TRAIT_TEXT_MAX).collect(),
             text_ru: t.text_ru.trim().chars().take(TRAIT_TEXT_MAX).collect(),
             name_uk: t.name_uk.trim().chars().take(TRAIT_NAME_MAX).collect(),
+            name_es: t.name_es.trim().chars().take(TRAIT_NAME_MAX).collect(),
+            name_de: t.name_de.trim().chars().take(TRAIT_NAME_MAX).collect(),
+            name_it: t.name_it.trim().chars().take(TRAIT_NAME_MAX).collect(),
             text_uk: t.text_uk.trim().chars().take(TRAIT_TEXT_MAX).collect(),
+            text_es: t.text_es.trim().chars().take(TRAIT_TEXT_MAX).collect(),
+            text_de: t.text_de.trim().chars().take(TRAIT_TEXT_MAX).collect(),
+            text_it: t.text_it.trim().chars().take(TRAIT_TEXT_MAX).collect(),
         })
-        .filter(|t| !t.name_en.is_empty() || !t.name_ru.is_empty() || !t.name_uk.is_empty())
+        .filter(|t| {
+            [&t.name_en, &t.name_ru, &t.name_uk, &t.name_es, &t.name_de, &t.name_it]
+                .iter()
+                .any(|n| !n.is_empty())
+        })
         .take(TRAITS_MAX)
         .collect();
     if cleaned.is_empty() {
@@ -1069,6 +1091,9 @@ pub fn prose_blockers(status: &str, traits: &[CardTrait], has_abilities: bool) -
             !t.text_en.trim().is_empty()
                 || !t.text_ru.trim().is_empty()
                 || !t.text_uk.trim().is_empty()
+                || !t.text_es.trim().is_empty()
+                || !t.text_de.trim().is_empty()
+                || !t.text_it.trim().is_empty()
         });
     if speaks && !has_abilities {
         out.push("traitsWithoutAbilities");
@@ -1178,6 +1203,12 @@ pub struct CardAbility {
     pub name_ru: String,
     #[serde(default)]
     pub name_uk: String,
+    #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
     /// From `ABILITY_VERBS`. Anything else is refused.
     pub verb: String,
     #[serde(default = "default_channel")]
@@ -1257,6 +1288,9 @@ pub fn normalize_abilities(abilities: &[CardAbility]) -> Option<String> {
                 name_en: cut(&a.name_en, ABILITY_NAME_MAX),
                 name_ru: cut(&a.name_ru, ABILITY_NAME_MAX),
                 name_uk: cut(&a.name_uk, ABILITY_NAME_MAX),
+                name_es: cut(&a.name_es, ABILITY_NAME_MAX),
+                name_de: cut(&a.name_de, ABILITY_NAME_MAX),
+                name_it: cut(&a.name_it, ABILITY_NAME_MAX),
                 verb: a.verb.trim().to_string(),
                 channel,
                 amount: a.amount.clamp(0, POWER_MAX),
@@ -2642,6 +2676,12 @@ pub struct BattleFrame {
     pub name_ru: String,
     #[serde(default)]
     pub name_uk: String,
+    #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
     /// The card's paper. Still the ground under a photograph that fails to load.
     pub paper: String,
     /// Ink for title and stats.
@@ -3119,6 +3159,40 @@ fn default_frame_name_uk(tier: i16) -> &'static str {
     }
 }
 
+/// The same five ranks in Spanish, German and Italian, by the same rule.
+fn default_frame_name_es(tier: i16) -> &'static str {
+    match tier {
+        1 => "Sencilla",
+        2 => "Resistente",
+        3 => "Memorable",
+        4 => "Rara",
+        5 => "Épica",
+        _ => "",
+    }
+}
+
+fn default_frame_name_de(tier: i16) -> &'static str {
+    match tier {
+        1 => "Schlicht",
+        2 => "Robust",
+        3 => "Denkwürdig",
+        4 => "Selten",
+        5 => "Episch",
+        _ => "",
+    }
+}
+
+fn default_frame_name_it(tier: i16) -> &'static str {
+    match tier {
+        1 => "Semplice",
+        2 => "Robusta",
+        3 => "Memorabile",
+        4 => "Rara",
+        5 => "Epica",
+        _ => "",
+    }
+}
+
 fn painted(
     tier: i16,
     name_en: &str,
@@ -3133,6 +3207,9 @@ fn painted(
         name_en: name_en.into(),
         name_ru: name_ru.into(),
         name_uk: default_frame_name_uk(tier).into(),
+        name_es: default_frame_name_es(tier).into(),
+        name_de: default_frame_name_de(tier).into(),
+        name_it: default_frame_name_it(tier).into(),
         paper: paper.into(),
         ink: ink.into(),
         border: border.into(),
@@ -3277,6 +3354,15 @@ pub fn normalize_frame(mut found: BattleFrame, fallback: BattleFrame) -> BattleF
     }
     if found.name_uk.trim().is_empty() {
         found.name_uk = fallback.name_uk;
+    }
+    if found.name_es.trim().is_empty() {
+        found.name_es = fallback.name_es;
+    }
+    if found.name_de.trim().is_empty() {
+        found.name_de = fallback.name_de;
+    }
+    if found.name_it.trim().is_empty() {
+        found.name_it = fallback.name_it;
     }
     if found.paper.trim().is_empty() {
         found.paper = fallback.paper;
@@ -3663,6 +3749,12 @@ pub struct Motion {
     pub name_ru: String,
     #[serde(default)]
     pub name_uk: String,
+    #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
     /// Ради чего играется. Из `MOTION_OCCASIONS`.
     #[serde(default)]
     pub occasion: String,
@@ -3864,6 +3956,9 @@ pub fn normalize_motion(mut m: Motion) -> Motion {
     m.name_en = m.name_en.trim().chars().take(MOTION_NAME_MAX).collect();
     m.name_ru = m.name_ru.trim().chars().take(MOTION_NAME_MAX).collect();
     m.name_uk = m.name_uk.trim().chars().take(MOTION_NAME_MAX).collect();
+    m.name_es = m.name_es.trim().chars().take(MOTION_NAME_MAX).collect();
+    m.name_de = m.name_de.trim().chars().take(MOTION_NAME_MAX).collect();
+    m.name_it = m.name_it.trim().chars().take(MOTION_NAME_MAX).collect();
     m.occasion = word(&m.occasion, MOTION_OCCASIONS, "blow");
     let gestures: Vec<MotionGesture> = m
         .gestures
@@ -4011,6 +4106,9 @@ pub fn default_motions() -> Vec<Motion> {
             name_en: "A blow".into(),
             name_ru: "Удар".into(),
             name_uk: "Удар".into(),
+            name_es: "Golpe".into(),
+            name_de: "Schlag".into(),
+            name_it: "Colpo".into(),
             occasion: "blow".into(),
             gestures: vec![
                 // Подача и возврат — ОДИН жест: 220 туда и 180 обратно живут в
@@ -4026,6 +4124,9 @@ pub fn default_motions() -> Vec<Motion> {
             name_en: "Mending".into(),
             name_ru: "Лечение".into(),
             name_uk: "Лікування".into(),
+            name_es: "Curación".into(),
+            name_de: "Heilung".into(),
+            name_it: "Cura".into(),
             occasion: "mend".into(),
             gestures: vec![gesture("target", "rise", 0, 300)],
             ..Motion::default()
@@ -4035,6 +4136,9 @@ pub fn default_motions() -> Vec<Motion> {
             name_en: "Taking the field".into(),
             name_ru: "Выставление".into(),
             name_uk: "Виставлення".into(),
+            name_es: "Entrada en el campo".into(),
+            name_de: "Aufs Feld".into(),
+            name_it: "Entrata in campo".into(),
             occasion: "arrive".into(),
             gestures: vec![gesture("striker", "swell", 0, 300)],
             ..Motion::default()
@@ -4044,6 +4148,9 @@ pub fn default_motions() -> Vec<Motion> {
             name_en: "Falling".into(),
             name_ru: "Падение".into(),
             name_uk: "Падіння".into(),
+            name_es: "Caída".into(),
+            name_de: "Fallen".into(),
+            name_it: "Caduta".into(),
             occasion: "fall".into(),
             gestures: vec![gesture("target", "sink", 0, 500)],
             ..Motion::default()
@@ -4053,6 +4160,9 @@ pub fn default_motions() -> Vec<Motion> {
             name_en: "No author".into(),
             name_ru: "Без автора".into(),
             name_uk: "Без автора".into(),
+            name_es: "Sin autor".into(),
+            name_de: "Ohne Urheber".into(),
+            name_it: "Senza autore".into(),
             occasion: "unseen".into(),
             gestures: vec![gesture("target", "shiver", 0, 160)],
             ..Motion::default()
@@ -4345,7 +4455,13 @@ mod tests {
             text_en: String::new(),
             text_ru: "игнорирует 1 урона".into(),
             name_uk: String::new(),
+            name_es: String::new(),
+            name_de: String::new(),
+            name_it: String::new(),
             text_uk: String::new(),
+            text_es: String::new(),
+            text_de: String::new(),
+            text_it: String::new(),
         };
         assert_eq!(
             missing_fields("A", "А", Some("e"), Some("э"), &[half], &[], Some(1), None),
@@ -4358,7 +4474,13 @@ mod tests {
             text_en: String::new(),
             text_ru: String::new(),
             name_uk: String::new(),
+            name_es: String::new(),
+            name_de: String::new(),
+            name_it: String::new(),
             text_uk: String::new(),
+            text_es: String::new(),
+            text_de: String::new(),
+            text_it: String::new(),
         };
         assert!(missing_fields("A", "А", Some("e"), Some("э"), &[empty], &[], Some(1), None).is_empty());
     }
@@ -4371,7 +4493,13 @@ mod tests {
             text_en: "ignores 1 damage".into(),
             text_ru: "игнорирует 1 урона".into(),
             name_uk: String::new(),
+            name_es: String::new(),
+            name_de: String::new(),
+            name_it: String::new(),
             text_uk: String::new(),
+            text_es: String::new(),
+            text_de: String::new(),
+            text_it: String::new(),
         };
         assert_eq!(
             prose_blockers("published", &[trait_.clone()], false),
@@ -5004,6 +5132,9 @@ mod tests {
             name_en: "Cure".into(),
             name_ru: "Лечение".into(),
             name_uk: String::new(),
+            name_es: String::new(),
+            name_de: String::new(),
+            name_it: String::new(),
             verb: "heal".into(),
             channel: "none".into(),
             amount: 1,
@@ -5384,6 +5515,9 @@ mod tests {
             race_name_en: None,
             race_name_ru: None,
             race_name_uk: None,
+            race_name_es: None,
+            race_name_de: None,
+            race_name_it: None,
             race_icon_url: None,
             race_level_frames: None,
             race_motion_wear: None,
@@ -5391,15 +5525,27 @@ mod tests {
             type_en: None,
             type_ru: None,
             type_uk: None,
+            type_es: None,
+            type_de: None,
+            type_it: None,
             title_en: "Witch".into(),
             title_ru: "Ведьма".into(),
             title_uk: String::new(),
+            title_es: String::new(),
+            title_de: String::new(),
+            title_it: String::new(),
             effect_en: None,
             effect_ru: None,
             effect_uk: None,
+            effect_es: None,
+            effect_de: None,
+            effect_it: None,
             lore_en: None,
             lore_ru: None,
             lore_uk: None,
+            lore_es: None,
+            lore_de: None,
+            lore_it: None,
             cost: 3,
             power: 4,
             health: 6,
@@ -5433,6 +5579,7 @@ mod tests {
             minted: 0,
             figurine_id: None,
             figurine_name: None,
+            figurine_name_translations: Default::default(),
             figurine_slug: None,
             created_at: String::new(),
             updated_at: String::new(),
@@ -5520,6 +5667,9 @@ mod tests {
             name_en: String::new(),
             name_ru: String::new(),
             name_uk: String::new(),
+            name_es: String::new(),
+            name_de: String::new(),
+            name_it: String::new(),
             verb: "damage".into(),
             channel: default_channel(),
             amount: 0,
@@ -5546,7 +5696,13 @@ mod tests {
                 text_en: long.clone(),
                 text_ru: "х".into(),
                 name_uk: String::new(),
+                name_es: String::new(),
+                name_de: String::new(),
+                name_it: String::new(),
                 text_uk: String::new(),
+                text_es: String::new(),
+                text_de: String::new(),
+                text_it: String::new(),
             },
             CardTrait {
                 name_en: "  ".into(),
@@ -5554,7 +5710,13 @@ mod tests {
                 text_en: "orphan".into(),
                 text_ru: "".into(),
                 name_uk: String::new(),
+                name_es: String::new(),
+                name_de: String::new(),
+                name_it: String::new(),
                 text_uk: String::new(),
+                text_es: String::new(),
+                text_de: String::new(),
+                text_it: String::new(),
             },
         ];
         let stored = normalize_traits(&traits).unwrap();

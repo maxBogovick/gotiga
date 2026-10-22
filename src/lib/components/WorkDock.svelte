@@ -24,7 +24,9 @@
   // работы названо словом, цвет только дублирует его.
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
-  import { t, lang, localized, LANG_META } from '$lib/i18n';
+  import { t, lang, localized, LANG_META, quote } from '$lib/i18n';
+  import { imageAlt, localizeListItem, workName } from '$lib/workText';
+  import { get } from 'svelte/store';
   import { api, resolveMediaUrl } from '$lib/api';
   import { figurineHref } from '$lib/figurineHref';
   import { interact } from '$lib/analytics';
@@ -97,7 +99,7 @@
     cardPeek = false;
   }
 
-  let work = $derived(currentWork.work);
+  let work = $derived(currentWork.work ? localizeListItem(currentWork.work, $lang) : null);
   let index = $derived(currentWork.index);
   let total = $derived(currentWork.total);
   let position = $derived(
@@ -116,7 +118,7 @@
       .map((img) => ({
         url: resolveMediaUrl(img.originalUrl ?? img.url) ?? '',
         thumbUrl: resolveMediaUrl(img.thumbUrl ?? img.url) ?? undefined,
-        alt: img.altText?.trim() || f.name,
+        alt: imageAlt(img, get(lang)) || workName(f, get(lang)),
       }))
       .filter((p) => p.url);
   }
@@ -155,6 +157,7 @@
     (work?.similarIds ?? [])
       .map((id) => poolById.get(id))
       .filter((w): w is NonNullable<typeof w> => Boolean(w))
+      .map((w) => localizeListItem(w, $lang))
       .slice(0, 3),
   );
 
@@ -398,7 +401,7 @@
       <p class="peek-cap">
         {cardCopy(card, $lang).title} · {$t('dockRank').replace('{n}', String(card.tier))}
         {#if etudes.length > 0}
-          <span>{$t('worldInPlayEtudes')} «{localized(etudes[0], 'title', $lang)}»</span>
+          <span>{$t('worldInPlayEtudes')} {quote($lang, localized(etudes[0], 'title', $lang))}</span>
         {/if}
       </p>
     </div>

@@ -176,7 +176,7 @@ def main():
             continue
         code, res = http("POST", f"{base}/admin/battles/races", key, {
             "slug": r["slug"], "nameEn": r["nameEn"], "nameRu": r["nameRu"], "nameUk": r["nameUk"],
-            "noteEn": r["note"], "noteRu": r["note"], "noteUk": r["note"]})
+            "noteEn": r["note"], "noteRu": r["note"], "noteUk": r["note"], **r.get("texts", {})})
         if code >= 300:
             sys.exit(f"race {r['slug']} failed: {code} {res}")
         race_id[r["slug"]] = res["id"]
@@ -198,15 +198,23 @@ def main():
     # 6. race damage: a ring, every race strong against one other
     _, rs = http("GET", f"{base}/battles/races")
     ids = {r["slug"]: r["id"] for r in rs}
+    now = {r["slug"]: r for r in rs}
     for r in pkg["races"]:
         # Only races made in this run: a table edited by hand on the server stays.
         if r["slug"] not in created_races and not a.reset_race_damage:
             continue
         target = pkg["ring"][r["slug"]]
-        code, res = http("PUT", f"{base}/admin/battles/races/{ids[r['slug']]}", key, {
+        body = {
             "slug": r["slug"], "nameEn": r["nameEn"], "nameRu": r["nameRu"], "nameUk": r["nameUk"],
             "noteEn": r["note"], "noteRu": r["note"], "noteUk": r["note"],
-            "raceDamage": {"attack": 1, "against": [ids[target]], "defence": 0, "from": []}})
+            "raceDamage": {"attack": 1, "against": [ids[target]], "defence": 0, "from": []},
+            **r.get("texts", {})}
+        # a PUT carries the whole race: keep es/de/it the server already has
+        for k in ("name", "note"):
+            for lang in ("Es", "De", "It"):
+                if k + lang not in body and (now.get(r["slug"], {}).get(k + lang) or "").strip():
+                    body[k + lang] = now[r["slug"]][k + lang]
+        code, res = http("PUT", f"{base}/admin/battles/races/{ids[r['slug']]}", key, body)
         print("race damage", r["slug"], "->", target, code)
     print("race damage: kept as it is on the server" if not created_races and not a.reset_race_damage else "")
     print("done")

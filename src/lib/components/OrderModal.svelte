@@ -4,7 +4,7 @@
   import { cubicOut, elasticOut } from 'svelte/easing';
   import { api, resolveMediaUrl } from '$lib/api';
   import { figurineHref } from '$lib/figurineHref';
-  import { t } from '$lib/i18n';
+  import { t, locale, lang, quote } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import { keepEmail } from '$lib/utils/nameEmail';
   import { isValidEmail } from '$lib/validation';
@@ -18,6 +18,8 @@
   let {
     isOpen = false,
     figurineName = '',
+    /** Название на языке читателя для показа; на сервер уходит `figurineName`. */
+    displayName = '',
     figurineId = '',
     mode = 'request' as OrderMode,
     schedule = null as FigurineSchedule | null,
@@ -175,7 +177,7 @@
                     <h3 id="order-modal-title" class="font-['Fraunces'] text-4xl mb-2 text-[#6f3b24] drop-shadow-sm tracking-wide">{modalTitle}</h3>
                     <div class="flex items-center justify-center gap-3 text-[#5f4636]">
                         <span class="h-px w-8 bg-[#5f4636]/30"></span>
-                        <p class="italic text-lg font-semibold tracking-wide">Ref: {figurineName}</p>
+                        <p class="italic text-lg font-semibold tracking-wide">Ref: {displayName || figurineName}</p>
                         <span class="h-px w-8 bg-[#5f4636]/30"></span>
                     </div>
                   </div>
@@ -194,9 +196,9 @@
                         {#each upcomingShowings as s}
                           <p class="showing-notice-entry">
                             <span class="showing-notice-type">{s.showingType === 'exhibition' ? $t('bookingShowingExhibition') : $t('bookingShowingPrivate')}</span>
-                            {#if s.title}«{s.title}»{/if}
-                            — {new Date(s.startsAt + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
-                            – {new Date(s.endsAt + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
+                            {#if s.title}{quote($lang, s.title)}{/if}
+                            — {new Date(s.startsAt + 'T00:00:00').toLocaleDateString($locale, { day: '2-digit', month: 'short' })}
+                            – {new Date(s.endsAt + 'T00:00:00').toLocaleDateString($locale, { day: '2-digit', month: 'short', year: 'numeric' })}
                           </p>
                         {/each}
                       </div>

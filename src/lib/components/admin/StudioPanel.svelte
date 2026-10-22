@@ -79,8 +79,14 @@
     titleEn: 'The Keeper of the Key',
     titleRu: 'Хранительница Ключа',
     titleUk: 'Охоронниця Ключа',
+    titleEs: 'La Guardiana de la Llave',
+    titleDe: 'Die Hüterin des Schlüssels',
+    titleIt: 'La Custode della Chiave',
     effectRu: 'Вихрь Души: каждое третье заклинание создаёт копию эффекта.',
     effectUk: 'Вир Душі: кожне третє закляття створює копію ефекту.',
+    effectEs: 'Torbellino del Alma: cada tercer hechizo crea una copia de su efecto.',
+    effectDe: 'Seelenwirbel: Jeder dritte Zauber erzeugt eine Kopie seiner Wirkung.',
+    effectIt: 'Vortice dell’Anima: ogni terzo incantesimo crea una copia del suo effetto.',
     cost: 5,
     power: 10,
   };
@@ -150,7 +156,7 @@
   /** Имя работы берётся ИЗ ТЕЛА: второго места, где написано одно имя, у
    *  карты нет. */
   const cardName = (work: StudioCardWaiting) =>
-    (work.body.titleRu || work.body.titleEn || work.body.titleUk || '').trim();
+    (work.body.titleRu || work.body.titleEn || work.body.titleUk || work.body.titleEs || work.body.titleDe || work.body.titleIt || '').trim();
 
   function denyCard(work: StudioCardWaiting) {
     const word = prompt($t('adminStudioDenyAsk').replace('{name}', cardName(work)));
@@ -504,6 +510,9 @@
                 <p class="text-sm text-[#34251c]">
                   {work.nameRu} <span class="text-[#b0a08e]">· {work.nameEn}</span>
                   {#if work.nameUk}<span class="text-[#b0a08e]">· {work.nameUk}</span>{/if}
+                  {#if work.nameEs}<span class="text-[#b0a08e]">· {work.nameEs}</span>{/if}
+                  {#if work.nameDe}<span class="text-[#b0a08e]">· {work.nameDe}</span>{/if}
+                  {#if work.nameIt}<span class="text-[#b0a08e]">· {work.nameIt}</span>{/if}
                 </p>
                 <p class="text-[10px] text-[#8a6a55]">{work.author}</p>
                 {#if work.noteRu}
@@ -511,6 +520,15 @@
                 {/if}
                 {#if work.noteUk}
                   <p class="mt-1 text-[11px] italic text-[#6f3b24]">{work.noteUk}</p>
+                {/if}
+                {#if work.noteEs}
+                  <p class="mt-1 text-[11px] italic text-[#6f3b24]">{work.noteEs}</p>
+                {/if}
+                {#if work.noteDe}
+                  <p class="mt-1 text-[11px] italic text-[#6f3b24]">{work.noteDe}</p>
+                {/if}
+                {#if work.noteIt}
+                  <p class="mt-1 text-[11px] italic text-[#6f3b24]">{work.noteIt}</p>
                 {/if}
               </div>
               {#if racing === work.id}

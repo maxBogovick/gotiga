@@ -46,7 +46,7 @@
         <span class="monogram-mark">{$brandName.charAt(0).toUpperCase()}</span>
         <span class="monogram-text">
           <span class="monogram-name">{$brandName}</span>
-          <span class="monogram-sub">Cabinet of Gothic Miniatures</span>
+          <span class="monogram-sub">{$t('brandTagline')}</span>
         </span>
       </a>
       <p class="tagline">{$t('footerTagline')}</p>

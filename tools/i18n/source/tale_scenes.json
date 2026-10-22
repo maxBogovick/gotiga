@@ -1,0 +1,12 @@
+{
+  "kind": "tale_scenes",
+  "table": "tale_scenes",
+  "key": "tale_id (по слагу байки)",
+  "fields": {
+    "frames[].caption": "data->frames[i]->caption (JSONB, один язык)"
+  },
+  "original": "ru",
+  "count": 0,
+  "chars": 0,
+  "items": []
+}

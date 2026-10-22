@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { brandName } from '$lib/i18n';
+  import { brandName, currentLocale } from '$lib/i18n';
   import type { Order, OrderMode, OrderStatus, ReserveStatus } from '$lib/types/api';
 
   let { onNewCount = (_n: number) => {} } = $props();
@@ -166,7 +166,7 @@
   };
 
   function formatDate(iso: string) {
-    return new Date(iso).toLocaleString('en-US', {
+    return new Date(iso).toLocaleString(currentLocale(), {
       day: '2-digit', month: '2-digit', year: '2-digit',
       hour: '2-digit', minute: '2-digit',
     });

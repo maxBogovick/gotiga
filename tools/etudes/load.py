@@ -95,13 +95,20 @@ def main():
     _, admin = http("GET", f"{base}/admin/battles/challenges", key)
     admin = admin if isinstance(admin, list) else admin.get("challenges", [])
     id_of = {c["slug"]: c["id"] for c in admin}
+    row_of = {c["slug"]: c for c in admin}
     ids = []
     for e in etudes:
         if e["slug"] in id_of:
             if not a.update:
                 ids.append(id_of[e["slug"]])
                 continue
-            code, res = http("PUT", f"{base}/admin/battles/challenges/{id_of[e['slug']]}", key, e["body"])
+            body = dict(e["body"])
+            # a PUT carries the whole etude: keep es/de/it the server already has
+            for k in ("title", "note"):
+                for lang in ("Es", "De", "It"):
+                    if k + lang not in body and (row_of[e["slug"]].get(k + lang) or "").strip():
+                        body[k + lang] = row_of[e["slug"]][k + lang]
+            code, res = http("PUT", f"{base}/admin/battles/challenges/{id_of[e['slug']]}", key, body)
             verb = "updated"
         else:
             code, res = http("POST", f"{base}/admin/battles/challenges", key, e["body"])

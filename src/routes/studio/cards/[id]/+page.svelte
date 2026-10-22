@@ -10,7 +10,7 @@
   // взвешивает карту хозяин: второй счёт однажды разошёлся бы с первым.
   import { page as routePage } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { t, lang, localized } from '$lib/i18n';
+  import { t, lang, localized, labelInLang } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { cardFromRequest } from '$lib/battles';
@@ -131,7 +131,7 @@
 
   function addTrait() {
     if (!body) return;
-    body.traits = [...body.traits, { nameEn: '', nameRu: '', textEn: '', textRu: '', nameUk: '', textUk: '' }];
+    body.traits = [...body.traits, { nameEn: '', nameRu: '', textEn: '', textRu: '', nameUk: '', textUk: '', nameEs: '', textEs: '', nameDe: '', textDe: '', nameIt: '', textIt: '' }];
   }
 
   function dropTrait(at: number) {
@@ -322,6 +322,54 @@
               {$t('studioCardTypeUk')}
               <input bind:value={body.typeUk} />
             </label>
+            <label class="field">
+              {labelInLang($t('studioCardTitleUk'), $t('studioLangEs'))}
+              <input bind:value={body.titleEs} />
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardEffectUk'), $t('studioLangEs'))}
+              <textarea bind:value={body.effectEs} rows="2"></textarea>
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardLoreUk'), $t('studioLangEs'))}
+              <textarea bind:value={body.loreEs} rows="2"></textarea>
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardTypeUk'), $t('studioLangEs'))}
+              <input bind:value={body.typeEs} />
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardTitleUk'), $t('studioLangDe'))}
+              <input bind:value={body.titleDe} />
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardEffectUk'), $t('studioLangDe'))}
+              <textarea bind:value={body.effectDe} rows="2"></textarea>
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardLoreUk'), $t('studioLangDe'))}
+              <textarea bind:value={body.loreDe} rows="2"></textarea>
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardTypeUk'), $t('studioLangDe'))}
+              <input bind:value={body.typeDe} />
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardTitleUk'), $t('studioLangIt'))}
+              <input bind:value={body.titleIt} />
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardEffectUk'), $t('studioLangIt'))}
+              <textarea bind:value={body.effectIt} rows="2"></textarea>
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardLoreUk'), $t('studioLangIt'))}
+              <textarea bind:value={body.loreIt} rows="2"></textarea>
+            </label>
+            <label class="field">
+              {labelInLang($t('studioCardTypeUk'), $t('studioLangIt'))}
+              <input bind:value={body.typeIt} />
+            </label>
           </div>
         </section>
 
@@ -440,6 +488,36 @@
               <input
                 bind:value={trait.textUk}
                 placeholder={$t('studioCardTraitTextUk')}
+                class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+              />
+              <input
+                bind:value={trait.nameEs}
+                placeholder={labelInLang($t('studioCardTraitNameUk'), $t('studioLangEs'))}
+                class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+              />
+              <input
+                bind:value={trait.textEs}
+                placeholder={labelInLang($t('studioCardTraitTextUk'), $t('studioLangEs'))}
+                class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+              />
+              <input
+                bind:value={trait.nameDe}
+                placeholder={labelInLang($t('studioCardTraitNameUk'), $t('studioLangDe'))}
+                class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+              />
+              <input
+                bind:value={trait.textDe}
+                placeholder={labelInLang($t('studioCardTraitTextUk'), $t('studioLangDe'))}
+                class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+              />
+              <input
+                bind:value={trait.nameIt}
+                placeholder={labelInLang($t('studioCardTraitNameUk'), $t('studioLangIt'))}
+                class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
+              />
+              <input
+                bind:value={trait.textIt}
+                placeholder={labelInLang($t('studioCardTraitTextUk'), $t('studioLangIt'))}
                 class="border border-[#d8c6b1] bg-white px-2 py-1 text-sm text-[#34251c]"
               />
               <button

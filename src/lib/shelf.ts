@@ -85,7 +85,7 @@ export function shelfFacets(cards: BattleCard[], lang: Lang): ShelfFacets {
 function matchesText(card: BattleCard, needle: string, lang: Lang): boolean {
   const copy = cardCopy(card, lang);
   const head = headerCopy(card, lang);
-  const hay = [copy.title, card.figurineName ?? '', head.race, head.type]
+  const hay = [copy.title, card.figurineName ?? '', ...Object.values(card.figurineNameTranslations ?? {}), head.race, head.type]
     .join(' ')
     .toLowerCase();
   return hay.includes(needle);

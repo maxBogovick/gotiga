@@ -84,6 +84,8 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         `and finished entirely by hand by a single maker. Ritunia is a showcase archive, ` +
         `not a shop: each piece is documented like a museum specimen, with material, ` +
         `dimensions, year and provenance, and many of them have a tale of their own.\n\n` +
+        `The site is in six languages — English, Russian, Ukrainian, Spanish, German, Italian; ` +
+        `add \`?lang=en|ru|uk|es|de|it\` to any address to choose one.\n\n` +
         `## About\n\n` +
         `- [The author](${SITE_URL}/author): who makes the figures and why.\n` +
         `- [The workshop](${SITE_URL}/workshop): tools, materials and process.\n` +

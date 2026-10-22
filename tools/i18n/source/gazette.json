@@ -1,0 +1,21 @@
+{
+  "kind": "gazette",
+  "table": "gazette_leaves",
+  "key": "slug",
+  "fields": {
+    "title": "title_{lang}",
+    "dek": "dek_{lang}",
+    "body": "body_{lang}"
+  },
+  "limits": {
+    "title": 200,
+    "dek": 500,
+    "body": 12000
+  },
+  "notes": "`author` — одна колонка на все языки (имя не переводится), дано для справки.",
+  "where": "gazette_leaves.kind <> 'tale'",
+  "original": "en",
+  "count": 0,
+  "chars": 0,
+  "items": []
+}

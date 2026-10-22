@@ -1,6 +1,9 @@
 import { api } from '$lib/api';
 import { authStore } from './auth.svelte';
 import { savedFigurines } from './saved-figurines.svelte';
+import { fromStore } from 'svelte/store';
+import { lang } from '$lib/i18n';
+import { figurineNameIn, localizeListItem, workName } from '$lib/workText';
 import type {
   UserBookingDto,
   UserOrderDto,
@@ -99,7 +102,18 @@ class UserDesk {
   unread = $derived(this.threads.reduce((sum, th) => sum + th.unread, 0));
 
   /** Каждая работа, на которую смотрит хоть одно дело или отложенное. */
-  figurineById = $state<Map<string, FigurineListItem>>(new Map());
+  #figurineRaw = $state<Map<string, FigurineListItem>>(new Map());
+  #lang = fromStore(lang);
+  /** Те же работы с текстами на языке читателя. */
+  figurineById = $derived(
+    new Map([...this.#figurineRaw].map(([id, fig]) => [id, localizeListItem(fig, this.#lang.current)])),
+  );
+
+  /** Название работы для строки дела: из собрания, иначе — пришедшее с делом. */
+  #titleOf(rec: { figurineId?: string | null; figurineName?: string | null; figurineNameTranslations?: Partial<Record<'ru' | 'uk' | 'es' | 'de' | 'it', string>> }): string {
+    const fig = rec.figurineId ? this.figurineById.get(rec.figurineId) : undefined;
+    return (fig && workName(fig, this.#lang.current)) || figurineNameIn(rec, this.#lang.current);
+  }
 
   loading = $state(false);
   loaded = $state(false);
@@ -138,14 +152,14 @@ class UserDesk {
     for (const b of this.bookings) {
       const t = ref.get(b.id);
       items.push({
-        kind: 'booking', status: b.status, id: b.id, title: b.figurineName, date: b.createdAt,
+        kind: 'booking', status: b.status, id: b.id, title: this.#titleOf(b), date: b.createdAt,
         tone: bookingTone(b.status), figurineId: b.figurineId, threadId: t?.id ?? null, unread: t?.unread ?? 0,
       });
     }
     for (const o of this.orders) {
       const t = ref.get(o.id);
       items.push({
-        kind: 'order', status: o.status, id: o.id, title: o.figurineName, date: o.createdAt,
+        kind: 'order', status: o.status, id: o.id, title: this.#titleOf(o), date: o.createdAt,
         tone: orderTone(o.status), figurineId: o.figurineId, threadId: t?.id ?? null, unread: t?.unread ?? 0,
       });
     }
@@ -159,7 +173,7 @@ class UserDesk {
     for (const w of this.waitlist) {
       const t = ref.get(w.id);
       items.push({
-        kind: 'waitlist', status: String(w.position), id: w.id, title: w.figurineName, date: w.createdAt,
+        kind: 'waitlist', status: String(w.position), id: w.id, title: this.#titleOf(w), date: w.createdAt,
         tone: 'neutral', figurineId: w.figurineId, threadId: t?.id ?? null, unread: t?.unread ?? 0,
       });
     }
@@ -296,11 +310,11 @@ class UserDesk {
       ...this.waitlist.map((w) => w.figurineId),
     ].filter((id): id is string => Boolean(id)));
     if (needed.size === 0) {
-      this.figurineById = new Map();
+      this.#figurineRaw = new Map();
       return;
     }
     const all = await api.getAllFigurines().catch(() => [] as FigurineListItem[]);
-    this.figurineById = new Map(all.map((fig) => [fig.id, fig]));
+    this.#figurineRaw = new Map(all.map((fig) => [fig.id, fig]));
   }
 
   /** Ветку открыли — её непрочитанное уходит, а с ним и число над аватаром. */
@@ -333,7 +347,7 @@ class UserDesk {
     this.waitlist = [];
     this.watches = [];
     this.threads = [];
-    this.figurineById = new Map();
+    this.#figurineRaw = new Map();
     this.loaded = false;
     this.error = '';
     this.#loadedFor = null;

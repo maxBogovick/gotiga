@@ -1,0 +1,22 @@
+{
+  "kind": "copy",
+  "table": "settings",
+  "key": "key = 'copy_overrides' → JSON {lang: {ключ словаря: текст}}",
+  "fields": {
+    "text": "value->{lang}->{key}"
+  },
+  "notes": "Правки админа поверх словаря. Пустой язык — откат на словарь; новые языки — новые ветки JSON.",
+  "original": "en",
+  "count": 1,
+  "chars": 36,
+  "items": [
+    {
+      "key": "homeTitle",
+      "text": {
+        "en": "Authors handmade dolls and sculpture",
+        "ru": null,
+        "uk": null
+      }
+    }
+  ]
+}

@@ -3,10 +3,12 @@
   //
   // Два вида одного и того же:
   //   · `seal` — круглая печать в шапке с двумя буквами языка; нажатие
-  //     раскрывает листок с тремя строками. Печать мала, потому что в шапке
+  //     раскрывает листок со строкой на каждый язык (их шесть). Печать мала, потому что в шапке
   //     тесно, а язык выбирают один раз.
-  //   · `strip` — три клетки в ряд с ползунком под выбранной; для меню на
-  //     телефоне, где листку негде раскрыться.
+  //   · `strip` — клетки в ряд с ползунком под выбранной; для меню на
+  //     телефоне, где листку негде раскрыться. Под буквами — метка языка
+  //     (ES, DE…), а не название: шесть названий в ширину телефона не
+  //     помещаются («Українська» шире клетки). Название — в `aria-label`.
   //
   // Смена языка идёт не скачком, а расходящимся кругом из того места, на
   // которое нажали: новый язык «проступает» поверх старого страницы
@@ -23,8 +25,9 @@
     layout?: 'seal' | 'strip';
   } = $props();
 
-  /** Буквы, по которым язык узнают с первого взгляда: у украинского — «Ї». */
-  const SPECIMEN: Record<Lang, string> = { en: 'Aa', ru: 'Яя', uk: 'Її' };
+  /** Буквы, по которым язык узнают с первого взгляда: у украинского — «Ї»,
+   *  у испанского — «Ñ», у немецкого — «Ä», у итальянского — «À». */
+  const SPECIMEN: Record<Lang, string> = { en: 'Aa', ru: 'Яя', uk: 'Її', es: 'Ññ', de: 'Ää', it: 'Àà' };
 
   let open = $state(false);
   let focusIdx = $state(0);
@@ -165,11 +168,13 @@
         aria-checked={$lang === l}
         tabindex={$lang === l ? 0 : -1}
         lang={l}
+        aria-label={LANG_META[l].native}
+        title={LANG_META[l].native}
         onclick={(e) => choose(l, e.currentTarget)}
         onkeydown={(e) => stripKey(e, i)}
       >
         <span class="chip-spec" aria-hidden="true">{SPECIMEN[l]}</span>
-        <span class="chip-name">{LANG_META[l].native}</span>
+        <span class="chip-name" aria-hidden="true">{LANG_META[l].mark}</span>
       </button>
     {/each}
   </div>
@@ -450,9 +455,9 @@
     display: grid;
     /* `minmax(0, 1fr)`, а не `1fr`: у `1fr` нижняя граница — ширина самого
        длинного слова, и «Українська» растягивала свою колонку, а ползунок
-       (ровно треть) съезжал с выбранной клетки. */
+       (ровно 1/n) съезжал с выбранной клетки. */
     grid-template-columns: repeat(var(--n), minmax(0, 1fr));
-    width: min(100%, 22rem);
+    width: min(100%, 24rem);
     padding: 3px;
     background: color-mix(in srgb, var(--ls-deep) 80%, transparent);
     border: 1px solid var(--ls-line);
@@ -499,8 +504,8 @@
     color: var(--ls-accent);
   }
   .chip-name {
-    font-size: 11px;
-    letter-spacing: 0.04em;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
     white-space: nowrap;
   }
 

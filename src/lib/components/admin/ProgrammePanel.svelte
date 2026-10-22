@@ -102,9 +102,15 @@
     curatorNoteEn: null,
     curatorNoteRu: null,
     curatorNoteUk: null,
+    curatorNoteEs: null,
+    curatorNoteDe: null,
+    curatorNoteIt: null,
     curatorSignEn: null,
     curatorSignRu: null,
     curatorSignUk: null,
+    curatorSignEs: null,
+    curatorSignDe: null,
+    curatorSignIt: null,
     frameTone: null,
     frameThickness: null,
     frameMode: null,
@@ -441,6 +447,33 @@
             bind:value={settings.curatorNoteUk}
           ></textarea>
         </label>
+        <label class="field" for="note-es">
+          <span class="label">Note (ES)</span>
+          <textarea
+            id="note-es"
+            class="input textarea"
+            rows="3"
+            bind:value={settings.curatorNoteEs}
+          ></textarea>
+        </label>
+        <label class="field" for="note-de">
+          <span class="label">Note (DE)</span>
+          <textarea
+            id="note-de"
+            class="input textarea"
+            rows="3"
+            bind:value={settings.curatorNoteDe}
+          ></textarea>
+        </label>
+        <label class="field" for="note-it">
+          <span class="label">Note (IT)</span>
+          <textarea
+            id="note-it"
+            class="input textarea"
+            rows="3"
+            bind:value={settings.curatorNoteIt}
+          ></textarea>
+        </label>
       </div>
       <div class="bilingual">
         <label class="field" for="sign-en">
@@ -454,6 +487,18 @@
         <label class="field" for="sign-uk">
           <span class="label">Signature (UK)</span>
           <input id="sign-uk" class="input" type="text" placeholder="— ДОГЛЯДАЧ" bind:value={settings.curatorSignUk} />
+        </label>
+        <label class="field" for="sign-es">
+          <span class="label">Signature (ES)</span>
+          <input id="sign-es" class="input" type="text" bind:value={settings.curatorSignEs} />
+        </label>
+        <label class="field" for="sign-de">
+          <span class="label">Signature (DE)</span>
+          <input id="sign-de" class="input" type="text" bind:value={settings.curatorSignDe} />
+        </label>
+        <label class="field" for="sign-it">
+          <span class="label">Signature (IT)</span>
+          <input id="sign-it" class="input" type="text" bind:value={settings.curatorSignIt} />
         </label>
       </div>
     </section>

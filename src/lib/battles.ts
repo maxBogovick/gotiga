@@ -1775,6 +1775,30 @@ const DEFAULT_FRAME_NAME_UK: Record<number, string> = {
   5: "Епічна",
 };
 
+const DEFAULT_FRAME_NAME_ES: Record<number, string> = {
+  1: "Modesta",
+  2: "Robusta",
+  3: "Memorable",
+  4: "Rara",
+  5: "Épica",
+};
+
+const DEFAULT_FRAME_NAME_DE: Record<number, string> = {
+  1: "Schlicht",
+  2: "Robust",
+  3: "Denkwürdig",
+  4: "Selten",
+  5: "Episch",
+};
+
+const DEFAULT_FRAME_NAME_IT: Record<number, string> = {
+  1: "Modesta",
+  2: "Robusta",
+  3: "Memorabile",
+  4: "Rara",
+  5: "Epica",
+};
+
 function painted(
   tier: number,
   nameEn: string,
@@ -1789,6 +1813,9 @@ function painted(
     nameEn,
     nameRu,
     nameUk: DEFAULT_FRAME_NAME_UK[tier] ?? "",
+    nameEs: DEFAULT_FRAME_NAME_ES[tier] ?? "",
+    nameDe: DEFAULT_FRAME_NAME_DE[tier] ?? "",
+    nameIt: DEFAULT_FRAME_NAME_IT[tier] ?? "",
     paper,
     ink,
     border,
@@ -1943,7 +1970,10 @@ export function frameFor(
  *  the old way — a picture and the four insets around its window — still means
  *  exactly what it meant when it was saved. */
 export type FrameOverride = Partial<
-  Omit<BattleFrame, "tier" | "nameEn" | "nameRu" | "nameUk">
+  Omit<
+    BattleFrame,
+    "tier" | "nameEn" | "nameRu" | "nameUk" | "nameEs" | "nameDe" | "nameIt"
+  >
 >;
 
 /** A frame taken off and folded into a dress — carving, paint and window.
@@ -1958,6 +1988,9 @@ export function dressOf(frame: BattleFrame): FrameOverride {
     nameEn: _nameEn,
     nameRu: _nameRu,
     nameUk: _nameUk,
+    nameEs: _nameEs,
+    nameDe: _nameDe,
+    nameIt: _nameIt,
     sheet: _sheet,
     typeScale: _typeScale,
     inkFade: _inkFade,
@@ -2033,6 +2066,9 @@ function patchFrame(
   worn.nameEn = base.nameEn;
   worn.nameRu = base.nameRu;
   worn.nameUk = base.nameUk;
+  worn.nameEs = base.nameEs;
+  worn.nameDe = base.nameDe;
+  worn.nameIt = base.nameIt;
   return worn;
 }
 
@@ -2647,7 +2683,7 @@ export function frameName(frame: BattleFrame, lang: Lang): string {
 function lineInLang(own: string | null | undefined, lang: Lang): string {
   const s = own?.trim() ?? "";
   if (!s) return "";
-  if (lang === "en" && mostlyCyrillic(s)) return "";
+  if (lang !== "ru" && lang !== "uk" && mostlyCyrillic(s)) return "";
   return s;
 }
 
@@ -2671,6 +2707,16 @@ function cardLine(
       lineInLang(at("uk"), "uk") ||
       lineInLang(at("en"), "en") ||
       lineInLang(at("ru"), "ru")
+    );
+  }
+  // Spanish, German and Italian: own, English, Russian, Ukrainian — the same
+  // order as the dictionaries (`FALLBACK` in i18n).
+  if (lang === "es" || lang === "de" || lang === "it") {
+    return (
+      lineInLang(at(lang), lang) ||
+      lineInLang(at("en"), "en") ||
+      lineInLang(at("ru"), "ru") ||
+      lineInLang(at("uk"), "uk")
     );
   }
   return lineInLang(at(lang), lang);
@@ -2704,7 +2750,8 @@ export function traitCopy(
 ): { name: string; other: string; text: string } {
   const name = cardLine(trait, "name", lang);
   // The second name printed alongside: the other of Russian/English, and for
-  // Ukrainian the English one (the world language, as the fallback is).
+  // Ukrainian, Spanish, German and Italian the English one (the world
+  // language, as the fallback is).
   const otherLang: Lang = lang === "ru" ? "en" : lang === "en" ? "ru" : "en";
   const other = lineInLang(
     otherLang === "en" ? trait.nameEn : trait.nameRu,
@@ -3731,6 +3778,9 @@ export const WARD_MOTION: Motion = {
   nameEn: "A miss",
   nameRu: "Промах",
   nameUk: "Промах",
+  nameEs: "Fallo",
+  nameDe: "Fehlschlag",
+  nameIt: "Mancato",
   occasion: "unseen",
   gestures: [gesture("target", "blanch", 0, 280)],
 };
@@ -3748,6 +3798,9 @@ export const DEFAULT_MOTIONS: Motion[] = [
     nameEn: "A blow",
     nameRu: "Удар",
     nameUk: "Удар",
+    nameEs: "Golpe",
+    nameDe: "Schlag",
+    nameIt: "Colpo",
     occasion: "blow",
     gestures: [
       // Подача и возврат — ОДИН жест: 220 туда и 180 обратно живут в его
@@ -3762,6 +3815,9 @@ export const DEFAULT_MOTIONS: Motion[] = [
     nameEn: "Mending",
     nameRu: "Лечение",
     nameUk: "Лікування",
+    nameEs: "Curación",
+    nameDe: "Heilung",
+    nameIt: "Cura",
     occasion: "mend",
     gestures: [gesture("target", "rise", 0, 300)],
   },
@@ -3770,6 +3826,9 @@ export const DEFAULT_MOTIONS: Motion[] = [
     nameEn: "Taking the field",
     nameRu: "Выставление",
     nameUk: "Виставлення",
+    nameEs: "Entrada en el campo",
+    nameDe: "Aufs Feld",
+    nameIt: "Entrata in campo",
     occasion: "arrive",
     gestures: [gesture("striker", "swell", 0, 300)],
   },
@@ -3778,6 +3837,9 @@ export const DEFAULT_MOTIONS: Motion[] = [
     nameEn: "Falling",
     nameRu: "Падение",
     nameUk: "Падіння",
+    nameEs: "Caída",
+    nameDe: "Fallen",
+    nameIt: "Caduta",
     occasion: "fall",
     gestures: [gesture("target", "sink", 0, 500)],
   },
@@ -3786,6 +3848,9 @@ export const DEFAULT_MOTIONS: Motion[] = [
     nameEn: "No author",
     nameRu: "Без автора",
     nameUk: "Без автора",
+    nameEs: "Sin autor",
+    nameDe: "Ohne Urheber",
+    nameIt: "Senza autore",
     occasion: "unseen",
     gestures: [gesture("target", "shiver", 0, 160)],
   },
@@ -4899,13 +4964,18 @@ function strikeArt(image: string, at: number, dur: number): MotionGesture {
   };
 }
 
-export const STOCK_MOTIONS: {
+type StockMotion = {
   nameEn: string;
   nameRu: string;
   nameUk: string;
+  nameEs?: string;
+  nameDe?: string;
+  nameIt?: string;
   occasion: MotionOccasion;
   gestures: MotionGesture[];
-}[] = [
+};
+
+const STOCK_RAW: StockMotion[] = [
   {
     nameEn: "An axe",
     nameRu: "Секира",
@@ -5323,6 +5393,58 @@ export const STOCK_MOTIONS: {
   },
 ];
 
+/** Названия заготовок на испанском, немецком и итальянском — по английскому
+ *  названию: в самих записях стоят три языка, с которых набор начинался. */
+const MOTION_NAMES_ES_DE_IT: Record<string, [string, string, string]> = {
+  "Lightning": ["Rayo", "Blitz", "Fulmine"],
+  "A bolt": ["Rayo", "Blitz", "Fulmine"],
+  "Red lightning": ["Rayo rojo", "Roter Blitz", "Fulmine rosso"],
+  "Violet lightning": ["Rayo violeta", "Violetter Blitz", "Fulmine viola"],
+  "Green lightning": ["Rayo verde", "Grüner Blitz", "Fulmine verde"],
+  "Black lightning": ["Rayo negro", "Schwarzer Blitz", "Fulmine nero"],
+  "An axe": ["Hacha", "Axt", "Ascia"],
+  "A sword": ["Espada", "Schwert", "Spada"],
+  "A mace": ["Maza", "Streitkolben", "Mazza"],
+  "A sword slash": ["Tajo de espada", "Schwerthieb", "Fendente di spada"],
+  "An axe chop": ["Hachazo", "Axthieb", "Colpo d'ascia"],
+  "A fist blow": ["Puñetazo", "Faustschlag", "Pugno"],
+  "A mace crush": ["Golpe de maza", "Streitkolbenhieb", "Colpo di mazza"],
+  "A heavy blow": ["Golpe pesado", "Schwerer Schlag", "Colpo pesante"],
+  "A shot": ["Disparo", "Schuss", "Tiro"],
+  "A fireball": ["Bola de fuego", "Feuerball", "Palla di fuoco"],
+  "A flock of ravens": ["Bandada de cuervos", "Rabenschwarm", "Stormo di corvi"],
+  "Ice lances": ["Lanzas de hielo", "Eislanzen", "Lance di ghiaccio"],
+  "Soul drain": ["Robo del alma", "Seelenraub", "Furto dell'anima"],
+  "Poison mist": ["Niebla venenosa", "Giftnebel", "Nebbia velenosa"],
+  "A ghostly hand": ["Mano espectral", "Geisterhand", "Mano spettrale"],
+  "A meteor": ["Meteoro", "Meteor", "Meteora"],
+  "Chains of the abyss": ["Cadenas del abismo", "Ketten des Abgrunds", "Catene dell'abisso"],
+  "The reaper's scythe": ["Guadaña de la Muerte", "Sense des Schnitters", "Falce del mietitore"],
+  "Shadow spikes": ["Púas de sombra", "Schattendornen", "Spine d'ombra"],
+  "A swarm of bats": ["Enjambre de murciélagos", "Fledermausschwarm", "Sciame di pipistrelli"],
+  "Healing light": ["Luz sanadora", "Heilendes Licht", "Luce curativa"],
+  "Rising from the flame": ["Surgir de las llamas", "Aus der Flamme", "Dalle fiamme"],
+  "Burning away": ["Consumirse en el fuego", "Verbrennen", "Bruciare"],
+  "A rune shield": ["Escudo rúnico", "Runenschild", "Scudo runico"],
+  "A charm": ["Hechizo", "Zauber", "Incantesimo"],
+  "A curse": ["Maldición", "Fluch", "Maledizione"],
+  "The evil eye": ["Mal de ojo", "Böser Blick", "Malocchio"],
+  "Tending": ["Cuidados", "Pflege", "Cure"],
+  "Stepping out": ["Salida", "Auftritt", "Comparsa"],
+  "Guttering out": ["Apagarse", "Erlöschen", "Spegnersi"],
+  "Poison": ["Veneno", "Gift", "Veleno"],
+};
+
+/** Дописывает `nameEs/De/It` из таблицы, если их нет в самой записи. */
+function withMotionNames<T extends { nameEn: string; nameEs?: string | null; nameDe?: string | null; nameIt?: string | null }>(m: T): T {
+  const names = MOTION_NAMES_ES_DE_IT[m.nameEn];
+  if (!names) return m;
+  return { ...m, nameEs: m.nameEs || names[0], nameDe: m.nameDe || names[1], nameIt: m.nameIt || names[2] };
+}
+
+export const STOCK_MOTIONS: StockMotion[] = STOCK_RAW.map(withMotionNames);
+
+
 /** Заготовку берут копией: `id` рождается в этот миг, потому что на него сразу
  *  начинают показывать карта, раса и порядок в ящике. */
 export function takeStock(index: number): Motion | null {
@@ -5333,6 +5455,9 @@ export function takeStock(index: number): Motion | null {
     nameEn: found.nameEn,
     nameRu: found.nameRu,
     nameUk: found.nameUk,
+    nameEs: found.nameEs ?? "",
+    nameDe: found.nameDe ?? "",
+    nameIt: found.nameIt ?? "",
     gestures: found.gestures.map((g) => ({ ...g })),
   };
 }
@@ -5347,6 +5472,9 @@ export function takeHouse(index: number): Motion | null {
     nameEn: found.nameEn,
     nameRu: found.nameRu,
     nameUk: found.nameUk,
+    nameEs: found.nameEs ?? "",
+    nameDe: found.nameDe ?? "",
+    nameIt: found.nameIt ?? "",
     gestures: found.gestures.map((g) => ({ ...g })),
   };
 }
@@ -5730,6 +5858,9 @@ export function emptyBattleCard(): BattleCard {
     raceNameEn: null,
     raceNameRu: null,
     raceNameUk: null,
+    raceNameEs: null,
+    raceNameDe: null,
+    raceNameIt: null,
     raceIconUrl: null,
     raceLevelFrames: null,
     typeEn: null,
@@ -5844,6 +5975,9 @@ function farBlowMotion(magic: boolean): Motion {
       nameEn: "A shot",
       nameRu: "Выстрел",
       nameUk: "Постріл",
+      nameEs: "Disparo",
+      nameDe: "Schuss",
+      nameIt: "Tiro",
       occasion: "blow",
       gestures: [
         gesture("striker", "draw", 0, 420),
@@ -5851,7 +5985,7 @@ function farBlowMotion(magic: boolean): Motion {
         gesture("target", "flinch", 400, 160),
       ],
     },
-    bolt: { id: "house-bolt", ...brightLightning("", "A bolt", "Молния", "Блискавка") },
+    bolt: { id: "house-bolt", ...withMotionNames(brightLightning("", "A bolt", "Молния", "Блискавка")) },
   };
   return magic ? farMotions.bolt : farMotions.shot;
 }
@@ -5892,24 +6026,39 @@ export function siegeGearRequests(): SaveBattleCardRequest[] {
   return [
     gear(SIEGE_GEAR.wall, {
       kind: "structure", typeEn: "Structure", typeRu: "Строение", typeUk: "Споруда",
+      typeEs: "Construcción", typeDe: "Bauwerk", typeIt: "Costruzione",
       titleEn: "Fortress wall", titleRu: "Крепостная стена", titleUk: "Фортечний мур",
+      titleEs: "Muro de la fortaleza", titleDe: "Festungsmauer", titleIt: "Muro della fortezza",
       effectEn: "Does not move or strike. Holds the way while it stands.",
       effectRu: "Не ходит и не бьёт. Держит проход, пока цела.",
       effectUk: "Не ходить і не б’є. Тримає прохід, поки ціла.",
+      effectEs: "No se mueve ni ataca. Cierra el paso mientras está en pie.",
+      effectDe: "Bewegt sich nicht und schlägt nicht. Sperrt den Weg, solange sie steht.",
+      effectIt: "Non si muove e non colpisce. Blocca il passaggio finché resta in piedi.",
       cost: 1, power: 0, health: 8, armor: 3, attackChannel: "none", reach: 1, step: 0,
     }),
     gear(SIEGE_GEAR.tower, {
       kind: "structure", typeEn: "Structure", typeRu: "Строение", typeUk: "Споруда",
+      typeEs: "Construcción", typeDe: "Bauwerk", typeIt: "Costruzione",
       titleEn: "Watchtower", titleRu: "Сторожевая башня", titleUk: "Сторожова вежа",
+      titleEs: "Atalaya", titleDe: "Wachturm", titleIt: "Torre di guardia",
       effectEn: "Does not move. Shoots up to three cells away, over walls.",
       effectRu: "Не ходит. Стреляет на три клетки, через стены.",
       effectUk: "Не ходить. Стріляє на три клітини, через мури.",
+      effectEs: "No se mueve. Dispara hasta a tres casillas, por encima de los muros.",
+      effectDe: "Bewegt sich nicht. Schießt bis zu drei Felder weit, über Mauern hinweg.",
+      effectIt: "Non si muove. Tira fino a tre caselle, oltre le mura.",
       cost: 1, power: 2, health: 8, attackChannel: "physical", reach: 3, step: 0, shoots: true,
     }),
     gear(SIEGE_GEAR.ram, {
       typeEn: "Siege", typeRu: "Осада", typeUk: "Облога",
+      typeEs: "Asedio", typeDe: "Belagerung", typeIt: "Assedio",
       titleEn: "Battering ram", titleRu: "Таран", titleUk: "Таран",
+      titleEs: "Ariete", titleDe: "Rammbock", titleIt: "Ariete",
       effectEn: "Strikes past armour.", effectRu: "Бьёт мимо брони.", effectUk: "Б’є повз броню.",
+      effectEs: "Golpea sin tener en cuenta la armadura.",
+      effectDe: "Schlägt an der Rüstung vorbei.",
+      effectIt: "Colpisce ignorando l’armatura.",
       cost: 2, power: 4, health: 9, attackChannel: "pure", reach: 1, step: 1,
     }),
   ];

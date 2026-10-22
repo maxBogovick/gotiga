@@ -30,7 +30,7 @@
   import { turnSound } from '$lib/stores/page-turn-sound.svelte';
   import { playTurnSound } from '$lib/audio/page-turn-sounds';
 
-  import { t, lang, LANG_META, localized } from '$lib/i18n';
+  import { t, lang, LANG_META, localized, localizedBase } from '$lib/i18n';
   import { figurineHref } from '$lib/figurineHref';
   import type { FigurineListItem, ProgrammeSettings } from '$lib/types/api';
   import AppImage from '$lib/components/AppImage.svelte';
@@ -225,7 +225,7 @@
         const rep = repr.get(room.id);
         return build(
           `room:${room.id}`,
-          room.name,
+          localizedBase(room, 'name', $lang),
           `/hall/${room.id}`,
           true,
           roomToWindow(room),
@@ -459,7 +459,7 @@
                   <button
                     class="page-nav-btn"
                     onclick={() => turnPage(-1)}
-                    aria-label="Previous page"
+                    aria-label={$t('pagePrev')}
                   >
                     <svg width="18" height="8" viewBox="0 0 18 8" fill="none" aria-hidden="true">
                       <path d="M18 4H1M1 4L5 1M1 4L5 7" stroke="currentColor" stroke-width="1"/>
@@ -481,7 +481,7 @@
                   <button
                     class="page-nav-btn"
                     onclick={() => turnPage(1)}
-                    aria-label="Next page"
+                    aria-label={$t('pageNext')}
                   >
                     <svg width="18" height="8" viewBox="0 0 18 8" fill="none" aria-hidden="true">
                       <path d="M0 4H17M17 4L13 1M17 4L13 7" stroke="currentColor" stroke-width="1"/>

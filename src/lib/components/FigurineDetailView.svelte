@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { nameTranslations, workBase } from '$lib/workText';
   import { onMount, onDestroy, tick, setContext } from 'svelte';
   import { fade } from 'svelte/transition';
   import type { Figurine, FigurineSchedule, FigurineStatus, DisplayConfig, FigurineImage, GazetteLeaf } from '$lib/types/api';
@@ -17,7 +18,7 @@
   import { browser } from '$app/environment';
   import { api, resolveMediaUrl, resolveWebpUrl } from '$lib/api';
   import { createFigurineAnalytics } from '$lib/analytics';
-  import { t, lang, brandName } from '$lib/i18n';
+  import { t, lang, brandName, locale } from '$lib/i18n';
   import { leafCopy, leafHref } from '$lib/gazette';
   import { isTale } from '$lib/tales';
   import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
@@ -250,7 +251,7 @@
   }
 
   function fmtDate(ds: string) {
-    return new Date(ds + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+    return new Date(ds + 'T00:00:00').toLocaleDateString($locale, { day: 'numeric', month: 'long', year: 'numeric' });
   }
 
   function lookupStatusLabel(s: string): string {
@@ -1485,7 +1486,9 @@
 >
   <UnifiedRequestModal
     isOpen={showRequestModal}
-    figurineName={figurine.name}
+    figurineName={workBase(figurine, 'name')}
+    displayName={figurine.name}
+    figurineNameTranslations={nameTranslations(figurine)}
     figurineId={figurine.id}
     status={figurine.status}
     schedule={figurineSchedule}

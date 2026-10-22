@@ -1,8 +1,11 @@
+import { get } from 'svelte/store';
+import { lang as langStore, quote as quoteIn } from '$lib/i18n';
 // Общее для «Спросить сайт»: виды ответа и ссылки, склонения, ссылки на
 // вещи сайта, слова-пустышки вопроса. Отдельно от `site-ask.ts`, потому что
 // ответы про страницу, переходы и подбор живут в своих файлах и все они берут
 // отсюда одно и то же: общая часть в одном месте, а не копия в каждом.
-import { pick, type Lang } from '$lib/i18n';
+import { workBase } from '$lib/workText';
+import { localized, pick, type Lang } from '$lib/i18n';
 import { readingMinutes } from '$lib/tales';
 import { leafCopy, leafHref } from '$lib/gazette';
 import { figurineHref } from '$lib/figurineHref';
@@ -14,14 +17,16 @@ import type { BattleCard, BattleChallenge, FigurineListItem, GazetteLeaf } from 
 
 export type AskIntent = 'summary' | 'start' | 'new' | 'tale' | 'play' | 'search' | 'count' | 'about' | 'page' | 'go' | 'match' | 'none';
 
-export type AskLinkKind = 'work' | 'tale' | 'leaf' | 'card' | 'etude' | 'section' | 'question';
+export type AskLinkKind = 'work' | 'tale' | 'leaf' | 'card' | 'etude' | 'section' | 'question' | 'choice';
 
 export interface AskLink {
   kind: AskLinkKind;
   label: string;
   hint?: string;
-  /** У `question` пусто: нажатие задаёт `label` как новый вопрос. */
+  /** У `question` и `choice` пусто: нажатие задаёт `label` как новый вопрос. */
   href: string;
+  /** Ответы подбора до этого выбора включительно (только у `choice`). */
+  quiz?: string[];
   /** Адрес миниатюры (только у работ); страница разрешает его сама. */
   image?: string | null;
 }
@@ -47,13 +52,30 @@ export const SRC = 'site_ask';
 
 // ── Слова ──────────────────────────────────────────────────────────────────
 
-export const say = (lang: Lang, ru: string, uk: string, en: string) => pick(lang, { en, ru, uk });
+/** Одна фраза на шести языках: русский, украинский, английский, испанский,
+ *  немецкий, итальянский. Недостающий язык говорит по-английски. */
+export const say = (lang: Lang, ru: string, uk: string, en: string, es?: string, de?: string, it?: string) =>
+  pick(lang, { en, ru, uk, es, de, it });
 
-export type Forms = { en: [string, string]; ru: [string, string, string]; uk: [string, string, string] };
+/** Те же шесть слов кортежем — для подписей, которые лежат в таблицах. */
+export type Said = [ru: string, uk: string, en: string, es?: string, de?: string, it?: string];
+
+export type Forms = {
+  en: [string, string];
+  ru: [string, string, string];
+  uk: [string, string, string];
+  es?: [string, string];
+  de?: [string, string];
+  it?: [string, string];
+};
 
 /** «63 работы»: число и слово в нужной форме. */
 export function amount(lang: Lang, n: number, f: Forms): string {
-  if (lang === 'en') return `${n} ${n === 1 ? f.en[0] : f.en[1]}`;
+  // Три формы слова — у русского и украинского; у остальных языков две, как у английского.
+  if (lang !== 'ru' && lang !== 'uk') {
+    const two = (lang === 'en' ? f.en : f[lang]) ?? f.en;
+    return `${n} ${n === 1 ? two[0] : two[1]}`;
+  }
   const forms = f[lang];
   const m10 = n % 10;
   const m100 = n % 100;
@@ -61,12 +83,12 @@ export function amount(lang: Lang, n: number, f: Forms): string {
   return `${n} ${forms[i]}`;
 }
 
-export const WORKS: Forms = { en: ['work', 'works'], ru: ['работа', 'работы', 'работ'], uk: ['робота', 'роботи', 'робіт'] };
-export const TALES: Forms = { en: ['tall tale', 'tall tales'], ru: ['небылица', 'небылицы', 'небылиц'], uk: ['небилиця', 'небилиці', 'небилиць'] };
-export const LEAVES: Forms = { en: ['gazette leaf', 'gazette leaves'], ru: ['лист вестника', 'листа вестника', 'листов вестника'], uk: ['аркуш вісника', 'аркуші вісника', 'аркушів вісника'] };
-export const CARDS: Forms = { en: ['card', 'cards'], ru: ['карта', 'карты', 'карт'], uk: ['карта', 'карти', 'карт'] };
-export const ETUDES: Forms = { en: ['study', 'studies'], ru: ['этюд', 'этюда', 'этюдов'], uk: ['етюд', 'етюди', 'етюдів'] };
-export const MINUTES: Forms = { en: ['minute', 'minutes'], ru: ['минута', 'минуты', 'минут'], uk: ['хвилина', 'хвилини', 'хвилин'] };
+export const WORKS: Forms = { en: ['work', 'works'], ru: ['работа', 'работы', 'работ'], uk: ['робота', 'роботи', 'робіт'], es: ['obra', 'obras'], de: ['Werk', 'Werke'], it: ['opera', 'opere'] };
+export const TALES: Forms = { en: ['tall tale', 'tall tales'], ru: ['небылица', 'небылицы', 'небылиц'], uk: ['небилиця', 'небилиці', 'небилиць'], es: ['cuento', 'cuentos'], de: ['Geschichte', 'Geschichten'], it: ['racconto', 'racconti'] };
+export const LEAVES: Forms = { en: ['gazette leaf', 'gazette leaves'], ru: ['лист вестника', 'листа вестника', 'листов вестника'], uk: ['аркуш вісника', 'аркуші вісника', 'аркушів вісника'], es: ['hoja de la Gaceta', 'hojas de la Gaceta'], de: ['Blatt der Zeitung', 'Blätter der Zeitung'], it: ['foglio della Gazzetta', 'fogli della Gazzetta'] };
+export const CARDS: Forms = { en: ['card', 'cards'], ru: ['карта', 'карты', 'карт'], uk: ['карта', 'карти', 'карт'], es: ['carta', 'cartas'], de: ['Karte', 'Karten'], it: ['carta', 'carte'] };
+export const ETUDES: Forms = { en: ['study', 'studies'], ru: ['этюд', 'этюда', 'этюдов'], uk: ['етюд', 'етюди', 'етюдів'], es: ['étude', 'études'], de: ['Etüde', 'Etüden'], it: ['étude', 'étude'] };
+export const MINUTES: Forms = { en: ['minute', 'minutes'], ru: ['минута', 'минуты', 'минут'], uk: ['хвилина', 'хвилини', 'хвилин'], es: ['minuto', 'minutos'], de: ['Minute', 'Minuten'], it: ['minuto', 'minuti'] };
 
 export const n_works = (lang: Lang, n: number) => amount(lang, n, WORKS);
 export const n_tales = (lang: Lang, n: number) => amount(lang, n, TALES);
@@ -75,15 +97,16 @@ export const n_cards = (lang: Lang, n: number) => amount(lang, n, CARDS);
 export const n_etudes = (lang: Lang, n: number) => amount(lang, n, ETUDES);
 export const n_minutes = (lang: Lang, n: number) => amount(lang, n, MINUTES);
 
-export const short_min = (lang: Lang, n: number) => `${n} ${say(lang, 'мин', 'хв', 'min')}`;
+export const short_min = (lang: Lang, n: number) => `${n} ${say(lang, 'мин', 'хв', 'min', 'min', 'Min.', 'min')}`;
 
 export function joinList(lang: Lang, items: string[]): string {
   if (items.length <= 1) return items[0] ?? '';
-  const and = say(lang, ' и ', ' і ', ' and ');
+  const and = say(lang, ' и ', ' і ', ' and ', ' y ', ' und ', ' e ');
   return `${items.slice(0, -1).join(', ')}${and}${items[items.length - 1]}`;
 }
 
-export const quote = (s: string) => `«${s}»`;
+/** Кавычки языка читателя: ответ собирается на его языке. */
+export const quote = (s: string) => quoteIn(get(langStore), s);
 
 // ── Данные ─────────────────────────────────────────────────────────────────
 
@@ -93,6 +116,7 @@ export const leafTitle = (l: GazetteLeaf, lang: Lang) => leafCopy(l, lang).title
 export function etudeTitle(e: BattleChallenge, lang: Lang): string {
   if (lang === 'ru') return e.titleRu || e.titleEn;
   if (lang === 'uk') return e.titleUk || e.titleRu || e.titleEn;
+  if (lang !== 'en') return localized(e, 'title', lang);
   return e.titleEn || e.titleRu;
 }
 
@@ -110,7 +134,7 @@ export function workLink(w: FigurineListItem, lang: Lang, hint?: string): AskLin
   return {
     kind: 'work',
     label: workName(w),
-    hint: hint ?? say(lang, 'работа', 'робота', 'work'),
+    hint: hint ?? say(lang, 'работа', 'робота', 'work', 'obra', 'Werk', 'opera'),
     href: figurineHref(w, SRC),
     image: w.thumbUrl ?? w.faceImageUrl,
   };
@@ -119,7 +143,7 @@ export function workLink(w: FigurineListItem, lang: Lang, hint?: string): AskLin
 export function taleLink(l: GazetteLeaf, lang: Lang): AskLink {
   const own = leafCopy(l, lang);
   const min = readingMinutes(own.body);
-  const word = say(lang, 'небылица', 'небилиця', 'tall tale');
+  const word = say(lang, 'небылица', 'небилиця', 'tall tale', 'cuento', 'Geschichte', 'racconto');
   return {
     kind: 'tale',
     label: own.title,
@@ -129,17 +153,17 @@ export function taleLink(l: GazetteLeaf, lang: Lang): AskLink {
 }
 
 export function leafLink(l: GazetteLeaf, lang: Lang): AskLink {
-  return { kind: 'leaf', label: leafTitle(l, lang), hint: say(lang, 'вестник', 'вісник', 'gazette'), href: leafHref(l, SRC) };
+  return { kind: 'leaf', label: leafTitle(l, lang), hint: say(lang, 'вестник', 'вісник', 'gazette', 'Gaceta', 'Zeitung', 'Gazzetta'), href: leafHref(l, SRC) };
 }
 
 export function cardLink(c: BattleCard, lang: Lang): AskLink {
   const race = cardRace(c, lang);
-  const word = say(lang, 'карта', 'карта', 'card');
+  const word = say(lang, 'карта', 'карта', 'card', 'carta', 'Karte', 'carta');
   return { kind: 'card', label: cardTitle(c, lang), hint: race ? `${word} · ${race}` : word, href: cardHref(c) };
 }
 
 export function etudeLink(e: BattleChallenge, lang: Lang): AskLink {
-  return { kind: 'etude', label: etudeTitle(e, lang), hint: say(lang, 'этюд', 'етюд', 'study'), href: etudeHref(e) };
+  return { kind: 'etude', label: etudeTitle(e, lang), hint: say(lang, 'этюд', 'етюд', 'study', 'étude', 'Etüde', 'étude'), href: etudeHref(e) };
 }
 
 
@@ -151,31 +175,38 @@ export const FILLER = new Set([
   'що', 'яка', 'які', 'знайди', 'мені', 'є', 'чи', 'можна', 'розкажи', 'як', 'це', 'та', 'й', 'із', 'з', 'до',
   'show', 'me', 'find', 'what', 'is', 'are', 'there', 'any', 'a', 'an', 'the', 'some', 'about', 'for', 'i', 'want', 'to', 'can',
   'please', 'tell', 'of', 'in', 'on', 'with', 'and', 'do', 'you', 'have', 'how', 'where',
+  'qué', 'que', 'algo', 'algún', 'alguna', 'muéstrame', 'muestrame', 'enséñame', 'ensename', 'busca', 'buscar', 'quiero', 'me',
+  'hay', 'sobre', 'de', 'del', 'para', 'con', 'y', 'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'en', 'por', 'cómo',
+  'como', 'dónde', 'donde', 'puedo', 'dime', 'tienes', 'es', 'por favor',
+  'was', 'zeig', 'zeige', 'mir', 'finde', 'such', 'suche', 'gibt', 'etwas', 'über', 'für', 'mit', 'und', 'der', 'die', 'das',
+  'ein', 'eine', 'einen', 'ich', 'möchte', 'will', 'kann', 'wie', 'wo', 'bitte', 'von', 'im', 'zu', 'hast', 'du',
+  'cosa', 'che', 'qualcosa', 'mostrami', 'fammi', 'vedere', 'trova', 'cerca', 'voglio', 'mi', 'c’è', 'sono', 'su', 'di',
+  'della', 'per', 'e', 'il', 'lo', 'gli', 'le', 'uno', 'dove', 'posso', 'dimmi', 'hai', 'ci', 'da', 'qual', 'quale', 'quali',
 ]);
 
 export function tokensOf(q: string): string[] {
-  return q.split(/[\s,.;:!?«»"“”()]+/).filter(Boolean);
+  return q.split(/[\s,.;:!?¿¡«»"“”„()]+/).filter(Boolean);
 }
 
 export const startsWithAny = (token: string, stems: string[]) => stems.some((s) => token.startsWith(s));
 
 // Названия материалов в данных английские; читателю называем по-своему.
-export const MATERIALS: Record<string, [string, string, string]> = {
-  'polymer clay': ['полимерная глина', 'полімерна глина', 'polymer clay'],
-  'acrylic paint': ['акриловые краски', 'акрилові фарби', 'acrylic paint'],
-  fabric: ['ткань', 'тканина', 'fabric'],
-  wool: ['шерсть', 'вовна', 'wool'],
-  varnish: ['лак', 'лак', 'varnish'],
-  wire: ['проволока', 'дріт', 'wire'],
-  lace: ['кружево', 'мереживо', 'lace'],
-  wood: ['дерево', 'дерево', 'wood'],
-  metal: ['металл', 'метал', 'metal'],
+export const MATERIALS: Record<string, [string, string, string, string, string, string]> = {
+  'polymer clay': ['полимерная глина', 'полімерна глина', 'polymer clay', 'arcilla polimérica', 'Polymerton', 'argilla polimerica'],
+  'acrylic paint': ['акриловые краски', 'акрилові фарби', 'acrylic paint', 'pintura acrílica', 'Acrylfarbe', 'colori acrilici'],
+  fabric: ['ткань', 'тканина', 'fabric', 'tela', 'Stoff', 'tessuto'],
+  wool: ['шерсть', 'вовна', 'wool', 'lana', 'Wolle', 'lana'],
+  varnish: ['лак', 'лак', 'varnish', 'barniz', 'Lack', 'vernice'],
+  wire: ['проволока', 'дріт', 'wire', 'alambre', 'Draht', 'filo metallico'],
+  lace: ['кружево', 'мереживо', 'lace', 'encaje', 'Spitze', 'pizzo'],
+  wood: ['дерево', 'дерево', 'wood', 'madera', 'Holz', 'legno'],
+  metal: ['металл', 'метал', 'metal', 'metal', 'Metall', 'metallo'],
 };
 
 export function materialsOf(index: AskIndex, lang: Lang): string[] {
   const counts = new Map<string, number>();
   for (const w of index.works) {
-    for (const raw of (w.material ?? '').split(',')) {
+    for (const raw of workBase(w, 'material').split(',')) {
       const key = raw.trim().toLowerCase();
       if (MATERIALS[key]) counts.set(key, (counts.get(key) ?? 0) + 1);
     }
@@ -183,14 +214,14 @@ export function materialsOf(index: AskIndex, lang: Lang): string[] {
   return [...counts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
-    .map(([k]) => say(lang, MATERIALS[k][0], MATERIALS[k][1], MATERIALS[k][2]));
+    .map(([k]) => say(lang, MATERIALS[k][0], MATERIALS[k][1], MATERIALS[k][2], MATERIALS[k][3], MATERIALS[k][4], MATERIALS[k][5]));
 }
 
 /** Рост фигурок из строк «Approx. 10-10.5 cm tall»: только если примеров хватает. */
 export function heightsOf(index: AskIndex): [number, number] | null {
   const values: number[] = [];
   for (const w of index.works) {
-    const m = (w.dimensions ?? '').match(/(\d+(?:[.,]\d+)?)(?:\s*[-–]\s*(\d+(?:[.,]\d+)?))?\s*(?:cm|см)/i);
+    const m = workBase(w, 'dimensions').match(/(\d+(?:[.,]\d+)?)(?:\s*[-–]\s*(\d+(?:[.,]\d+)?))?\s*(?:cm|см)/i);
     if (!m) continue;
     values.push(Number(m[1].replace(',', '.')));
     if (m[2]) values.push(Number(m[2].replace(',', '.')));

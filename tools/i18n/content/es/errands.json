@@ -1,0 +1,72 @@
+{
+  "kind": "errands",
+  "lang": "es",
+  "where": "UPDATE battle_errands SET title_es, note_es WHERE slug = <key> (textos sembrados por migraciones; fuente ru en 20260907/08/09/11, uk en 20261015000000_ukrainian.sql)",
+  "items": [
+    {
+      "key": "came-by",
+      "title": "Entrar en el juego",
+      "note": "Por haberte pasado hoy. Si te saltas un día, no pierdes nada."
+    },
+    {
+      "key": "look-around",
+      "title": "Ver obras",
+      "note": "Abre cinco obras del archivo."
+    },
+    {
+      "key": "closer-look",
+      "title": "Marcar una obra que te guste",
+      "note": "Marca con un corazón una obra que te haya gustado."
+    },
+    {
+      "key": "read-a-tale",
+      "title": "Leer un cuento",
+      "note": "Lee un cuento hasta el final."
+    },
+    {
+      "key": "leave-impression",
+      "title": "Dejar una opinión sobre una obra",
+      "note": "Escribe qué piensas de una obra. Cuenta cuando la autora la apruebe."
+    },
+    {
+      "key": "first-card",
+      "title": "Conseguir la primera carta",
+      "note": "Cualquier carta del estante."
+    },
+    {
+      "key": "lay-the-table",
+      "title": "Montar un mazo",
+      "note": "Seis cartas: tres en el campo, tres en la mano."
+    },
+    {
+      "key": "finish-a-study",
+      "title": "Jugar una batalla hasta el final",
+      "note": "Gana o pierdas, lo importante es terminarla."
+    },
+    {
+      "key": "raise-a-card",
+      "title": "Subir de nivel una carta",
+      "note": "El nivel no influye en la batalla: indica que la carta es tuya desde hace tiempo."
+    },
+    {
+      "key": "three-cards",
+      "title": "Reunir tres cartas",
+      "note": "Tres propias, no prestadas."
+    },
+    {
+      "key": "an-impression",
+      "title": "Dejar una opinión que guste a la autora",
+      "note": "La recompensa la da la autora si lo considera oportuno."
+    },
+    {
+      "key": "a-showing",
+      "title": "Ir a una visita",
+      "note": "Una visita que se haya celebrado."
+    },
+    {
+      "key": "a-commission",
+      "title": "Encargar una obra",
+      "note": "La recompensa más rara y la más grande."
+    }
+  ]
+}

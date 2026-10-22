@@ -4,11 +4,13 @@
   //
   // Родной `<dialog>` с `showModal()`: он встаёт над всей страницей и не зависит
   // от шапки, которая размывает фон и держит свой `position: fixed`.
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { afterNavigate } from '$app/navigation';
   import { page } from '$app/state';
   import { hasPageContext } from '$lib/site-ask-page';
-  import { t } from '$lib/i18n';
+  import { t, lang } from '$lib/i18n';
+  import { interact } from '$lib/analytics';
+  import { voiceSupported, startVoice, type Voice } from '$lib/voiceInput';
   import { siteAsk, QUESTION_MAX } from '$lib/stores/site-ask.svelte';
   import { siteAskUi } from '$lib/stores/site-ask-ui.svelte';
   import SiteAskAnswer from '$lib/components/SiteAskAnswer.svelte';
@@ -18,16 +20,70 @@
   let log = $state<HTMLElement | null>(null);
   let text = $state('');
 
+  // ── Голос ────────────────────────────────────────────────────────────────
+  let canVoice = $state(false);
+  let listening = $state(false);
+  let voiceNote = $state('');
+  let voice: Voice | null = null;
+  let heard = '';
+  let noteTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onMount(() => {
+    canVoice = voiceSupported();
+    return () => {
+      voice?.stop();
+      clearTimeout(noteTimer);
+    };
+  });
+
+  function note(key: 'askVoiceDenied' | 'askVoiceFailed' | 'askVoiceSilence') {
+    voiceNote = $t(key);
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => (voiceNote = ''), 5000);
+  }
+
+  function toggleVoice() {
+    if (listening) {
+      voice?.stop();
+      return;
+    }
+    voiceNote = '';
+    heard = '';
+    interact('site_ask_voice', 'start');
+    voice = startVoice($lang, {
+      onText: (spoken, final) => {
+        text = spoken;
+        if (final) heard = spoken;
+      },
+      onEnd: () => {
+        listening = false;
+        voice = null;
+        // Фраза дослушана — вопрос уходит сам: ради этого голос и включали.
+        // Остановили вручную раньше — набранное остаётся в поле, его можно поправить.
+        if (heard) {
+          const q = heard;
+          heard = '';
+          text = '';
+          void siteAsk.ask(q, 'voice');
+        }
+      },
+      onError: (e) => note(e === 'denied' ? 'askVoiceDenied' : e === 'silence' ? 'askVoiceSilence' : 'askVoiceFailed'),
+    });
+    listening = !!voice;
+    if (listening) text = '';
+  }
+
   const onPage = $derived(hasPageContext({ path: page.url.pathname, card: page.url.searchParams.get('card') }));
   const chips = $derived([
     ...(onPage ? [$t('askChipPage')] : []),
-    ...(['askChipSummary', 'askChipCount', 'askChipNew', 'askChipTale', 'askChipStart', 'askChipPlay', 'askChipOrder', 'askChipWitch'] as const).map(
+    ...(['askChipSummary', 'askChipMatch', 'askChipCount', 'askChipNew', 'askChipTale', 'askChipStart', 'askChipPlay', 'askChipOrder', 'askChipWitch'] as const).map(
       (key) => $t(key),
     ),
   ]);
 
   $effect(() => {
     if (!dialog) return;
+    if (!siteAskUi.open) voice?.stop();
     if (siteAskUi.open && !dialog.open) {
       dialog.showModal();
       void tick().then(() => input?.focus());
@@ -111,6 +167,7 @@
           <button type="button" class="chip" onclick={() => pickChip(c)}>{c}</button>
         {/each}
       </div>
+      {#if voiceNote}<p class="voice-note" role="status">{voiceNote}</p>{/if}
       <form class="form" onsubmit={submit}>
         <input
           bind:this={input}
@@ -118,11 +175,27 @@
           type="text"
           class="input"
           maxlength={QUESTION_MAX}
-          placeholder={$t('askPlaceholder')}
+          placeholder={listening ? $t('askVoiceListening') : $t('askPlaceholder')}
           aria-label={$t('askPlaceholder')}
           autocomplete="off"
           enterkeyhint="send"
         />
+        {#if canVoice}
+          <button
+            type="button"
+            class="mic"
+            class:on={listening}
+            aria-pressed={listening}
+            aria-label={$t('askVoice')}
+            title={$t('askVoiceTip')}
+            onclick={toggleVoice}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="12" rx="3" fill="currentColor" />
+              <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        {/if}
         <button type="submit" class="send" disabled={!text.trim()}>{$t('askSend')}</button>
       </form>
     </div>
@@ -334,6 +407,42 @@
   .send:hover:not(:disabled) {
     background: var(--ak-ember);
   }
+  .mic {
+    flex: none;
+    width: 42px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--ak-rule);
+    background: none;
+    color: var(--ak-ink-2);
+    cursor: pointer;
+    transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  }
+  .mic:hover {
+    color: var(--ak-ember-deep);
+    border-color: var(--ak-ember);
+  }
+  .mic.on {
+    color: #fbf7ef;
+    background: var(--ak-ember-deep);
+    border-color: var(--ak-ember-deep);
+    animation: listen 1.4s ease-in-out infinite;
+  }
+  @keyframes listen {
+    50% {
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--ak-ember) 25%, transparent);
+    }
+  }
+  .mic:focus-visible {
+    outline: 2px solid rgba(180, 78, 36, 0.6);
+    outline-offset: 2px;
+  }
+  .voice-note {
+    margin: 0 0 8px;
+    font-family: var(--font-ui, Inter, system-ui, sans-serif);
+    font-size: 12.5px;
+    color: var(--ak-ember-deep);
+  }
   .send:disabled {
     opacity: 0.45;
     cursor: default;
@@ -371,7 +480,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     .ask[open],
-    .ask[open]::backdrop {
+    .ask[open]::backdrop,
+    .mic.on {
       animation: none;
     }
   }

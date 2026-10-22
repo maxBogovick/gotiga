@@ -7,7 +7,8 @@
   import { visitorBook } from '$lib/stores/visitor-book.svelte';
   import { visitorToken } from '$lib/visitorToken';
   import { knownReaderEmail } from '$lib/readerEmail';
-  import type { TalePoll } from '$lib/types/api';
+  import type { FigurineListItem, TalePoll, TalePollWork } from '$lib/types/api';
+  import { workName } from '$lib/workText';
   import AppImage from './AppImage.svelte';
   import LetterSlip from './LetterSlip.svelte';
 
@@ -33,6 +34,20 @@
   } = $props();
 
   let poll = $state<TalePoll | null>(null);
+
+  // Кандидаты приходят с английским названием; переводы есть в общем списке
+  // работ, и он читается только тогда, когда язык читателя не английский.
+  let works = $state.raw<Map<string, FigurineListItem> | null>(null);
+  $effect(() => {
+    if ($lang === 'en' || works || !poll) return;
+    api.getAllFigurines()
+      .then((all) => (works = new Map(all.map((f) => [f.id, f]))))
+      .catch(() => {});
+  });
+  const nameOf = (w: TalePollWork) => {
+    const f = works?.get(w.figurineId);
+    return (f && workName(f, $lang)) || w.name;
+  };
   let busy = $state(false);
   let error = $state('');
   let slipOpen = $state(false);
@@ -164,7 +179,7 @@
                   <AppImage src={work.imageUrl} alt="" class="arch-img" sizes="160px" />
                 {/if}
               </span>
-              <span class="name">{work.name}</span>
+              <span class="name">{nameOf(work)}</span>
               <span class="mark" aria-hidden={!mine}>{mine ? $t('talesPollMine') : ''}</span>
             </button>
           </li>
@@ -187,7 +202,7 @@
             <AppImage src={winner.imageUrl} alt="" class="arch-img" sizes="72px" />
           {/if}
         </span>
-        <p class="chosen-line">{$t('talesPollChosen').replace('{name}', winner.name)}</p>
+        <p class="chosen-line">{$t('talesPollChosen').replace('{name}', nameOf(winner))}</p>
       </div>
       {#if poll.myChoice}
         {@render letterAsk()}

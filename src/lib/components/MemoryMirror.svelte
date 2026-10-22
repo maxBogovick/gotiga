@@ -257,7 +257,7 @@
 
     <!-- ── STEP FILMSTRIP ──────────────────────────────────────────────────── -->
     {#if steps.length > 1}
-      <nav class="mirror-filmstrip" aria-label="Steps">
+      <nav class="mirror-filmstrip" aria-label={$t('mirrorSteps')}>
         {#each steps as step, i}
           <button
             class="film-frame {i === currentStepIndex ? 'film-frame--active' : ''}"

@@ -41,6 +41,7 @@
 </script>
 
 <script lang="ts">
+  import { locale } from '$lib/i18n';
   export type GeoPoint = { key: string; views: number; uniqueVisitors: number };
 
   import { onDestroy } from 'svelte';
@@ -69,7 +70,7 @@
   let totalViews = $derived(data.reduce((sum, d) => sum + d.views, 0));
   let unknownViews = $derived(data.find((d) => d.key === 'unknown')?.views ?? 0);
 
-  const nf = new Intl.NumberFormat('en-US');
+  let nf = $derived(new Intl.NumberFormat($locale));
 
   /** Log-scaled bucket, not linear: visit counts across countries on a small
    * site are heavily skewed (one or two dominant countries, a long tail of

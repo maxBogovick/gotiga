@@ -16,9 +16,10 @@
   import { sketchUrlsFromWork } from '$lib/gazette';
   import { generatePinterestDescription } from '$lib/pinterest-description';
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
-  import type { Figurine, FigurineListItem, GazetteLeaf, GazetteSeed, ShowingRoom } from '$lib/types/api';
+  import type { Figurine, FigurineImage, FigurineListItem, GazetteLeaf, GazetteSeed, ShowingRoom, WorkLang } from '$lib/types/api';
+  import type { WorkTextField } from '$lib/workText';
   import { fade, slide } from 'svelte/transition';
-  import { t } from '$lib/i18n';
+  import { t, lang, localizedBase } from '$lib/i18n';
   import { themeConfig } from '$lib/stores/theme.svelte';
   import { resolveWindow, isShowingOpen, minutesToClock, clockToMinutes } from '$lib/showing-window';
   import KeyholeVeil from '$lib/components/KeyholeVeil.svelte';
@@ -72,6 +73,46 @@
     activeFormTab = askTab;
     askTab = null;
   });
+
+  // ── Язык текстов ────────────────────────────────────────────────────────
+  // EN — поля самой работы; остальные языки лежат в `figurine.translations` и
+  // уходят тем же сохранением. Пустое поле на сайте заменяется английским.
+  type TextLang = 'en' | WorkLang;
+  const TEXT_LANGS: TextLang[] = ['en', 'ru', 'uk', 'es', 'de', 'it'];
+  let textLang = $state<TextLang>('en');
+
+  function fieldGet(f: WorkTextField): string {
+    if (textLang === 'en') return (figurine[f] as string | null | undefined) ?? '';
+    return figurine.translations?.[textLang]?.[f] ?? '';
+  }
+  function fieldSet(f: WorkTextField, v: string) {
+    if (textLang === 'en') {
+      (figurine as unknown as Record<string, unknown>)[f] = v;
+      return;
+    }
+    const all = { ...(figurine.translations ?? {}) };
+    all[textLang] = { ...(all[textLang] ?? {}), [f]: v };
+    figurine.translations = all;
+  }
+  /** В чужом языке подсказкой стоит английский текст поля. */
+  function fieldHint(f: WorkTextField, fallback = ''): string {
+    if (textLang === 'en') return fallback;
+    return ((figurine[f] as string | null | undefined) ?? '').trim() || fallback;
+  }
+  function langFilled(l: TextLang): boolean {
+    if (l === 'en') return true;
+    const tr = figurine.translations?.[l];
+    const anyAlt = (figurine.images ?? []).some((img) => img.altTranslations?.[l]?.trim());
+    return Boolean(tr && Object.values(tr).some((v) => typeof v === 'string' && v.trim())) || anyAlt;
+  }
+  function altGet(img: FigurineImage): string {
+    if (textLang === 'en') return img.altText ?? '';
+    return img.altTranslations?.[textLang] ?? '';
+  }
+  function altSet(img: FigurineImage, v: string) {
+    if (textLang === 'en') { img.altText = v; return; }
+    img.altTranslations = { ...(img.altTranslations ?? {}), [textLang]: v };
+  }
 
   // Помощник: что у этой работы не доделано — по сохранённому (сервер).
   let gaps = $derived(adminReadiness.work(figurine.id));
@@ -707,9 +748,9 @@
 
     <!-- Name -->
     <input
-        bind:value={figurine.name}
+        bind:value={() => fieldGet('name'), (v) => fieldSet('name', v)}
         class="flex-1 min-w-0 bg-transparent border-0 border-b border-[#34251c]/20 focus:border-[#c65f3c]/50 outline-none text-sm font-bold text-[#34251c] px-1 py-0.5 transition-colors"
-        placeholder={$t('adminFieldName')} />
+        placeholder={fieldHint('name', $t('adminFieldName'))} />
 
     <!-- Status -->
     <select bind:value={figurine.status}
@@ -768,6 +809,17 @@
                     : 'border-transparent text-[#5f4636] hover:text-[#34251c]'}"
         >{tab[1]}</button>
     {/each}
+    <div class="ml-auto flex items-center gap-1 pr-2" role="group" aria-label={$t('adminFormTextLang')} title={$t('adminFormTextLangHint')}>
+        <span class="text-[9px] uppercase tracking-wide text-[#5f4636]/70 mr-1">{$t('adminFormTextLang')}</span>
+        {#each TEXT_LANGS as l (l)}
+            <button type="button"
+                onclick={() => (textLang = l)}
+                aria-pressed={textLang === l}
+                class="relative px-1.5 py-1 text-[10px] tracking-wide border transition-colors
+                    {textLang === l ? 'border-[#c65f3c] text-[#34251c] bg-[#f2e8da]' : 'border-transparent text-[#5f4636] hover:text-[#34251c]'}"
+            >{l.toUpperCase()}{#if l !== 'en' && langFilled(l)}<span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-700" title={$t('adminFormTextLangFilled')}></span>{/if}</button>
+        {/each}
+    </div>
 </div>
 
 <!-- ── ПОМОЩНИК: что не доделано (по сохранённому) ────────── -->
@@ -914,7 +966,7 @@
                                         {$t('adminMediaAltAuto')}
                                     </button>
                                 </div>
-                                <input bind:value={img.altText} type="text" class="input-gothic text-xs" />
+                                <input bind:value={() => altGet(img), (v) => altSet(img, v)} type="text" class="input-gothic text-xs" placeholder={textLang === 'en' ? '' : (img.altText ?? '')} />
                                 <div class="flex items-center justify-between mt-1">
                                     <span class="text-[9px] text-[#5f4636]/70 leading-snug">{$t('adminMediaAltFormulaHint')}</span>
                                     <span class="text-[9px] shrink-0 ml-2 {altTextLen(img.altText) === 0 ? 'text-[#5f4636]/50' : altTextLen(img.altText) < 50 || altTextLen(img.altText) > 125 ? 'text-[#c65f3c]' : 'text-emerald-700'}">
@@ -1066,17 +1118,17 @@
 
         <label class="block">
             <span class="label">{$t('adminFieldQuote')}</span>
-            <textarea bind:value={figurine.shortText} class="input-gothic h-24"></textarea>
+            <textarea bind:value={() => fieldGet('shortText'), (v) => fieldSet('shortText', v)} placeholder={fieldHint('shortText')} class="input-gothic h-24"></textarea>
         </label>
 
         <label class="block">
             <span class="label">{$t('adminFieldHistory')}</span>
-            <textarea bind:value={figurine.fullDescription} class="input-gothic h-56"></textarea>
+            <textarea bind:value={() => fieldGet('fullDescription'), (v) => fieldSet('fullDescription', v)} placeholder={fieldHint('fullDescription')} class="input-gothic h-56"></textarea>
         </label>
 
         <label class="block opacity-70">
             <span class="label">{$t('adminFieldSecret')}</span>
-            <textarea bind:value={figurine.secretText} class="input-gothic h-20"></textarea>
+            <textarea bind:value={() => fieldGet('secretText'), (v) => fieldSet('secretText', v)} placeholder={fieldHint('secretText')} class="input-gothic h-20"></textarea>
         </label>
 
         <div class="block border-t border-[#34251c]/10 pt-6">
@@ -1177,7 +1229,7 @@
             </label>
             <label class="block">
                 <span class="label">{$t('adminFieldSeries')}</span>
-                <input bind:value={figurine.series} class="input-gothic" placeholder="—" />
+                <input bind:value={() => fieldGet('series'), (v) => fieldSet('series', v)} class="input-gothic" placeholder="—" />
             </label>
             <label class="block">
                 <span class="label">{$t('adminFieldSortOrder')}</span>
@@ -1197,7 +1249,7 @@
 
         <label class="block">
             <span class="label">{$t('adminFieldMaterial')}</span>
-            <input bind:value={figurine.material} class="input-gothic" list="suggest-material" autocomplete="off" />
+            <input bind:value={() => fieldGet('material'), (v) => fieldSet('material', v)} placeholder={fieldHint('material')} class="input-gothic" list="suggest-material" autocomplete="off" />
             <datalist id="suggest-material">
                 {#each materialSuggestions as s}<option value={s}></option>{/each}
             </datalist>
@@ -1205,7 +1257,7 @@
 
         <label class="block">
             <span class="label">{$t('adminFieldTechnique')}</span>
-            <input bind:value={figurine.technique} class="input-gothic" list="suggest-technique" autocomplete="off" />
+            <input bind:value={() => fieldGet('technique'), (v) => fieldSet('technique', v)} placeholder={fieldHint('technique')} class="input-gothic" list="suggest-technique" autocomplete="off" />
             <datalist id="suggest-technique">
                 {#each techniqueSuggestions as s}<option value={s}></option>{/each}
             </datalist>
@@ -1213,7 +1265,7 @@
 
         <label class="block">
             <span class="label">{$t('adminFieldDimensions')}</span>
-            <input bind:value={figurine.dimensions} class="input-gothic" placeholder="20×15×10 cm" list="suggest-dimensions" autocomplete="off" />
+            <input bind:value={() => fieldGet('dimensions'), (v) => fieldSet('dimensions', v)} class="input-gothic" placeholder="20×15×10 cm" list="suggest-dimensions" autocomplete="off" />
             <datalist id="suggest-dimensions">
                 {#each dimensionsSuggestions as s}<option value={s}></option>{/each}
             </datalist>
@@ -1233,30 +1285,30 @@
             </label>
             <label class="block">
                 <span class="label">{$t('passportEdition')}</span>
-                <input bind:value={figurine.edition} class="input-gothic" placeholder="1 of 1" />
+                <input bind:value={() => fieldGet('edition'), (v) => fieldSet('edition', v)} class="input-gothic" placeholder="1 of 1" />
             </label>
             <label class="block">
                 <span class="label">{$t('passportCreated')}</span>
-                <input bind:value={figurine.createdPeriod} class="input-gothic" placeholder="Spring 2026" />
+                <input bind:value={() => fieldGet('createdPeriod'), (v) => fieldSet('createdPeriod', v)} class="input-gothic" placeholder="Spring 2026" />
             </label>
         </div>
 
         <div class="grid grid-cols-2 gap-5">
             <label class="block">
                 <span class="label">{$t('passportProvenance')}</span>
-                <textarea bind:value={figurine.provenanceNote} class="input-gothic h-28"></textarea>
+                <textarea bind:value={() => fieldGet('provenanceNote'), (v) => fieldSet('provenanceNote', v)} placeholder={fieldHint('provenanceNote')} class="input-gothic h-28"></textarea>
             </label>
             <label class="block">
                 <span class="label">{$t('passportAuthenticity')}</span>
-                <textarea bind:value={figurine.authenticityNote} class="input-gothic h-28"></textarea>
+                <textarea bind:value={() => fieldGet('authenticityNote'), (v) => fieldSet('authenticityNote', v)} placeholder={fieldHint('authenticityNote')} class="input-gothic h-28"></textarea>
             </label>
             <label class="block">
                 <span class="label">{$t('passportCare')}</span>
-                <textarea bind:value={figurine.careInstructions} class="input-gothic h-28"></textarea>
+                <textarea bind:value={() => fieldGet('careInstructions'), (v) => fieldSet('careInstructions', v)} placeholder={fieldHint('careInstructions')} class="input-gothic h-28"></textarea>
             </label>
             <label class="block">
                 <span class="label">{$t('passportIncluded')}</span>
-                <textarea bind:value={figurine.includedItems} class="input-gothic h-28"></textarea>
+                <textarea bind:value={() => fieldGet('includedItems'), (v) => fieldSet('includedItems', v)} placeholder={fieldHint('includedItems')} class="input-gothic h-28"></textarea>
             </label>
         </div>
     </div>
@@ -1302,7 +1354,7 @@
                 <option value="custom">{$t('adminShowingModeCustom')}</option>
                 {#each showingRooms as room (room.id)}
                     {#if room.name}
-                        <option value={room.id}>{room.name} ({minutesToClock(room.openFromMin)}–{minutesToClock(room.openUntilMin)})</option>
+                        <option value={room.id}>{localizedBase(room, 'name', $lang)} ({minutesToClock(room.openFromMin)}–{minutesToClock(room.openUntilMin)})</option>
                     {/if}
                 {/each}
             </select>

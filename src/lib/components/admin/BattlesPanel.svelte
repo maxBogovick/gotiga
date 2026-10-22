@@ -18,6 +18,7 @@
     t,
     lang,
     LANGS,
+    countForm,
     LANG_META,
     localized,
     pick,
@@ -208,9 +209,9 @@
   /** Which language the on-card fields read and write. The card shows one
    *  language at a time, same as a reader would see it. */
   let editLang = $state<Lang>($lang ?? "ru");
-  const capOf = (l: Lang) => (l === "ru" ? "Ru" : l === "uk" ? "Uk" : "En");
+  const capOf = (l: Lang) => l[0].toUpperCase() + l.slice(1);
   /** One language's text of a field of a card or of one of its traits:
-   *  `said(draft, "title")` is `draft.titleEn`, `titleRu` or `titleUk`. */
+   *  `said(draft, "title")` is `draft.titleEn`, `titleRu`, `titleUk`, `titleEs`… */
   function said(rec: object, stem: string, l: Lang = editLang): string {
     return (
       (rec as Record<string, string | null | undefined>)[stem + capOf(l)] ?? ""
@@ -285,16 +286,28 @@
   let keywordNameEn = $state("");
   let keywordNameRu = $state("");
   let keywordNameUk = $state("");
+  let keywordNameEs = $state("");
+  let keywordNameDe = $state("");
+  let keywordNameIt = $state("");
   let keywordRulesEn = $state("");
   let keywordRulesRu = $state("");
   let keywordRulesUk = $state("");
+  let keywordRulesEs = $state("");
+  let keywordRulesDe = $state("");
+  let keywordRulesIt = $state("");
   let keywordPoints = $state<number | null>(null);
   let raceNameEn = $state("");
   let raceNameRu = $state("");
   let raceNameUk = $state("");
+  let raceNameEs = $state("");
+  let raceNameDe = $state("");
+  let raceNameIt = $state("");
   let raceNoteEn = $state("");
   let raceNoteRu = $state("");
   let raceNoteUk = $state("");
+  let raceNoteEs = $state("");
+  let raceNoteDe = $state("");
+  let raceNoteIt = $state("");
   let raceIconUrl = $state("");
   /** Движения расы. Стоят между картой и домом: все лучники расы стреляют её
    *  стрелой, пока отдельная карта не скажет иначе. */
@@ -613,9 +626,15 @@
   let etudeId = $state<string | null>(null);
   let etudeTitleRu = $state("");
   let etudeTitleUk = $state("");
+  let etudeTitleEs = $state("");
+  let etudeTitleDe = $state("");
+  let etudeTitleIt = $state("");
   let etudeTitleEn = $state("");
   let etudeNoteRu = $state("");
   let etudeNoteUk = $state("");
+  let etudeNoteEs = $state("");
+  let etudeNoteDe = $state("");
+  let etudeNoteIt = $state("");
   let etudeNoteEn = $state("");
   /** Рука хранителя. Сложность — это она и только она: бот, которому дали
    *  лишнюю ману, ломает и честность, и всякую возможность измерить силу
@@ -715,9 +734,15 @@
     etudeId = challenge?.id ?? null;
     etudeTitleRu = challenge?.titleRu ?? "";
     etudeTitleUk = challenge?.titleUk ?? "";
+    etudeTitleEs = challenge?.titleEs ?? "";
+    etudeTitleDe = challenge?.titleDe ?? "";
+    etudeTitleIt = challenge?.titleIt ?? "";
     etudeTitleEn = challenge?.titleEn ?? "";
     etudeNoteRu = challenge?.noteRu ?? "";
     etudeNoteUk = challenge?.noteUk ?? "";
+    etudeNoteEs = challenge?.noteEs ?? "";
+    etudeNoteDe = challenge?.noteDe ?? "";
+    etudeNoteIt = challenge?.noteIt ?? "";
     etudeNoteEn = challenge?.noteEn ?? "";
     etudeDepth = challenge?.botDepth ?? 1;
     etudeReward = challenge?.rewardDust ?? 0;
@@ -774,9 +799,15 @@
       titleEn: etudeTitleEn.trim(),
       titleRu: etudeTitleRu.trim(),
       titleUk: etudeTitleUk.trim(),
+      titleEs: etudeTitleEs.trim(),
+      titleDe: etudeTitleDe.trim(),
+      titleIt: etudeTitleIt.trim(),
       noteEn: etudeNoteEn.trim() || null,
       noteRu: etudeNoteRu.trim() || null,
       noteUk: etudeNoteUk.trim() || null,
+      noteEs: etudeNoteEs.trim() || null,
+      noteDe: etudeNoteDe.trim() || null,
+      noteIt: etudeNoteIt.trim() || null,
       setup: benchSetup,
       botDepth: etudeDepth,
       rewardDust: etudeReward,
@@ -1132,7 +1163,7 @@
         (!listRace ||
           (listRace === "none" ? !c.raceId : c.raceId === listRace)) &&
         (!listQuery.trim() ||
-          `${c.titleRu} ${c.titleEn} ${c.titleUk ?? ""} ${c.figurineName ?? ""}`
+          `${c.titleRu} ${c.titleEn} ${c.titleUk ?? ""} ${c.titleEs ?? ""} ${c.titleDe ?? ""} ${c.titleIt ?? ""} ${c.figurineName ?? ""}`
             .toLowerCase()
             .includes(listQuery.trim().toLowerCase())),
     ),
@@ -1219,8 +1250,14 @@
             titleEn: "The Keeper of the Key",
             titleRu: "Хранительница Ключа",
             titleUk: "Охоронниця Ключа",
+            titleEs: "La Guardiana de la Llave",
+            titleDe: "Die Hüterin des Schlüssels",
+            titleIt: "La Custode della Chiave",
             effectUk:
               "Вир Душі: кожне третє закляття створює копію ефекту.",
+            effectEs: "Torbellino del Alma: cada tercer hechizo crea una copia de su efecto.",
+            effectDe: "Seelenwirbel: Jeder dritte Zauber erzeugt eine Kopie seiner Wirkung.",
+            effectIt: "Vortice dell’Anima: ogni terzo incantesimo crea una copia del suo effetto.",
             effectRu:
               "Вихрь Души: каждое третье заклинание создаёт копию эффекта.",
             effectEn:
@@ -1269,12 +1306,21 @@
     titleEn: "The Keeper of the Key",
     titleRu: "Хранительница Ключа",
     titleUk: "Охоронниця Ключа",
+    titleEs: "La Guardiana de la Llave",
+    titleDe: "Die Hüterin des Schlüssels",
+    titleIt: "La Custode della Chiave",
     effectEn: "A sample card, to see the icon in place.",
     effectRu: "Пример карты — чтобы увидеть иконку на месте.",
     effectUk: "Приклад карти — щоб побачити іконку на місці.",
+    effectEs: "Carta de ejemplo, para ver el icono en su sitio.",
+    effectDe: "Beispielkarte, um das Symbol an seinem Platz zu sehen.",
+    effectIt: "Carta di esempio, per vedere l’icona al suo posto.",
     raceNameEn: raceNameEn || raceNameRu ? raceNameEn || raceNameRu : null,
     raceNameRu: raceNameRu || raceNameEn ? raceNameRu || raceNameEn : null,
     raceNameUk: raceNameUk || null,
+    raceNameEs: raceNameEs || null,
+    raceNameDe: raceNameDe || null,
+    raceNameIt: raceNameIt || null,
     raceIconUrl: raceIconUrl.trim() || null,
     raceLevelFrames: raceLevelFrames.some((f) => f)
       ? JSON.stringify(raceLevelFrames)
@@ -1814,9 +1860,15 @@
     keywordNameEn = keyword?.nameEn ?? "";
     keywordNameRu = keyword?.nameRu ?? "";
     keywordNameUk = keyword?.nameUk ?? "";
+    keywordNameEs = keyword?.nameEs ?? "";
+    keywordNameDe = keyword?.nameDe ?? "";
+    keywordNameIt = keyword?.nameIt ?? "";
     keywordRulesEn = keyword?.rulesEn ?? "";
     keywordRulesRu = keyword?.rulesRu ?? "";
     keywordRulesUk = keyword?.rulesUk ?? "";
+    keywordRulesEs = keyword?.rulesEs ?? "";
+    keywordRulesDe = keyword?.rulesDe ?? "";
+    keywordRulesIt = keyword?.rulesIt ?? "";
     keywordPoints = keyword?.pointValue ?? null;
   }
 
@@ -1828,9 +1880,15 @@
           nameEn: keywordNameEn.trim(),
           nameRu: keywordNameRu.trim(),
           nameUk: keywordNameUk.trim(),
+          nameEs: keywordNameEs.trim(),
+          nameDe: keywordNameDe.trim(),
+          nameIt: keywordNameIt.trim(),
           rulesEn: keywordRulesEn.trim() || null,
           rulesRu: keywordRulesRu.trim() || null,
           rulesUk: keywordRulesUk.trim() || null,
+          rulesEs: keywordRulesEs.trim() || null,
+          rulesDe: keywordRulesDe.trim() || null,
+          rulesIt: keywordRulesIt.trim() || null,
           pointValue: keywordPoints,
         },
         keywordDraftId ?? undefined,
@@ -1860,7 +1918,8 @@
   /** Лист расы целиком, как строка: по ней видно, что правка не сохранена. */
   function raceForm(): string {
     return JSON.stringify([
-      raceNameEn, raceNameRu, raceNameUk, raceNoteEn, raceNoteRu, raceNoteUk,
+      raceNameEn, raceNameRu, raceNameUk, raceNameEs, raceNameDe, raceNameIt,
+      raceNoteEn, raceNoteRu, raceNoteUk, raceNoteEs, raceNoteDe, raceNoteIt,
       raceIconUrl, raceMotionWear, raceLevelFrames, raceDamage,
     ]);
   }
@@ -1890,9 +1949,15 @@
     raceNameEn = race?.nameEn ?? "";
     raceNameRu = race?.nameRu ?? "";
     raceNameUk = race?.nameUk ?? "";
+    raceNameEs = race?.nameEs ?? "";
+    raceNameDe = race?.nameDe ?? "";
+    raceNameIt = race?.nameIt ?? "";
     raceNoteEn = race?.noteEn ?? "";
     raceNoteRu = race?.noteRu ?? "";
     raceNoteUk = race?.noteUk ?? "";
+    raceNoteEs = race?.noteEs ?? "";
+    raceNoteDe = race?.noteDe ?? "";
+    raceNoteIt = race?.noteIt ?? "";
     raceIconUrl = race?.iconUrl ?? "";
     raceMotionWear = race?.motionWear ?? null;
     raceDamage = race?.raceDamage
@@ -1911,9 +1976,15 @@
           nameEn: raceNameEn.trim(),
           nameRu: raceNameRu.trim(),
           nameUk: raceNameUk.trim(),
+          nameEs: raceNameEs.trim(),
+          nameDe: raceNameDe.trim(),
+          nameIt: raceNameIt.trim(),
           noteEn: raceNoteEn.trim() || null,
           noteRu: raceNoteRu.trim() || null,
           noteUk: raceNoteUk.trim() || null,
+          noteEs: raceNoteEs.trim() || null,
+          noteDe: raceNoteDe.trim() || null,
+          noteIt: raceNoteIt.trim() || null,
           iconUrl: raceIconUrl.trim() || null,
           levelFrames: raceLevelFrames.some((f) => f)
             ? JSON.stringify(raceLevelFrames)
@@ -2027,6 +2098,9 @@
       raceNameEn: picked?.nameEn ?? null,
       raceNameRu: picked?.nameRu ?? null,
       raceNameUk: picked?.nameUk || null,
+      raceNameEs: picked?.nameEs || null,
+      raceNameDe: picked?.nameDe || null,
+      raceNameIt: picked?.nameIt || null,
       raceIconUrl: picked?.iconUrl ?? null,
       raceLevelFrames: picked?.levelFrames ?? null,
       raceMotionWear: picked?.motionWear ?? null,
@@ -2075,6 +2149,9 @@
     draft.raceNameEn = picked?.nameEn ?? null;
     draft.raceNameRu = picked?.nameRu ?? null;
     draft.raceNameUk = picked?.nameUk || null;
+    draft.raceNameEs = picked?.nameEs || null;
+    draft.raceNameDe = picked?.nameDe || null;
+    draft.raceNameIt = picked?.nameIt || null;
     draft.raceIconUrl = picked?.iconUrl ?? null;
     draft.raceLevelFrames = picked?.levelFrames ?? null;
     draft.raceMotionWear = picked?.motionWear ?? null;
@@ -2091,7 +2168,7 @@
     if (list.length >= TRAITS_MAX) return;
     draft.traits = [
       ...list,
-      { nameEn: "", nameRu: "", textEn: "", textRu: "", nameUk: "", textUk: "" },
+      { nameEn: "", nameRu: "", textEn: "", textRu: "", nameUk: "", textUk: "", nameEs: "", textEs: "", nameDe: "", textDe: "", nameIt: "", textIt: "" },
     ];
   }
 
@@ -2228,7 +2305,7 @@
   }) => localized(t, "title", $lang) || t.slug || "—";
 
   const shortDate = (iso: string) =>
-    new Date(iso).toLocaleString(pick($lang, { en: "en-GB", ru: "ru-RU", uk: "uk-UA" }), {
+    new Date(iso).toLocaleString(pick($lang, { en: "en-GB", ru: "ru-RU", uk: "uk-UA", es: "es-ES", de: "de-DE", it: "it-IT" }), {
       day: "2-digit",
       month: "2-digit",
       hour: "2-digit",
@@ -2386,18 +2463,30 @@
       titleEn: c.titleEn.trim(),
       titleRu: c.titleRu.trim(),
       titleUk: (c.titleUk ?? "").trim(),
+      titleEs: (c.titleEs ?? "").trim(),
+      titleDe: (c.titleDe ?? "").trim(),
+      titleIt: (c.titleIt ?? "").trim(),
       effectEn: c.effectEn?.trim() || null,
       effectRu: c.effectRu?.trim() || null,
       effectUk: c.effectUk?.trim() || null,
+      effectEs: c.effectEs?.trim() || null,
+      effectDe: c.effectDe?.trim() || null,
+      effectIt: c.effectIt?.trim() || null,
       loreEn: c.loreEn?.trim() || null,
       loreRu: c.loreRu?.trim() || null,
       loreUk: c.loreUk?.trim() || null,
+      loreEs: c.loreEs?.trim() || null,
+      loreDe: c.loreDe?.trim() || null,
+      loreIt: c.loreIt?.trim() || null,
       cost: c.cost,
       power: c.power,
       health: c.health,
       mana: c.mana,
       traits: (c.traits ?? []).filter(
-        (t) => t.nameEn.trim() || t.nameRu.trim() || (t.nameUk ?? "").trim(),
+        (t) =>
+          t.nameEn.trim() ||
+          t.nameRu.trim() ||
+          [t.nameUk, t.nameEs, t.nameDe, t.nameIt].some((x) => (x ?? "").trim()),
       ),
       kind: c.kind,
       armor: c.armor,
@@ -2413,6 +2502,9 @@
       typeEn: c.typeEn?.trim() || null,
       typeRu: c.typeRu?.trim() || null,
       typeUk: c.typeUk?.trim() || null,
+      typeEs: c.typeEs?.trim() || null,
+      typeDe: c.typeDe?.trim() || null,
+      typeIt: c.typeIt?.trim() || null,
       priceDust: c.priceDust,
       priceFeed: c.priceFeed,
       levelPriceDust: c.levelPriceDust,
@@ -2549,6 +2641,9 @@
       en: !!said(draft, field, "en").trim(),
       ru: !!said(draft, field, "ru").trim(),
       uk: !!said(draft, field, "uk").trim(),
+      es: !!said(draft, field, "es").trim(),
+      de: !!said(draft, field, "de").trim(),
+      it: !!said(draft, field, "it").trim(),
       current: editLang,
     };
   }
@@ -2613,20 +2708,7 @@
    * листа крупными буквами.
    */
   function cardsOf(count: number): string {
-    const tail = count % 100;
-    const last = count % 10;
-    const form =
-      $lang !== "en"
-        ? tail >= 11 && tail <= 14
-          ? "Many"
-          : last === 1
-            ? "One"
-            : last >= 2 && last <= 4
-              ? "Few"
-              : "Many"
-        : count === 1
-          ? "One"
-          : "Many";
+    const form = countForm($lang, count);
     return `${count} ${$t(`adminBattlesRaceCards${form}` as TranslationKey)}`;
   }
 
@@ -3974,7 +4056,7 @@
                 </label>
                 <p class="pb-1.5 text-[11px] text-[#8a6a55]">
                   {$t("adminBattlesClockNow")}
-                  {new Date(Date.now() + (clock.offsetMin + new Date().getTimezoneOffset()) * 60000).toLocaleString(pick($lang, { en: "en-GB", ru: "ru-RU", uk: "uk-UA" }))}
+                  {new Date(Date.now() + (clock.offsetMin + new Date().getTimezoneOffset()) * 60000).toLocaleString(pick($lang, { en: "en-GB", ru: "ru-RU", uk: "uk-UA", es: "es-ES", de: "de-DE", it: "it-IT" }))}
                 </p>
                 <button
                   type="button"
@@ -4348,6 +4430,9 @@
       bind:titleRu={etudeTitleRu}
       bind:titleEn={etudeTitleEn}
       bind:titleUk={etudeTitleUk}
+      bind:titleEs={etudeTitleEs}
+      bind:titleDe={etudeTitleDe}
+      bind:titleIt={etudeTitleIt}
       bind:board={benchBoard}
       bind:terrain={benchTerrain}
       bind:background={benchBackground}
@@ -4789,6 +4874,39 @@
                 class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
               />
             </label>
+            <label class="block w-52">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesKeywordName")} · ES</span
+              >
+              <input
+                bind:value={keywordNameEs}
+                maxlength="60"
+                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
+            <label class="block w-52">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesKeywordName")} · DE</span
+              >
+              <input
+                bind:value={keywordNameDe}
+                maxlength="60"
+                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
+            <label class="block w-52">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesKeywordName")} · IT</span
+              >
+              <input
+                bind:value={keywordNameIt}
+                maxlength="60"
+                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
             <label class="block w-40">
               <span
                 class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
@@ -4836,6 +4954,39 @@
               >
               <input
                 bind:value={keywordRulesUk}
+                maxlength="300"
+                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
+            <label class="block flex-1 min-w-[14rem]">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesKeywordRules")} · ES</span
+              >
+              <input
+                bind:value={keywordRulesEs}
+                maxlength="300"
+                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
+            <label class="block flex-1 min-w-[14rem]">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesKeywordRules")} · DE</span
+              >
+              <input
+                bind:value={keywordRulesDe}
+                maxlength="300"
+                class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+              />
+            </label>
+            <label class="block flex-1 min-w-[14rem]">
+              <span
+                class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"
+                >{$t("adminBattlesKeywordRules")} · IT</span
+              >
+              <input
+                bind:value={keywordRulesIt}
                 maxlength="300"
                 class="w-full px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
               />
@@ -5038,7 +5189,7 @@
         <div class="flex-1 w-full max-w-[1320px] mx-auto px-8 pt-7 pb-6">
           <SheetHead
             title={raceDraftId
-              ? raceNameRu || raceNameEn || raceNameUk || $t("adminBattlesRaceNew")
+              ? raceNameRu || raceNameEn || raceNameUk || raceNameEs || raceNameDe || raceNameIt || $t("adminBattlesRaceNew")
               : $t("adminBattlesRaceNew")}
             tag={raceDraftId
               ? cardsOf(races.find((r) => r.id === raceDraftId)?.cardCount ?? 0)
@@ -5056,9 +5207,9 @@
                 lead={$t("adminBattlesSheetRaceNamesLead")}
                 note={$t("adminBattlesRacesHint")}
               >
-                <!-- Оба языка разом, а не через переключатель, как на карте:
-                     имён у расы всего два, и держать их рядом дешевле, чем
-                     заводить ради них переключатель, которого здесь нет. -->
+                <!-- Все языки разом, а не через переключатель, как на карте:
+                     у расы только имя и строка, и держать их рядом дешевле,
+                     чем заводить ради них переключатель. -->
                 <div class="grid grid-cols-2 gap-3">
                   <SheetField label={`${$t("adminBattlesRaceName")} · RU`}>
                     <input bind:value={raceNameRu} maxlength="60" />
@@ -5077,6 +5228,24 @@
                   </SheetField>
                   <SheetField label={`${$t("adminBattlesRaceNote")} · UK`}>
                     <input bind:value={raceNoteUk} maxlength="200" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceName")} · ES`}>
+                    <input bind:value={raceNameEs} maxlength="60" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceNote")} · ES`}>
+                    <input bind:value={raceNoteEs} maxlength="200" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceName")} · DE`}>
+                    <input bind:value={raceNameDe} maxlength="60" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceNote")} · DE`}>
+                    <input bind:value={raceNoteDe} maxlength="200" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceName")} · IT`}>
+                    <input bind:value={raceNameIt} maxlength="60" />
+                  </SheetField>
+                  <SheetField label={`${$t("adminBattlesRaceNote")} · IT`}>
+                    <input bind:value={raceNoteIt} maxlength="200" />
                   </SheetField>
                 </div>
               </SheetPanel>
@@ -6677,8 +6846,9 @@
           </details>
 
           <div class="flex flex-wrap gap-x-4 gap-y-3 items-end">
-            {#each [{ label: $t("adminBattlesEtudeTitle") + " · RU", get: () => etudeTitleRu, set: (v: string) => (etudeTitleRu = v), wide: true }, { label: $t("adminBattlesEtudeTitle") + " · EN", get: () => etudeTitleEn, set: (v: string) => (etudeTitleEn = v), wide: true }, { label: $t("adminBattlesEtudeNote") + " · RU", get: () => etudeNoteRu, set: (v: string) => (etudeNoteRu = v), wide: false }, { label: $t("adminBattlesEtudeNote") + " · EN", get: () => etudeNoteEn, set: (v: string) => (etudeNoteEn = v), wide: false }, { label: $t("adminBattlesEtudeTitle") + " · UK", get: () => etudeTitleUk, set: (v: string) => (etudeTitleUk = v), wide: true }, { label: $t("adminBattlesEtudeNote") + " · UK", get: () => etudeNoteUk, set: (v: string) => (etudeNoteUk = v), wide: false }] as field (field.label)}
-              {#if !(inField && field.wide)}
+            {#each [{ label: $t("adminBattlesEtudeTitle") + " · RU", get: () => etudeTitleRu, set: (v: string) => (etudeTitleRu = v), wide: true }, { label: $t("adminBattlesEtudeTitle") + " · EN", get: () => etudeTitleEn, set: (v: string) => (etudeTitleEn = v), wide: true }, { label: $t("adminBattlesEtudeNote") + " · RU", get: () => etudeNoteRu, set: (v: string) => (etudeNoteRu = v), wide: false }, { label: $t("adminBattlesEtudeNote") + " · EN", get: () => etudeNoteEn, set: (v: string) => (etudeNoteEn = v), wide: false }, { label: $t("adminBattlesEtudeTitle") + " · UK", get: () => etudeTitleUk, set: (v: string) => (etudeTitleUk = v), wide: true }, { label: $t("adminBattlesEtudeNote") + " · UK", get: () => etudeNoteUk, set: (v: string) => (etudeNoteUk = v), wide: false }, { label: $t("adminBattlesEtudeTitle") + " · ES", get: () => etudeTitleEs, set: (v: string) => (etudeTitleEs = v), wide: true, desk: false }, { label: $t("adminBattlesEtudeNote") + " · ES", get: () => etudeNoteEs, set: (v: string) => (etudeNoteEs = v), wide: false }, { label: $t("adminBattlesEtudeTitle") + " · DE", get: () => etudeTitleDe, set: (v: string) => (etudeTitleDe = v), wide: true, desk: false }, { label: $t("adminBattlesEtudeNote") + " · DE", get: () => etudeNoteDe, set: (v: string) => (etudeNoteDe = v), wide: false }, { label: $t("adminBattlesEtudeTitle") + " · IT", get: () => etudeTitleIt, set: (v: string) => (etudeTitleIt = v), wide: true, desk: false }, { label: $t("adminBattlesEtudeNote") + " · IT", get: () => etudeNoteIt, set: (v: string) => (etudeNoteIt = v), wide: false }] as field (field.label)}
+              <!-- На вкладке поля названия RU / EN / UK стоят над доской; ES / DE / IT — только здесь. -->
+              {#if !(inField && field.wide && (field as { desk?: boolean }).desk !== false)}
               <label class="block {field.wide ? 'w-52' : 'w-64'}">
                 <span
                   class="block mb-1 text-[9px] uppercase tracking-[0.16em] text-[#8a6a55]"

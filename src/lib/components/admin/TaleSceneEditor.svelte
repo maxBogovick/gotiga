@@ -27,6 +27,9 @@
     bodyEn,
     bodyRu,
     bodyUk = '',
+    bodyEs = '',
+    bodyDe = '',
+    bodyIt = '',
     lang,
   }: {
     taleId: string;
@@ -34,6 +37,9 @@
     bodyEn: string;
     bodyRu: string;
     bodyUk?: string;
+    bodyEs?: string;
+    bodyDe?: string;
+    bodyIt?: string;
     lang: Lang;
   } = $props();
 
@@ -55,7 +61,7 @@
 
   // Байка, на которой считают: тот язык, на котором сейчас пишут, а если там
   // пусто — другой. Доли текста у версий совпадают, поэтому момент годится обеим.
-  let blocks = $derived(renderTale(firstText(lang, { en: bodyEn, ru: bodyRu, uk: bodyUk })));
+  let blocks = $derived(renderTale(firstText(lang, { en: bodyEn, ru: bodyRu, uk: bodyUk, es: bodyEs, de: bodyDe, it: bodyIt })));
   let bounds = $derived(boundariesOf(blocks));
   let codeScene = $derived(slug ? taleSceneFor(slug) : null);
   let ready = $derived(!!scene && scene.frames.length >= 2);

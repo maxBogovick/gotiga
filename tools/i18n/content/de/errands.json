@@ -1,0 +1,15 @@
+{"kind": "errands", "lang": "de", "source": "src-tauri/server/migrations: 20260907000000_battle_errands.sql, 20260911000000_battle_errands_plain_words.sql, 20261015000000_ukrainian.sql (WHERE slug)", "items": [
+{"key": "came-by", "title": "Ins Spiel schauen", "note": "Dafür, dass du heute vorbeigeschaut hast. Lässt du einen Tag aus, verlierst du nichts."},
+{"key": "look-around", "title": "Werke ansehen", "note": "Öffne fünf Werke im Archiv."},
+{"key": "closer-look", "title": "Ein Werk markieren, das dir gefällt", "note": "Setz ein Herz an ein Werk, das dir gefallen hat."},
+{"key": "read-a-tale", "title": "Eine Geschichte lesen", "note": "Lies eine Geschichte bis zum Ende."},
+{"key": "leave-impression", "title": "Eine Rezension zu einem Werk schreiben", "note": "Schreib, was du von einem Werk hältst. Zählt, sobald die Autorin sie freigibt."},
+{"key": "first-card", "title": "Die erste Karte nehmen", "note": "Irgendeine Karte aus dem Regal."},
+{"key": "lay-the-table", "title": "Ein Deck zusammenstellen", "note": "Sechs Karten: drei auf dem Feld, drei auf der Hand."},
+{"key": "finish-a-study", "title": "Einen Kampf zu Ende spielen", "note": "Sieg oder Niederlage, wichtig ist, bis zum Ende zu spielen."},
+{"key": "raise-a-card", "title": "Die Stufe einer Karte erhöhen", "note": "Die Stufe wirkt sich nicht auf den Kampf aus. Sie zeigt, dass die Karte schon lange bei dir ist."},
+{"key": "three-cards", "title": "Drei Karten sammeln", "note": "Drei eigene, keine geliehenen."},
+{"key": "an-impression", "title": "Eine Rezension schreiben, die der Autorin gefällt", "note": "Die Belohnung vergibt die Autorin, wenn sie es für richtig hält."},
+{"key": "a-showing", "title": "Zu einer Besichtigung kommen", "note": "Eine Besichtigung, die stattgefunden hat."},
+{"key": "a-commission", "title": "Ein Werk in Auftrag geben", "note": "Die seltenste Belohnung und die größte."}
+]}

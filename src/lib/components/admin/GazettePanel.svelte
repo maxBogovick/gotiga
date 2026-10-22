@@ -74,12 +74,21 @@
   let titleEn = $state('');
   let titleRu = $state('');
   let titleUk = $state('');
+  let titleEs = $state('');
+  let titleDe = $state('');
+  let titleIt = $state('');
   let dekEn = $state('');
   let dekRu = $state('');
   let dekUk = $state('');
+  let dekEs = $state('');
+  let dekDe = $state('');
+  let dekIt = $state('');
   let bodyEn = $state('');
   let bodyRu = $state('');
   let bodyUk = $state('');
+  let bodyEs = $state('');
+  let bodyDe = $state('');
+  let bodyIt = $state('');
   let figurineId = $state('');
   let href = $state('');
   let imageUrls = $state<string[]>([]);
@@ -149,9 +158,9 @@
     const world = kind === 'world' ? (['world'] as GazetteKind[]) : [];
     return [...PRIMARY_KINDS, ...extra, ...world];
   });
-  let titleNow = $derived(editLang === 'ru' ? titleRu : editLang === 'uk' ? titleUk : titleEn);
-  let dekNow = $derived(editLang === 'ru' ? dekRu : editLang === 'uk' ? dekUk : dekEn);
-  let bodyNow = $derived(editLang === 'ru' ? bodyRu : editLang === 'uk' ? bodyUk : bodyEn);
+  let titleNow = $derived({ en: titleEn, ru: titleRu, uk: titleUk, es: titleEs, de: titleDe, it: titleIt }[editLang]);
+  let dekNow = $derived({ en: dekEn, ru: dekRu, uk: dekUk, es: dekEs, de: dekDe, it: dekIt }[editLang]);
+  let bodyNow = $derived({ en: bodyEn, ru: bodyRu, uk: bodyUk, es: bodyEs, de: bodyDe, it: bodyIt }[editLang]);
   let previewDate = $derived(
     quietDate(publishedAt ?? (picking ? '' : new Date().toISOString()), $lang),
   );
@@ -205,7 +214,7 @@
       if (statusFilter === 'draft' && l.status === 'published') return false;
       if (kindFilter !== 'all' && l.kind !== kindFilter) return false;
       if (!q) return true;
-      const hay = `${l.titleEn} ${l.titleRu} ${l.titleUk ?? ''} ${l.figurineName ?? ''}`.toLowerCase();
+      const hay = `${l.titleEn} ${l.titleRu} ${l.titleUk ?? ''} ${l.titleEs ?? ''} ${l.titleDe ?? ''} ${l.titleIt ?? ''} ${l.figurineName ?? ''}`.toLowerCase();
       return hay.includes(q);
     });
   });
@@ -227,12 +236,21 @@
       titleEn,
       titleRu,
       titleUk,
+      titleEs,
+      titleDe,
+      titleIt,
       dekEn,
       dekRu,
       dekUk,
+      dekEs,
+      dekDe,
+      dekIt,
       bodyEn,
       bodyRu,
       bodyUk,
+      bodyEs,
+      bodyDe,
+      bodyIt,
       figurineId,
       href,
       imageUrls,
@@ -251,16 +269,25 @@
   function setTitle(v: string) {
     if (editLang === 'ru') titleRu = v;
     else if (editLang === 'uk') titleUk = v;
+    else if (editLang === 'es') titleEs = v;
+    else if (editLang === 'de') titleDe = v;
+    else if (editLang === 'it') titleIt = v;
     else titleEn = v;
   }
   function setDek(v: string) {
     if (editLang === 'ru') dekRu = v;
     else if (editLang === 'uk') dekUk = v;
+    else if (editLang === 'es') dekEs = v;
+    else if (editLang === 'de') dekDe = v;
+    else if (editLang === 'it') dekIt = v;
     else dekEn = v;
   }
   function setBody(v: string) {
     if (editLang === 'ru') bodyRu = v;
     else if (editLang === 'uk') bodyUk = v;
+    else if (editLang === 'es') bodyEs = v;
+    else if (editLang === 'de') bodyDe = v;
+    else if (editLang === 'it') bodyIt = v;
     else bodyEn = v;
   }
 
@@ -282,12 +309,21 @@
     titleEn = '';
     titleRu = '';
     titleUk = '';
+    titleEs = '';
+    titleDe = '';
+    titleIt = '';
     dekEn = '';
     dekRu = '';
     dekUk = '';
+    dekEs = '';
+    dekDe = '';
+    dekIt = '';
     bodyEn = '';
     bodyRu = '';
     bodyUk = '';
+    bodyEs = '';
+    bodyDe = '';
+    bodyIt = '';
     figurineId = '';
     href = '';
     imageUrls = [];
@@ -317,12 +353,21 @@
     titleEn = leaf.titleEn;
     titleRu = leaf.titleRu;
     titleUk = leaf.titleUk ?? '';
+    titleEs = leaf.titleEs ?? '';
+    titleDe = leaf.titleDe ?? '';
+    titleIt = leaf.titleIt ?? '';
     dekEn = leaf.dekEn ?? '';
     dekRu = leaf.dekRu ?? '';
     dekUk = leaf.dekUk ?? '';
+    dekEs = leaf.dekEs ?? '';
+    dekDe = leaf.dekDe ?? '';
+    dekIt = leaf.dekIt ?? '';
     bodyEn = leaf.bodyEn ?? '';
     bodyRu = leaf.bodyRu ?? '';
     bodyUk = leaf.bodyUk ?? '';
+    bodyEs = leaf.bodyEs ?? '';
+    bodyDe = leaf.bodyDe ?? '';
+    bodyIt = leaf.bodyIt ?? '';
     figurineId = leaf.figurineId ?? '';
     href = leaf.href ?? '';
     imageUrls = leaf.imageUrls?.length
@@ -349,7 +394,7 @@
     bodyOpen =
       leaf.kind === 'tale' ||
       leaf.kind === 'guest_story' ||
-      !!(leaf.bodyEn?.trim() || leaf.bodyRu?.trim() || leaf.bodyUk?.trim());
+      !!(leaf.bodyEn?.trim() || leaf.bodyRu?.trim() || leaf.bodyUk?.trim() || leaf.bodyEs?.trim() || leaf.bodyDe?.trim() || leaf.bodyIt?.trim());
     moreKinds = MORE_KINDS.includes(leaf.kind);
     editLang = $lang;
     extraFig = null;
@@ -366,6 +411,12 @@
     if (!dekRu.trim() || dekRu === generic.dekRu) dekRu = fill.dekRu;
     if (!titleUk.trim() || titleUk === generic.titleUk) titleUk = fill.titleUk;
     if (!dekUk.trim() || dekUk === generic.dekUk) dekUk = fill.dekUk;
+    if (!titleEs.trim() || titleEs === generic.titleEs) titleEs = fill.titleEs;
+    if (!dekEs.trim() || dekEs === generic.dekEs) dekEs = fill.dekEs;
+    if (!titleDe.trim() || titleDe === generic.titleDe) titleDe = fill.titleDe;
+    if (!dekDe.trim() || dekDe === generic.dekDe) dekDe = fill.dekDe;
+    if (!titleIt.trim() || titleIt === generic.titleIt) titleIt = fill.titleIt;
+    if (!dekIt.trim() || dekIt === generic.dekIt) dekIt = fill.dekIt;
   }
 
   function setKind(k: GazetteKind) {
@@ -459,8 +510,17 @@
       // Ukrainian is never mirrored from the others: an untranslated leaf shows
       // English to a Ukrainian reader, which is honest; a copy would not be.
       titleUk: titleUk.trim(),
+      titleEs: titleEs.trim(),
+      titleDe: titleDe.trim(),
+      titleIt: titleIt.trim(),
       dekUk: dekUk.trim() || null,
+      dekEs: dekEs.trim() || null,
+      dekDe: dekDe.trim() || null,
+      dekIt: dekIt.trim() || null,
       bodyUk: bodyUk.trim() || null,
+      bodyEs: bodyEs.trim() || null,
+      bodyDe: bodyDe.trim() || null,
+      bodyIt: bodyIt.trim() || null,
       figurineId: figurineId || null,
       href: href.trim() || null,
       sourceName: sourceName.trim() || null,
@@ -489,7 +549,7 @@
   }
 
   async function save(next?: GazetteStatus) {
-    if (!titleEn.trim() && !titleRu.trim() && !titleUk.trim()) {
+    if (![titleEn, titleRu, titleUk, titleEs, titleDe, titleIt].some((x) => x.trim())) {
       flash($t('adminGazetteNeedTitle'));
       return;
     }
@@ -589,7 +649,7 @@
         const imported = await api.importMediaWithVariants(
           file,
           'images',
-          titleEn || titleRu || titleUk || 'gazette',
+          titleEn || titleRu || titleUk || titleEs || titleDe || titleIt || 'gazette',
         );
         addImageUrl(imported.url);
       }
@@ -609,7 +669,7 @@
           const imported = await api.importMediaWithVariants(
             files[0],
             'images',
-            titleEn || titleRu || titleUk || 'gazette',
+            titleEn || titleRu || titleUk || titleEs || titleDe || titleIt || 'gazette',
           );
           imageUrls = [imported.url];
         } finally {
@@ -730,6 +790,12 @@
       if (enLine) dekEn = enLine;
       if (ruLine) dekRu = ruLine;
       if (ukLine) dekUk = ukLine;
+      const esLine = showingDateline(s.startsAt, s.endsAt, s.venue, 'es');
+      const deLine = showingDateline(s.startsAt, s.endsAt, s.venue, 'de');
+      const itLine = showingDateline(s.startsAt, s.endsAt, s.venue, 'it');
+      if (esLine) dekEs = esLine;
+      if (deLine) dekDe = deLine;
+      if (itLine) dekIt = itLine;
     }
     snapshot = fieldsKey();
     onSeedConsumed?.();
@@ -946,8 +1012,8 @@
 
               <div class="tabs lang-tabs">
                 {#each LANGS as code (code)}
-                  <button type="button" class:on={editLang === code} onclick={() => (editLang = code)}>
-                    {LANG_META[code].native}
+                  <button type="button" class:on={editLang === code} onclick={() => (editLang = code)} title={LANG_META[code].native}>
+                    {LANG_META[code].mark}
                   </button>
                 {/each}
               </div>

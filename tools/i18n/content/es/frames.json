@@ -1,0 +1,26 @@
+{
+  "kind": "frames",
+  "lang": "es",
+  "items": [
+    {
+      "key": 1,
+      "name": "Modesta"
+    },
+    {
+      "key": 2,
+      "name": "Robusta"
+    },
+    {
+      "key": 3,
+      "name": "Memorable"
+    },
+    {
+      "key": 4,
+      "name": "Rara"
+    },
+    {
+      "key": 5,
+      "name": "Épica"
+    }
+  ]
+}

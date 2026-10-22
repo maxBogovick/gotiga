@@ -13,7 +13,7 @@
   // однажды переименует поручение и заплатит за него второй раз всем, кто его
   // уже прошёл.
   import { onMount } from 'svelte';
-  import { t, lang, localized } from '$lib/i18n';
+  import { t, lang, localized, labelFor } from '$lib/i18n';
   import { api } from '$lib/api';
   import BattleErrandList from '$lib/components/BattleErrandList.svelte';
   import type {
@@ -89,9 +89,15 @@
       titleEn: '',
       titleRu: '',
       titleUk: '',
+      titleEs: '',
+      titleDe: '',
+      titleIt: '',
       noteEn: '',
       noteRu: '',
       noteUk: '',
+      noteEs: '',
+      noteDe: '',
+      noteIt: '',
       rule: 'works_seen',
       threshold: 1,
       currency: 'dust',
@@ -116,9 +122,15 @@
           titleEn: row.titleEn,
           titleRu: row.titleRu,
           titleUk: row.titleUk ?? '',
+          titleEs: row.titleEs ?? '',
+          titleDe: row.titleDe ?? '',
+          titleIt: row.titleIt ?? '',
           noteEn: row.noteEn ?? '',
           noteRu: row.noteRu ?? '',
           noteUk: row.noteUk ?? '',
+          noteEs: row.noteEs ?? '',
+          noteDe: row.noteDe ?? '',
+          noteIt: row.noteIt ?? '',
           rule: row.rule,
           threshold: row.threshold,
           currency: row.currency,
@@ -212,9 +224,15 @@
         titleEn: r.titleEn,
         titleRu: r.titleRu,
         titleUk: r.titleUk,
+        titleEs: r.titleEs,
+        titleDe: r.titleDe,
+        titleIt: r.titleIt,
         noteEn: r.noteEn,
         noteRu: r.noteRu,
         noteUk: r.noteUk,
+        noteEs: r.noteEs,
+        noteDe: r.noteDe,
+        noteIt: r.noteIt,
         rule: r.rule,
         threshold: r.threshold,
         currency: r.currency,
@@ -384,6 +402,30 @@
           <label class="block">
             <span class={label}>{$t('adminErrandNoteUk')}</span>
             <input bind:value={draft.noteUk} class={field} />
+          </label>
+          <label class="block">
+            <span class={label}>{labelFor($t('adminErrandTitleUk'), 'es')}</span>
+            <input bind:value={draft.titleEs} class={field} />
+          </label>
+          <label class="block">
+            <span class={label}>{labelFor($t('adminErrandNoteUk'), 'es')}</span>
+            <input bind:value={draft.noteEs} class={field} />
+          </label>
+          <label class="block">
+            <span class={label}>{labelFor($t('adminErrandTitleUk'), 'de')}</span>
+            <input bind:value={draft.titleDe} class={field} />
+          </label>
+          <label class="block">
+            <span class={label}>{labelFor($t('adminErrandNoteUk'), 'de')}</span>
+            <input bind:value={draft.noteDe} class={field} />
+          </label>
+          <label class="block">
+            <span class={label}>{labelFor($t('adminErrandTitleUk'), 'it')}</span>
+            <input bind:value={draft.titleIt} class={field} />
+          </label>
+          <label class="block">
+            <span class={label}>{labelFor($t('adminErrandNoteUk'), 'it')}</span>
+            <input bind:value={draft.noteIt} class={field} />
           </label>
         </div>
 

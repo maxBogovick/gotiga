@@ -1,0 +1,13 @@
+{
+  "kind": "process_steps",
+  "table": "process_steps",
+  "key": "id",
+  "fields": {
+    "description": "description"
+  },
+  "notes": "Ключ — UUID прода.",
+  "original": "en",
+  "count": 0,
+  "chars": 0,
+  "items": []
+}

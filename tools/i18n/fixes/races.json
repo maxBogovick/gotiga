@@ -1,0 +1,67 @@
+{
+  "update": {
+    "witches": {
+      "note_en": {
+        "from": "Колдуют проклятиями и ядом.",
+        "to": "They cast curses and poison."
+      },
+      "note_uk": {
+        "from": "Колдуют проклятиями и ядом.",
+        "to": "Чаклують прокляттями й отрутою."
+      }
+    },
+    "water": {
+      "note_en": {
+        "from": "Живут в воде, на берегу слабеют.",
+        "to": "They live in water and grow weaker on the shore."
+      },
+      "note_uk": {
+        "from": "Живут в воде, на берегу слабеют.",
+        "to": "Живуть у воді, на березі слабшають."
+      }
+    },
+    "gnomes": {
+      "note_en": {
+        "from": "Низкие и крепкие, живут у камня и огня.",
+        "to": "Short and sturdy, they live by stone and fire."
+      },
+      "note_uk": {
+        "from": "Низкие и крепкие, живут у камня и огня.",
+        "to": "Низькі й міцні, живуть біля каменю й вогню."
+      }
+    },
+    "people": {
+      "note_en": {
+        "from": "Обычные жители: у них нет чар, зато есть выучка.",
+        "to": "Ordinary folk: no spells, but they have training."
+      },
+      "note_uk": {
+        "from": "Обычные жители: у них нет чар, зато есть выучка.",
+        "to": "Звичайні мешканці: чар у них немає, зате є вишкіл."
+      }
+    },
+    "mages": {
+      "note_en": {
+        "from": "Колдуют по приказу и бьют издалека.",
+        "to": "They cast spells on command and strike from afar."
+      },
+      "note_uk": {
+        "from": "Колдуют по приказу и бьют издалека.",
+        "to": "Чаклують за наказом і б’ють здалеку."
+      }
+    },
+    "undead": {
+      "note_en": {
+        "from": "Умершие, которые продолжают действовать.",
+        "to": "The dead who keep on acting."
+      },
+      "note_uk": {
+        "from": "Умершие, которые продолжают действовать.",
+        "to": "Померлі, які продовжують діяти."
+      }
+    }
+  },
+  "delete_if_unused": [
+    "witch"
+  ]
+}

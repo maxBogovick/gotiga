@@ -2300,6 +2300,36 @@
                   <label class="block">
                     <span
                       class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesFrameName")} · ES</span
+                    >
+                    <input
+                      bind:value={frames[frameIndex].nameEs}
+                      class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                    />
+                  </label>
+                  <label class="block">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesFrameName")} · DE</span
+                    >
+                    <input
+                      bind:value={frames[frameIndex].nameDe}
+                      class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                    />
+                  </label>
+                  <label class="block">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
+                      >{$t("adminBattlesFrameName")} · IT</span
+                    >
+                    <input
+                      bind:value={frames[frameIndex].nameIt}
+                      class="px-2 py-1.5 text-sm bg-transparent border border-[#34251c]/15 outline-none focus:border-[#34251c]/35"
+                    />
+                  </label>
+                  <label class="block">
+                    <span
+                      class="block mb-1 text-[11px] text-[#8a6a55]"
                       >{$t("adminBattlesFrameLayout")}</span
                     >
                     <select

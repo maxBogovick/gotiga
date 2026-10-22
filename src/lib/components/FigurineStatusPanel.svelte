@@ -3,7 +3,7 @@
   import type { Figurine, FigurineStatus } from '$lib/types/api';
   import FigurineReceiptPanel from '$lib/components/FigurineReceiptPanel.svelte';
   import { api } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, locale } from '$lib/i18n';
   import { createFigurineAnalytics } from '$lib/analytics';
 
   type RequestIntent = 'request' | 'reserve' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
@@ -158,7 +158,7 @@
 
   let registryCode = $derived(id.slice(0, 3).toUpperCase());
   let formattedDate = $derived(
-    nextAvailableDate?.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) ?? null
+    nextAvailableDate?.toLocaleDateString($locale, { day: 'numeric', month: 'long', year: 'numeric' }) ?? null
   );
 
   let statusTitle = $derived.by(() => {

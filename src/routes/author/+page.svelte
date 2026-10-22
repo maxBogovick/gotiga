@@ -4,7 +4,7 @@
   import { cubicOut } from 'svelte/easing';
   import { resolveMediaUrl } from '$lib/api';
   import { SITE_URL } from '$lib/site';
-  import { t, brandName } from '$lib/i18n';
+  import { t, brandName, lang, LANG_META, localizedBase, quote } from '$lib/i18n';
 
   // Data comes from the universal load (+page.ts): real values at prerender time so
   // bots see the bio, and a fresh fetch on client-side navigation.
@@ -29,6 +29,10 @@
     prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   });
 
+  // Подпись и рассказ на языке читателя: английские — поля без суффикса.
+  let tagline = $derived(localizedBase(profile, 'tagline', $lang));
+  let bio = $derived(localizedBase(profile, 'bio', $lang));
+
   const socialLinks = $derived(profile ? [
     profile.instagram  ? { label: 'Instagram',  icon: 'ig', href: `https://instagram.com/${profile.instagram.replace('@','')}` }         : null,
     profile.telegram   ? { label: 'Telegram',   icon: 'tg', href: `https://t.me/${profile.telegram.replace('@','')}` }                   : null,
@@ -36,7 +40,7 @@
     profile.artstation ? { label: 'ArtStation', icon: 'as', href: `https://artstation.com/${profile.artstation.replace('@','')}` }       : null,
     profile.pinterest  ? { label: 'Pinterest',  icon: 'pi', href: `https://pinterest.com/${profile.pinterest.replace('@','')}` }         : null,
     profile.youtube    ? { label: 'YouTube',    icon: 'yt', href: `https://youtube.com/@${profile.youtube.replace('@','')}` }            : null,
-    profile.website    ? { label: 'Website',    icon: 'ws', href: profile.website.startsWith('http') ? profile.website : `https://${profile.website}` } : null,
+    profile.website    ? { label: $t('authorWebsite'), icon: 'ws', href: profile.website.startsWith('http') ? profile.website : `https://${profile.website}` } : null,
     profile.email      ? { label: $t('authorContactLabel'), icon: 'em', href: `mailto:${profile.email}` }                               : null,
   ].filter(Boolean) : []);
 
@@ -48,8 +52,8 @@
     '@type': 'Person',
     name: profile.name,
     url: `${SITE_URL}/author`,
-    ...(profile.tagline ? { jobTitle: profile.tagline } : {}),
-    ...(profile.bio ? { description: profile.bio } : {}),
+    ...(tagline ? { jobTitle: tagline } : {}),
+    ...(bio ? { description: bio } : {}),
     ...(portraitUrl ? { image: portraitUrl } : {}),
     worksFor: { '@type': 'Organization', name: $brandName, url: SITE_URL },
     sameAs: socialLinks
@@ -59,13 +63,13 @@
 </script>
 
 <svelte:head>
-  <title>About the Master — {$brandName}</title>
-  <meta name="description" content={profile?.tagline ?? profile?.bio ?? 'The maker behind the gothic miniatures of Ritunia.'} />
+  <title>{$t('authorMetaTitle')} — {$brandName}</title>
+  <meta name="description" content={tagline || bio || $t('authorMetaDescription')} />
   <meta property="og:site_name" content={$brandName} />
-  <meta property="og:locale" content="en_US" />
+  <meta property="og:locale" content={LANG_META[$lang].og} />
   <meta property="og:type" content="profile" />
-  <meta property="og:title" content="About the Master — {$brandName}" />
-  <meta property="og:description" content={profile?.tagline ?? profile?.bio ?? 'The maker behind the gothic miniatures of Ritunia.'} />
+  <meta property="og:title" content="{$t('authorMetaTitle')} — {$brandName}" />
+  <meta property="og:description" content={tagline || bio || $t('authorMetaDescription')} />
   <meta property="og:url" content="{SITE_URL}/author" />
   {#if portraitUrl}<meta property="og:image" content={portraitUrl} />{/if}
   {#if personJsonLd}{@html `<script type="application/ld+json">${personJsonLd}<\/script>`}{/if}
@@ -128,17 +132,17 @@
                   {profile.name}
                 </h1>
 
-                {#if profile.tagline}
+                {#if tagline}
                   <p class="font-['Georgia'] italic text-lg text-[#34251c]/90 mb-6 tracking-wide">
-                    {profile.tagline}
+                    {tagline}
                   </p>
                 {/if}
 
                 <div class="w-16 h-px bg-gradient-to-r from-[#34251c]/30 to-transparent mb-6"></div>
 
-                {#if profile.bio}
+                {#if bio}
                   <div class="font-['Georgia'] text-[#4b3326] leading-relaxed text-base lg:text-lg space-y-4 mb-8">
-                    {#each profile.bio.split('\n\n') as para}
+                    {#each bio.split('\n\n') as para}
                       <p>{para}</p>
                     {/each}
                   </div>
@@ -224,7 +228,7 @@
                 </span>
                 <blockquote class="relative">
                   <p class="text-lg lg:text-xl text-[#34251c] leading-relaxed italic opacity-90 font-['Georgia']">
-                    «{text.content}»
+                    {quote($lang, text.content)}
                   </p>
                 </blockquote>
                 {#if i % 2 === 0}

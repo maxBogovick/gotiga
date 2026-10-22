@@ -1,6 +1,7 @@
 import { api } from '$lib/api';
 import { SITE_URL, SITEMAP_STATIC_ROUTES, toAbsoluteUrl } from '$lib/site';
 import type { Figurine, FigurineListItem } from '$lib/types/api';
+import { LANGS, LANG_META } from '$lib/i18n';
 
 // Prerendered to a static sitemap.xml in the web build (matches the Sitemap line in
 // robots.txt). The dev/SPA profile has no SEO surface, so it's excluded.
@@ -9,6 +10,17 @@ export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 // /admin is intentionally absent (also Disallowed in robots). /commission is omitted
 // on purpose: it reads a ?source query param so it can't be prerendered, and listing
 // a JS-only shell here would point crawlers at a thin page. Acquisition is /acquire.
+
+/** Every public page answers in six languages through `?lang=`; the bare address
+ *  is the default (`x-default`). One `xhtml:link` per language. */
+function alternates(loc: string): string {
+    const sep = loc.includes('?') ? '&' : '?';
+    const links = LANGS.map(
+        (l) => `<xhtml:link rel="alternate" hreflang="${LANG_META[l].locale.split('-')[0]}" href="${xmlEscape(`${loc}${sep}lang=${l}`)}"/>`,
+    );
+    links.push(`<xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(loc)}"/>`);
+    return links.join('');
+}
 
 function xmlEscape(s: string): string {
     return s.replace(/[<>&'"]/g, (c) =>
@@ -120,7 +132,7 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
 
     const body =
         `<?xml version="1.0" encoding="UTF-8"?>\n` +
-        `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n` +
+        `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n` +
         entries
             .map(({ loc, lastmod, image, imageTitle, imageCaption }) => {
                 const imageXml = image
@@ -129,7 +141,7 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
                       (imageCaption ? `<image:caption>${xmlEscape(imageCaption)}</image:caption>` : '') +
                       `</image:image>`
                     : '';
-                return `  <url><loc>${xmlEscape(loc)}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}${imageXml}</url>`;
+                return `  <url><loc>${xmlEscape(loc)}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}${alternates(loc)}${imageXml}</url>`;
             })
             .join('\n') +
         `\n</urlset>\n`;

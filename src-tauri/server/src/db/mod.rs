@@ -2502,6 +2502,56 @@ impl Repository {
             }
         };
 
+        // Тексты на других языках: проверить до любой записи. Язык — один из
+        // пяти, длина — в пределах CHECK таблицы; пустое становится NULL.
+        let translation_rows: Option<Vec<(String, crate::models::FigurineTextDto)>> =
+            match &f.translations {
+                None => None,
+                Some(map) => {
+                    let mut rows = Vec::new();
+                    for (lang, text) in map {
+                        let lang = lang.trim().to_ascii_lowercase();
+                        if !crate::models::FigurineTextDto::LANGS.contains(&lang.as_str()) {
+                            return Err(AppError::BadRequest(format!(
+                                "Unknown translation language: {lang}"
+                            )));
+                        }
+                        let text = text.clone().cleaned();
+                        for (field, value, max) in text.limits() {
+                            if value.as_ref().is_some_and(|v| v.chars().count() > max) {
+                                return Err(AppError::BadRequest(format!(
+                                    "Translation {lang}.{field} is longer than {max} characters"
+                                )));
+                            }
+                        }
+                        rows.push((lang, text));
+                    }
+                    Some(rows)
+                }
+            };
+
+        // Описания фотографий на других языках — тем же порядком: проверить до
+        // записи. Пустая строка — удалить язык.
+        let mut alt_rows: Vec<(Uuid, String, Option<String>)> = Vec::new();
+        for (img_id, img, _) in &image_rows {
+            let Some(map) = &img.alt_translations else { continue };
+            for (lang, text) in map {
+                let lang = lang.trim().to_ascii_lowercase();
+                if !crate::models::FigurineTextDto::LANGS.contains(&lang.as_str()) {
+                    return Err(AppError::BadRequest(format!(
+                        "Unknown translation language: {lang}"
+                    )));
+                }
+                let text = Some(text.trim().to_string()).filter(|t| !t.is_empty());
+                if text.as_ref().is_some_and(|t| t.chars().count() > 1000) {
+                    return Err(AppError::BadRequest(format!(
+                        "Photo description {lang} is longer than 1000 characters"
+                    )));
+                }
+                alt_rows.push((*img_id, lang, text));
+            }
+        }
+
         // Lenient parse: a bad/empty room id frees the work (NULL → always open)
         // rather than aborting the save.
         let showing_room_uuid = f
@@ -2579,6 +2629,45 @@ impl Repository {
             .execute(&mut *tx).await?;
         }
 
+        // Снятые фотографии уносят свои описания; остальные остаются.
+        sqlx::query(
+            "DELETE FROM figurine_image_translations
+              WHERE figurine_id = $1 AND image_id <> ALL($2)",
+        )
+        .bind(id)
+        .bind(image_rows.iter().map(|(i, _, _)| *i).collect::<Vec<Uuid>>())
+        .execute(&mut *tx)
+        .await?;
+        for (img_id, lang, text) in &alt_rows {
+            match text {
+                None => {
+                    sqlx::query(
+                        "DELETE FROM figurine_image_translations WHERE image_id = $1 AND lang = $2",
+                    )
+                    .bind(img_id)
+                    .bind(lang)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                Some(text) => {
+                    sqlx::query(
+                        "INSERT INTO figurine_image_translations (image_id, figurine_id, lang, alt_text)
+                         VALUES ($1, $2, $3, $4)
+                         ON CONFLICT (image_id, lang) DO UPDATE SET
+                            figurine_id = EXCLUDED.figurine_id,
+                            alt_text = EXCLUDED.alt_text,
+                            updated_at = now()",
+                    )
+                    .bind(img_id)
+                    .bind(id)
+                    .bind(lang)
+                    .bind(text)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
+        }
+
         sqlx::query("DELETE FROM process_steps WHERE figurine_id = $1")
             .bind(id)
             .execute(&mut *tx)
@@ -2612,8 +2701,153 @@ impl Repository {
             }
         }
 
+        if let Some(rows) = &translation_rows {
+            for (lang, text) in rows {
+                if text.is_empty() {
+                    sqlx::query("DELETE FROM figurine_translations WHERE figurine_id = $1 AND lang = $2")
+                        .bind(id)
+                        .bind(lang)
+                        .execute(&mut *tx)
+                        .await?;
+                    continue;
+                }
+                sqlx::query(
+                    "INSERT INTO figurine_translations
+                        (figurine_id, lang, name, short_text, full_description, material,
+                         technique, dimensions, series, edition, created_period,
+                         care_instructions, provenance_note, authenticity_note,
+                         included_items, secret_text, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())
+                     ON CONFLICT (figurine_id, lang) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        short_text = EXCLUDED.short_text,
+                        full_description = EXCLUDED.full_description,
+                        material = EXCLUDED.material,
+                        technique = EXCLUDED.technique,
+                        dimensions = EXCLUDED.dimensions,
+                        series = EXCLUDED.series,
+                        edition = EXCLUDED.edition,
+                        created_period = EXCLUDED.created_period,
+                        care_instructions = EXCLUDED.care_instructions,
+                        provenance_note = EXCLUDED.provenance_note,
+                        authenticity_note = EXCLUDED.authenticity_note,
+                        included_items = EXCLUDED.included_items,
+                        secret_text = EXCLUDED.secret_text,
+                        updated_at = now()",
+                )
+                .bind(id)
+                .bind(lang)
+                .bind(&text.name)
+                .bind(&text.short_text)
+                .bind(&text.full_description)
+                .bind(&text.material)
+                .bind(&text.technique)
+                .bind(&text.dimensions)
+                .bind(&text.series)
+                .bind(&text.edition)
+                .bind(&text.created_period)
+                .bind(&text.care_instructions)
+                .bind(&text.provenance_note)
+                .bind(&text.authenticity_note)
+                .bind(&text.included_items)
+                .bind(&text.secret_text)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Описания фотографий одной работы на других языках: фотография → язык →
+    /// текст.
+    pub async fn get_image_alt_translations(
+        &self,
+        figurine_id: Uuid,
+    ) -> Result<std::collections::HashMap<Uuid, std::collections::HashMap<String, String>>> {
+        let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT image_id, lang, alt_text FROM figurine_image_translations
+              WHERE figurine_id = $1",
+        )
+        .bind(figurine_id)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        let mut out: std::collections::HashMap<Uuid, std::collections::HashMap<String, String>> =
+            std::collections::HashMap::new();
+        for (image, lang, text) in rows {
+            out.entry(image).or_default().insert(lang, text);
+        }
+        Ok(out)
+    }
+
+    /// Названия работ на других языках: работа → язык → название. Для писем и
+    /// для ответов, где работа только названа.
+    pub async fn get_figurine_name_translations(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, std::collections::HashMap<String, String>>> {
+        let mut out: std::collections::HashMap<Uuid, std::collections::HashMap<String, String>> =
+            std::collections::HashMap::new();
+        if ids.is_empty() {
+            return Ok(out);
+        }
+        let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+            "SELECT figurine_id, lang, btrim(name) FROM figurine_translations
+              WHERE figurine_id = ANY($1) AND name IS NOT NULL AND btrim(name) <> ''",
+        )
+        .bind(ids)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        for (id, lang, name) in rows {
+            out.entry(id).or_default().insert(lang, name);
+        }
+        Ok(out)
+    }
+
+    /// Тексты работ на других языках, для списка работ разом: работа → язык →
+    /// тексты.
+    pub async fn get_figurine_translations(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<
+        std::collections::HashMap<
+            Uuid,
+            std::collections::HashMap<String, crate::models::FigurineTextDto>,
+        >,
+    > {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            figurine_id: Uuid,
+            lang: String,
+            #[sqlx(flatten)]
+            text: crate::models::FigurineTextDto,
+        }
+        let mut out: std::collections::HashMap<
+            Uuid,
+            std::collections::HashMap<String, crate::models::FigurineTextDto>,
+        > = std::collections::HashMap::new();
+        if ids.is_empty() {
+            return Ok(out);
+        }
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT figurine_id, lang, name, short_text, full_description, material,
+                    technique, dimensions, series, edition, created_period,
+                    care_instructions, provenance_note, authenticity_note,
+                    included_items, secret_text
+               FROM figurine_translations
+              WHERE figurine_id = ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        for r in rows {
+            let text = r.text.cleaned();
+            if !text.is_empty() {
+                out.entry(r.figurine_id).or_default().insert(r.lang, text);
+            }
+        }
+        Ok(out)
     }
 
     /// Write the registry's order: the work at position `n` (1-based) gets
@@ -2664,9 +2898,12 @@ impl Repository {
         let id = Uuid::parse_str(&r.id)
             .map_err(|_| AppError::BadRequest("Invalid room ID".to_string()))?;
         sqlx::query(
-            "INSERT INTO showing_rooms (id, name, open_from_min, open_until_min, open_days_mask, open_month_day, open_date_from, open_date_until, sort_order, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            // Названия на других языках: NULL (поле не прислано) — оставить
+            // прежнее, пустая строка — снять.
+            "INSERT INTO showing_rooms (id, name, open_from_min, open_until_min, open_days_mask, open_month_day, open_date_from, open_date_until, sort_order, updated_at, name_ru, name_uk, name_es, name_de, name_it)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NULLIF(btrim($10), ''), NULLIF(btrim($11), ''), NULLIF(btrim($12), ''), NULLIF(btrim($13), ''), NULLIF(btrim($14), ''))
              ON CONFLICT (id) DO UPDATE SET
+               name_ru=NULLIF(btrim(COALESCE($10, showing_rooms.name_ru)), ''), name_uk=NULLIF(btrim(COALESCE($11, showing_rooms.name_uk)), ''), name_es=NULLIF(btrim(COALESCE($12, showing_rooms.name_es)), ''), name_de=NULLIF(btrim(COALESCE($13, showing_rooms.name_de)), ''), name_it=NULLIF(btrim(COALESCE($14, showing_rooms.name_it)), ''),
                name=EXCLUDED.name, open_from_min=EXCLUDED.open_from_min,
                open_until_min=EXCLUDED.open_until_min, open_days_mask=EXCLUDED.open_days_mask,
                open_month_day=EXCLUDED.open_month_day, open_date_from=EXCLUDED.open_date_from,
@@ -2681,6 +2918,11 @@ impl Repository {
         .bind(&r.open_date_from)
         .bind(&r.open_date_until)
         .bind(sort_order)
+        .bind(&r.name_ru)
+        .bind(&r.name_uk)
+        .bind(&r.name_es)
+        .bind(&r.name_de)
+        .bind(&r.name_it)
         .execute(&self.pg_pool)
         .await?;
         Ok(())
@@ -5108,6 +5350,64 @@ impl Repository {
 
     // === COMMENTS ===
 
+    /// Язык записи (заказа, брони, очереди, отзыва) и, если есть имя, —
+    /// язык человека. `table` — константа из кода, не из запроса.
+    pub async fn remember_lang(
+        &self,
+        table: &'static str,
+        id: Uuid,
+        user_id: Option<Uuid>,
+        lang: &str,
+    ) -> Result<()> {
+        debug_assert!(matches!(
+            table,
+            "orders" | "figurine_bookings" | "figurine_waitlist" | "figurine_comments"
+        ));
+        sqlx::query(&format!("UPDATE {table} SET lang = $2 WHERE id = $1"))
+            .bind(id)
+            .bind(lang)
+            .execute(&self.pg_pool)
+            .await?;
+        if let Some(user) = user_id {
+            self.set_user_lang(user, lang).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn set_user_lang(&self, user_id: Uuid, lang: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET lang = $2 WHERE id = $1 AND lang IS DISTINCT FROM $2")
+            .bind(user_id)
+            .bind(lang)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    /// На каком языке писать о записи: её язык, затем язык человека.
+    pub async fn lang_of_record(&self, table: &'static str, id: Uuid) -> Result<Option<String>> {
+        debug_assert!(matches!(
+            table,
+            "orders" | "figurine_bookings" | "figurine_waitlist" | "figurine_comments"
+        ));
+        let row: Option<(Option<String>,)> = sqlx::query_as(&format!(
+            "SELECT COALESCE(t.lang, u.lang) FROM {table} t
+               LEFT JOIN users u ON u.id = t.user_id
+              WHERE t.id = $1"
+        ))
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?;
+        Ok(row.and_then(|r| r.0))
+    }
+
+    pub async fn user_lang(&self, user_id: Uuid) -> Result<Option<String>> {
+        let row: Option<(Option<String>,)> = sqlx::query_as("SELECT lang FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pg_pool)
+            .await?;
+        Ok(row.and_then(|r| r.0))
+    }
+
     pub async fn insert_comment(
         &self,
         figurine_id: Uuid,
@@ -6018,7 +6318,7 @@ impl Repository {
                   RETURNING n.tale_id, n.subscriber_id, n.lang, n.created_at
              )
              SELECT c.tale_id, c.subscriber_id, s.chat_id, c.lang,
-                    l.slug, l.title_en, l.title_ru, l.title_uk, l.dek_en, l.dek_ru, l.dek_uk
+                    l.slug, l.title_en, l.title_ru, l.title_uk, l.title_es, l.title_de, l.title_it, l.dek_en, l.dek_ru, l.dek_uk, l.dek_es, l.dek_de, l.dek_it
                FROM claimed c
                JOIN gazette_leaves l ON l.id = c.tale_id
                JOIN telegram_subscribers s ON s.id = c.subscriber_id
@@ -6677,7 +6977,7 @@ impl Repository {
             .lang
             .as_deref()
             .and_then(crate::lang::Lang::parse)
-            .unwrap_or(crate::lang::Lang::Ru)
+            .unwrap_or_default()
             .code();
         let source_figurine_id = req
             .source_figurine_id
@@ -6998,12 +7298,15 @@ impl Repository {
 
     const GAZETTE_LEAF_SELECT: &'static str = r#"
         SELECT l.id, l.slug, l.kind, l.status,
-               l.title_en, l.title_ru, l.title_uk, l.dek_en, l.dek_ru, l.dek_uk,
-               l.body_en, l.body_ru, l.body_uk,
+               l.title_en, l.title_ru, l.title_uk, l.title_es, l.title_de, l.title_it, l.dek_en, l.dek_ru, l.dek_uk, l.dek_es, l.dek_de, l.dek_it,
+               l.body_en, l.body_ru, l.body_uk, l.body_es, l.body_de, l.body_it,
                l.figurine_id, l.href, l.source_name, l.source_url, l.author, l.image_url, l.image_urls,
                l.pinned, l.shelf_order, l.published_at, l.scheduled_at, l.expected_from, l.expected_to,
                l.created_at, l.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
+               (SELECT jsonb_object_agg(t.lang, t.name)::text FROM figurine_translations t
+                 WHERE t.figurine_id = l.figurine_id AND t.name IS NOT NULL AND btrim(t.name) <> '')
+               AS figurine_name_translations,
                f.status::text AS figurine_status,
                (SELECT COUNT(*) FROM gazette_watches w WHERE w.leaf_id = l.id)::bigint AS watch_count
         FROM gazette_leaves l
@@ -7273,18 +7576,28 @@ impl Repository {
         expected_from: Option<NaiveDate>,
         expected_to: Option<NaiveDate>,
         title_uk: &str,
+        title_es: &str,
+        title_de: &str,
+        title_it: &str,
         dek_uk: Option<&str>,
+        dek_es: Option<&str>,
+        dek_de: Option<&str>,
+        dek_it: Option<&str>,
         body_uk: Option<&str>,
+        body_es: Option<&str>,
+        body_de: Option<&str>,
+        body_it: Option<&str>,
     ) -> Result<crate::models::GazetteLeaf> {
         Ok(sqlx::query_as::<_, crate::models::GazetteLeaf>(
             r#"INSERT INTO gazette_leaves (
                     slug, kind, status, title_en, title_ru, dek_en, dek_ru, body_en, body_ru,
                     figurine_id, href, source_name, source_url, author, image_url, image_urls,
                     pinned, published_at, scheduled_at, expected_from, expected_to,
-                    title_uk, dek_uk, body_uk
+                    title_uk, title_es, title_de, title_it, dek_uk, dek_es, dek_de, dek_it,
+                    body_uk, body_es, body_de, body_it
                ) VALUES (
                     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-                    $22,$23,$24
+                    $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33
                ) RETURNING *"#,
         )
         .bind(slug)
@@ -7309,8 +7622,17 @@ impl Repository {
         .bind(expected_from)
         .bind(expected_to)
         .bind(title_uk)
+        .bind(title_es)
+        .bind(title_de)
+        .bind(title_it)
         .bind(dek_uk)
+        .bind(dek_es)
+        .bind(dek_de)
+        .bind(dek_it)
         .bind(body_uk)
+        .bind(body_es)
+        .bind(body_de)
+        .bind(body_it)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -7340,8 +7662,17 @@ impl Repository {
         expected_from: Option<NaiveDate>,
         expected_to: Option<NaiveDate>,
         title_uk: &str,
+        title_es: &str,
+        title_de: &str,
+        title_it: &str,
         dek_uk: Option<&str>,
+        dek_es: Option<&str>,
+        dek_de: Option<&str>,
+        dek_it: Option<&str>,
         body_uk: Option<&str>,
+        body_es: Option<&str>,
+        body_de: Option<&str>,
+        body_it: Option<&str>,
     ) -> Result<crate::models::GazetteLeaf> {
         sqlx::query_as::<_, crate::models::GazetteLeaf>(
             r#"UPDATE gazette_leaves SET
@@ -7352,7 +7683,9 @@ impl Repository {
                     image_url = $16, image_urls = $17,
                     pinned = $18, published_at = $19, scheduled_at = $20,
                     expected_from = $21, expected_to = $22,
-                    title_uk = $23, dek_uk = $24, body_uk = $25,
+                    title_uk = $23, title_es = $24, title_de = $25, title_it = $26,
+                    dek_uk = $27, dek_es = $28, dek_de = $29, dek_it = $30,
+                    body_uk = $31, body_es = $32, body_de = $33, body_it = $34,
                     updated_at = NOW()
                WHERE id = $1
                RETURNING *"#,
@@ -7380,8 +7713,17 @@ impl Repository {
         .bind(expected_from)
         .bind(expected_to)
         .bind(title_uk)
+        .bind(title_es)
+        .bind(title_de)
+        .bind(title_it)
         .bind(dek_uk)
+        .bind(dek_es)
+        .bind(dek_de)
+        .bind(dek_it)
         .bind(body_uk)
+        .bind(body_es)
+        .bind(body_de)
+        .bind(body_it)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Gazette leaf {id} not found")))
@@ -7616,7 +7958,7 @@ impl Repository {
         user_id: Uuid,
     ) -> Result<Vec<crate::models::GazetteWatchListed>> {
         Ok(sqlx::query_as::<_, crate::models::GazetteWatchListed>(
-            "SELECT w.id, w.leaf_id, l.slug AS leaf_slug, l.title_en, l.title_ru, l.title_uk,
+            "SELECT w.id, w.leaf_id, l.slug AS leaf_slug, l.title_en, l.title_ru, l.title_uk, l.title_es, l.title_de, l.title_it,
                     w.cancel_token, w.notified_at, w.created_at
              FROM gazette_watches w
              JOIN gazette_leaves l ON l.id = w.leaf_id
@@ -7875,7 +8217,13 @@ impl Repository {
             older_title_en: Option<String>,
             older_title_ru: Option<String>,
             newer_title_uk: Option<String>,
+            newer_title_es: Option<String>,
+            newer_title_de: Option<String>,
+            newer_title_it: Option<String>,
             older_title_uk: Option<String>,
+            older_title_es: Option<String>,
+            older_title_de: Option<String>,
+            older_title_it: Option<String>,
         }
 
         let tale = kind == "tale";
@@ -7889,7 +8237,7 @@ impl Repository {
 
         let row = sqlx::query_as::<_, NeighborRow>(&format!(
             r#"WITH live AS (
-                 SELECT l.slug, l.title_en, l.title_ru, l.title_uk, l.id, l.shelf_order,
+                 SELECT l.slug, l.title_en, l.title_ru, l.title_uk, l.title_es, l.title_de, l.title_it, l.id, l.shelf_order,
                         COALESCE(l.published_at, l.scheduled_at, l.created_at) AS at
                    FROM gazette_leaves l
                   WHERE (l.status = 'published'
@@ -7902,14 +8250,20 @@ impl Repository {
                         LAG(title_en) OVER (ORDER BY {walk}) AS newer_title_en,
                         LAG(title_ru) OVER (ORDER BY {walk}) AS newer_title_ru,
                         LAG(title_uk) OVER (ORDER BY {walk}) AS newer_title_uk,
+                        LAG(title_es) OVER (ORDER BY {walk}) AS newer_title_es,
+                        LAG(title_de) OVER (ORDER BY {walk}) AS newer_title_de,
+                        LAG(title_it) OVER (ORDER BY {walk}) AS newer_title_it,
                         LEAD(slug) OVER (ORDER BY {walk}) AS older_slug,
                         LEAD(title_en) OVER (ORDER BY {walk}) AS older_title_en,
                         LEAD(title_ru) OVER (ORDER BY {walk}) AS older_title_ru,
-                        LEAD(title_uk) OVER (ORDER BY {walk}) AS older_title_uk
+                        LEAD(title_uk) OVER (ORDER BY {walk}) AS older_title_uk,
+                        LEAD(title_es) OVER (ORDER BY {walk}) AS older_title_es,
+                        LEAD(title_de) OVER (ORDER BY {walk}) AS older_title_de,
+                        LEAD(title_it) OVER (ORDER BY {walk}) AS older_title_it
                    FROM live
                )
-               SELECT newer_slug, newer_title_en, newer_title_ru, newer_title_uk,
-                      older_slug, older_title_en, older_title_ru, older_title_uk
+               SELECT newer_slug, newer_title_en, newer_title_ru, newer_title_uk, newer_title_es, newer_title_de, newer_title_it,
+                      older_slug, older_title_en, older_title_ru, older_title_uk, older_title_es, older_title_de, older_title_it
                  FROM ord
                 WHERE slug = $1"#,
         ))
@@ -7927,6 +8281,9 @@ impl Repository {
                     title_en,
                     title_ru,
                     title_uk: row.newer_title_uk.unwrap_or_default(),
+                    title_es: row.newer_title_es.unwrap_or_default(),
+                    title_de: row.newer_title_de.unwrap_or_default(),
+                    title_it: row.newer_title_it.unwrap_or_default(),
                 })
             }
             _ => None,
@@ -7938,6 +8295,9 @@ impl Repository {
                     title_en,
                     title_ru,
                     title_uk: row.older_title_uk.unwrap_or_default(),
+                    title_es: row.older_title_es.unwrap_or_default(),
+                    title_de: row.older_title_de.unwrap_or_default(),
+                    title_it: row.older_title_it.unwrap_or_default(),
                 })
             }
             _ => None,
@@ -8127,7 +8487,7 @@ impl Repository {
         let (limit_n, offset_n) = if tale_filter.is_some() { (2, 3) } else { (1, 2) };
         let sql = format!(
             "SELECT c.id, c.tale_id,
-                    l.title_en AS tale_title_en, l.title_ru AS tale_title_ru, l.title_uk AS tale_title_uk, l.slug AS tale_slug,
+                    l.title_en AS tale_title_en, l.title_ru AS tale_title_ru, l.title_uk AS tale_title_uk, l.title_es AS tale_title_es, l.title_de AS tale_title_de, l.title_it AS tale_title_it, l.slug AS tale_slug,
                     c.author_name, c.author_email, c.body, c.is_approved, c.admin_reply,
                     c.created_at, c.user_id
              FROM tale_comments c
@@ -8332,8 +8692,8 @@ impl Repository {
         Option<crate::models::GazetteNeighborDto>,
         Option<Option<(bool, bool)>>,
     )> {
-        let sequel: Option<(String, String, String, String)> = sqlx::query_as(
-            "SELECT slug, title_en, title_ru, title_uk FROM gazette_leaves
+        let sequel: Option<(String, String, String, String, String, String, String)> = sqlx::query_as(
+            "SELECT slug, title_en, title_ru, title_uk, title_es, title_de, title_it FROM gazette_leaves
               WHERE sequel_of = $1 AND kind = 'tale'
                 AND (status = 'published'
                      OR (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()))
@@ -8343,8 +8703,8 @@ impl Repository {
         .bind(tale_id)
         .fetch_optional(&self.pg_pool)
         .await?;
-        let original: Option<(String, String, String, String)> = sqlx::query_as(
-            "SELECT o.slug, o.title_en, o.title_ru, o.title_uk
+        let original: Option<(String, String, String, String, String, String, String)> = sqlx::query_as(
+            "SELECT o.slug, o.title_en, o.title_ru, o.title_uk, o.title_es, o.title_de, o.title_it
                FROM gazette_leaves l
                JOIN gazette_leaves o ON o.id = l.sequel_of
               WHERE l.id = $1 AND o.kind = 'tale'
@@ -8367,12 +8727,15 @@ impl Repository {
                 .await?,
             ),
         };
-        let neighbor = |(slug, title_en, title_ru, title_uk): (String, String, String, String)| {
+        let neighbor = |(slug, title_en, title_ru, title_uk, title_es, title_de, title_it): (String, String, String, String, String, String, String)| {
             crate::models::GazetteNeighborDto {
                 slug,
                 title_en,
                 title_ru,
                 title_uk,
+                title_es,
+                title_de,
+                title_it,
             }
         };
         Ok((sequel.map(neighbor), original.map(neighbor), wants))
@@ -8717,11 +9080,14 @@ impl Repository {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
         )>,
     > {
         Ok(sqlx::query_as(
             "SELECT p.id, p.state, p.opened_at, p.closed_at, p.winner_figurine_id,
-                    l.slug, l.title_en, l.title_ru, l.title_uk
+                    l.slug, l.title_en, l.title_ru, l.title_uk, l.title_es, l.title_de, l.title_it
                FROM tale_polls p
                LEFT JOIN gazette_leaves l ON l.id = p.fulfilled_leaf_id
               ORDER BY p.opened_at DESC
@@ -8838,7 +9204,8 @@ impl Repository {
         }
         laid += sqlx::query(
             "INSERT INTO tale_letters (tale_id, email, lang, reason)
-             SELECT $1, s.email, CASE WHEN s.lang = 'ru' THEN 'ru' ELSE 'en' END, $2
+             SELECT $1, s.email,
+                    CASE WHEN s.lang IN ('en', 'ru', 'uk', 'es', 'de', 'it') THEN s.lang ELSE 'en' END, $2
                FROM newsletter_subscribers s
               WHERE s.unsubscribed_at IS NULL AND s.confirmed_at IS NOT NULL
              ON CONFLICT (tale_id, lower(email)) DO NOTHING",
@@ -9097,10 +9464,13 @@ impl Repository {
                   RETURNING t.tale_id, t.email, t.lang, t.reason, t.created_at
              )
              SELECT c.tale_id, c.email, c.lang, c.reason, s.unsubscribe_token,
-                    l.slug, l.title_en, l.title_ru, l.title_uk, l.dek_en, l.dek_ru, l.dek_uk,
+                    l.slug, l.title_en, l.title_ru, l.title_uk, l.title_es, l.title_de, l.title_it, l.dek_en, l.dek_ru, l.dek_uk, l.dek_es, l.dek_de, l.dek_it,
                     o.title_en AS original_title_en, o.title_ru AS original_title_ru,
-                    o.title_uk AS original_title_uk,
-                    f.name AS figurine_name
+                    o.title_uk AS original_title_uk, o.title_es AS original_title_es, o.title_de AS original_title_de, o.title_it AS original_title_it,
+                    -- Имя работы на языке письма, без перевода — английское.
+                    COALESCE((SELECT NULLIF(btrim(ft.name), '') FROM figurine_translations ft
+                               WHERE ft.figurine_id = f.id AND ft.lang = c.lang),
+                             f.name) AS figurine_name
                FROM claimed c
                JOIN gazette_leaves l ON l.id = c.tale_id
                LEFT JOIN gazette_leaves o ON o.id = l.sequel_of
@@ -9175,9 +9545,9 @@ impl Repository {
                   RETURNING n.tale_id, n.user_id, n.lang, n.created_at
              )
              SELECT c.tale_id, c.user_id, u.telegram_id, c.lang,
-                    l.slug, l.title_en, l.title_ru, l.title_uk,
+                    l.slug, l.title_en, l.title_ru, l.title_uk, l.title_es, l.title_de, l.title_it,
                     o.title_en AS original_title_en, o.title_ru AS original_title_ru,
-                    o.title_uk AS original_title_uk
+                    o.title_uk AS original_title_uk, o.title_es AS original_title_es, o.title_de AS original_title_de, o.title_it AS original_title_it
                FROM claimed c
                JOIN gazette_leaves l ON l.id = c.tale_id
                LEFT JOIN gazette_leaves o ON o.id = l.sequel_of
@@ -9293,9 +9663,9 @@ impl Repository {
     /// thumb goes soft, the same reason the detail page reaches for it.
     const BATTLE_CARD_SELECT: &'static str = r#"
         SELECT c.id, c.slug, c.figurine_id, c.race_id, c.status, c.tier,
-               c.type_en, c.type_ru, c.type_uk,
-               c.title_en, c.title_ru, c.title_uk, c.effect_en, c.effect_ru, c.effect_uk,
-               c.lore_en, c.lore_ru, c.lore_uk,
+               c.type_en, c.type_ru, c.type_uk, c.type_es, c.type_de, c.type_it,
+               c.title_en, c.title_ru, c.title_uk, c.title_es, c.title_de, c.title_it, c.effect_en, c.effect_ru, c.effect_uk, c.effect_es, c.effect_de, c.effect_it,
+               c.lore_en, c.lore_ru, c.lore_uk, c.lore_es, c.lore_de, c.lore_it,
                c.cost, c.power, c.health, c.mana, c.traits,
                c.kind, c.armor, c.ward, c.attack_channel, c.reach, c.step, c.speed, c.mend,
                c.abilities, c.budget_points, c.balance_index, c.rules_version,
@@ -9304,8 +9674,11 @@ impl Repository {
                c.shelf_order, c.lendable, c.shoots, c.credit_name, c.edition_size, c.minted,
                c.created_at, c.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
+               (SELECT jsonb_object_agg(t.lang, t.name)::text FROM figurine_translations t
+                 WHERE t.figurine_id = c.figurine_id AND t.name IS NOT NULL AND btrim(t.name) <> '')
+               AS figurine_name_translations,
                fi.file_path AS figurine_face_path, fi.id AS figurine_face_id,
-               r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.name_uk AS race_name_uk,
+               r.name_en AS race_name_en, r.name_ru AS race_name_ru, r.name_uk AS race_name_uk, r.name_es AS race_name_es, r.name_de AS race_name_de, r.name_it AS race_name_it,
                r.icon_url AS race_icon_url,
                r.level_frames AS race_level_frames,
                r.motion_wear AS race_motion_wear,
@@ -9463,10 +9836,11 @@ impl Repository {
                     price_dust, price_feed, level_price_dust,
                     art_url, art_focal, frame_override, motion_wear, lendable,
                     edition_size, credit_name, shoots,
-                    type_uk, title_uk, effect_uk, lore_uk
+                    type_uk, type_es, type_de, type_it, title_uk, title_es, title_de, title_it,
+                    effect_uk, effect_es, effect_de, effect_it, lore_uk, lore_es, lore_de, lore_it
                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
                          $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,
-                         $41,$42,$43,$44)
+                         $41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56)
                RETURNING *"#,
         )
         .bind(&w.slug)
@@ -9510,9 +9884,21 @@ impl Repository {
         .bind(w.credit_name.as_deref())
         .bind(w.shoots)
         .bind(w.type_uk.as_deref())
+        .bind(w.type_es.as_deref())
+        .bind(w.type_de.as_deref())
+        .bind(w.type_it.as_deref())
         .bind(&w.title_uk)
+        .bind(&w.title_es)
+        .bind(&w.title_de)
+        .bind(&w.title_it)
         .bind(w.effect_uk.as_deref())
+        .bind(w.effect_es.as_deref())
+        .bind(w.effect_de.as_deref())
+        .bind(w.effect_it.as_deref())
         .bind(w.lore_uk.as_deref())
+        .bind(w.lore_es.as_deref())
+        .bind(w.lore_de.as_deref())
+        .bind(w.lore_it.as_deref())
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -9539,7 +9925,10 @@ impl Repository {
                     art_url = $34, art_focal = $35, frame_override = $36,
                     motion_wear = $37, lendable = $38, edition_size = $39,
                     shoots = $41,
-                    type_uk = $42, title_uk = $43, effect_uk = $44, lore_uk = $45,
+                    type_uk = $42, type_es = $43, type_de = $44, type_it = $45,
+                    title_uk = $46, title_es = $47, title_de = $48, title_it = $49,
+                    effect_uk = $50, effect_es = $51, effect_de = $52, effect_it = $53,
+                    lore_uk = $54, lore_es = $55, lore_de = $56, lore_it = $57,
                     rules_version = rules_version + 1,
                     updated_at = NOW()
                WHERE id = $1
@@ -9587,9 +9976,21 @@ impl Repository {
         .bind(w.credit_name.as_deref())
         .bind(w.shoots)
         .bind(w.type_uk.as_deref())
+        .bind(w.type_es.as_deref())
+        .bind(w.type_de.as_deref())
+        .bind(w.type_it.as_deref())
         .bind(&w.title_uk)
+        .bind(&w.title_es)
+        .bind(&w.title_de)
+        .bind(&w.title_it)
         .bind(w.effect_uk.as_deref())
+        .bind(w.effect_es.as_deref())
+        .bind(w.effect_de.as_deref())
+        .bind(w.effect_it.as_deref())
         .bind(w.lore_uk.as_deref())
+        .bind(w.lore_es.as_deref())
+        .bind(w.lore_de.as_deref())
+        .bind(w.lore_it.as_deref())
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle card {id} not found")))
@@ -9644,7 +10045,7 @@ impl Repository {
     /// what tells the keeper whether a rename is a small act or a large one.
     pub async fn list_battle_races(&self) -> Result<Vec<crate::models::BattleRaceListed>> {
         Ok(sqlx::query_as::<_, crate::models::BattleRaceListed>(
-            "SELECT r.id, r.slug, r.name_en, r.name_ru, r.name_uk, r.note_en, r.note_ru, r.note_uk,
+            "SELECT r.id, r.slug, r.name_en, r.name_ru, r.name_uk, r.name_es, r.name_de, r.name_it, r.note_en, r.note_ru, r.note_uk, r.note_es, r.note_de, r.note_it,
                     r.icon_url, r.level_frames, r.motion_wear, r.sort_order,
                     (SELECT COUNT(*) FROM battle_cards c WHERE c.race_id = r.id)::bigint
                         AS card_count,
@@ -9681,13 +10082,21 @@ impl Repository {
         level_frames: Option<&str>,
         motion_wear: Option<&str>,
         name_uk: &str,
+        name_es: &str,
+        name_de: &str,
+        name_it: &str,
         note_uk: Option<&str>,
+        note_es: Option<&str>,
+        note_de: Option<&str>,
+        note_it: Option<&str>,
         race_damage: Option<&str>,
     ) -> Result<crate::models::BattleRace> {
         Ok(sqlx::query_as::<_, crate::models::BattleRace>(
             "INSERT INTO battle_races (slug, name_en, name_ru, note_en, note_ru, icon_url,
-                                       level_frames, motion_wear, name_uk, note_uk, race_damage)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
+                                       level_frames, motion_wear,
+                                       name_uk, name_es, name_de, name_it,
+                                       note_uk, note_es, note_de, note_it, race_damage)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *",
         )
         .bind(slug)
         .bind(name_en)
@@ -9698,7 +10107,13 @@ impl Repository {
         .bind(level_frames)
         .bind(motion_wear)
         .bind(name_uk)
+        .bind(name_es)
+        .bind(name_de)
+        .bind(name_it)
         .bind(note_uk)
+        .bind(note_es)
+        .bind(note_de)
+        .bind(note_it)
         .bind(race_damage)
         .fetch_one(&self.pg_pool)
         .await?)
@@ -9716,15 +10131,23 @@ impl Repository {
         level_frames: Option<&str>,
         motion_wear: Option<&str>,
         name_uk: &str,
+        name_es: &str,
+        name_de: &str,
+        name_it: &str,
         note_uk: Option<&str>,
+        note_es: Option<&str>,
+        note_de: Option<&str>,
+        note_it: Option<&str>,
         // `None` — не трогать таблицу урона; `Some(None)` — очистить.
         race_damage: Option<Option<&str>>,
     ) -> Result<crate::models::BattleRace> {
         sqlx::query_as::<_, crate::models::BattleRace>(
             "UPDATE battle_races SET slug = $2, name_en = $3, name_ru = $4,
                     note_en = $5, note_ru = $6, icon_url = $7, level_frames = $8,
-                    motion_wear = $9, name_uk = $10, note_uk = $11,
-                    race_damage = CASE WHEN $12 THEN $13 ELSE race_damage END,
+                    motion_wear = $9,
+                    name_uk = $10, name_es = $11, name_de = $12, name_it = $13,
+                    note_uk = $14, note_es = $15, note_de = $16, note_it = $17,
+                    race_damage = CASE WHEN $18 THEN $19 ELSE race_damage END,
                     updated_at = NOW()
               WHERE id = $1 RETURNING *",
         )
@@ -9738,7 +10161,13 @@ impl Repository {
         .bind(level_frames)
         .bind(motion_wear)
         .bind(name_uk)
+        .bind(name_es)
+        .bind(name_de)
+        .bind(name_it)
         .bind(note_uk)
+        .bind(note_es)
+        .bind(note_de)
+        .bind(note_it)
         .bind(race_damage.is_some())
         .bind(race_damage.flatten())
         .fetch_optional(&self.pg_pool)
@@ -9911,7 +10340,9 @@ impl Repository {
                  slug = $2, title_en = $3, title_ru = $4, note_en = $5, note_ru = $6,
                  rule = $7, threshold = $8, currency = $9, amount = $10,
                  period = $11, starts_at = $12, ends_at = $13, status = $14,
-                 sort_order = $15, by_hand = $16, title_uk = $17, note_uk = $18,
+                 sort_order = $15, by_hand = $16,
+                 title_uk = $17, title_es = $18, title_de = $19, title_it = $20,
+                 note_uk = $21, note_es = $22, note_de = $23, note_it = $24,
                  updated_at = NOW()
               WHERE id = $1
               RETURNING *"
@@ -9919,8 +10350,9 @@ impl Repository {
             "INSERT INTO battle_errands
                  (id, slug, title_en, title_ru, note_en, note_ru, rule, threshold,
                   currency, amount, period, starts_at, ends_at, status, sort_order, by_hand,
-                  title_uk, note_uk)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                  title_uk, title_es, title_de, title_it, note_uk, note_es, note_de, note_it)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+                     $19,$20,$21,$22,$23,$24)
              RETURNING *"
         };
         let row = sqlx::query_as::<_, crate::models::BattleErrand>(sql)
@@ -9941,7 +10373,13 @@ impl Repository {
             .bind(w.sort_order)
             .bind(w.by_hand)
             .bind(&w.title_uk)
+            .bind(&w.title_es)
+            .bind(&w.title_de)
+            .bind(&w.title_it)
             .bind(w.note_uk.as_deref())
+            .bind(w.note_es.as_deref())
+            .bind(w.note_de.as_deref())
+            .bind(w.note_it.as_deref())
             .fetch_optional(&self.pg_pool)
             .await?;
         row.ok_or_else(|| AppError::NotFound("Battle errand not found".into()))
@@ -10848,7 +11286,7 @@ impl Repository {
     ) -> Result<Vec<crate::models::BattleMatchRow>> {
         Ok(sqlx::query_as::<_, crate::models::BattleMatchRow>(
             "SELECT m.id, u.display_name AS guest, m.challenge_id,
-                    c.title_ru, c.title_uk, c.title_en, m.outcome, m.rounds,
+                    c.title_ru, c.title_uk, c.title_es, c.title_de, c.title_it, c.title_en, m.outcome, m.rounds,
                     m.setup, m.actions, m.created_at, m.finished_at
                FROM battle_matches m
                JOIN users u ON u.id = m.user_id
@@ -10880,8 +11318,9 @@ impl Repository {
                 "INSERT INTO battle_challenges
                      (slug, title_en, title_ru, note_en, note_ru, setup, bot_depth,
                       reward_dust, player_side, status, reward_finish_dust,
-                      title_uk, note_uk)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *",
+                      title_uk, title_es, title_de, title_it, note_uk, note_es, note_de, note_it)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+                 RETURNING *",
             )
             .bind(w.slug)
             .bind(w.title_en)
@@ -10895,14 +11334,22 @@ impl Repository {
             .bind(w.status)
             .bind(w.reward_finish_dust)
             .bind(w.title_uk)
+            .bind(w.title_es)
+            .bind(w.title_de)
+            .bind(w.title_it)
             .bind(w.note_uk)
+            .bind(w.note_es)
+            .bind(w.note_de)
+            .bind(w.note_it)
             .fetch_one(&self.pg_pool)
             .await?),
             Some(id) => sqlx::query_as::<_, crate::models::BattleChallenge>(
                 "UPDATE battle_challenges SET slug=$2, title_en=$3, title_ru=$4,
                         note_en=$5, note_ru=$6, setup=$7, bot_depth=$8,
                         reward_dust=$9, player_side=$10, status=$11,
-                        reward_finish_dust=$12, title_uk=$13, note_uk=$14,
+                        reward_finish_dust=$12,
+                        title_uk=$13, title_es=$14, title_de=$15, title_it=$16,
+                        note_uk=$17, note_es=$18, note_de=$19, note_it=$20,
                         updated_at = NOW()
                   WHERE id=$1 RETURNING *",
             )
@@ -10919,7 +11366,13 @@ impl Repository {
             .bind(w.status)
             .bind(w.reward_finish_dust)
             .bind(w.title_uk)
+            .bind(w.title_es)
+            .bind(w.title_de)
+            .bind(w.title_it)
             .bind(w.note_uk)
+            .bind(w.note_es)
+            .bind(w.note_de)
+            .bind(w.note_it)
             .fetch_optional(&self.pg_pool)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Battle challenge {id} not found"))),
@@ -11236,12 +11689,19 @@ impl Repository {
         icon_url: Option<&str>,
         point_value: Option<f64>,
         name_uk: &str,
+        name_es: &str,
+        name_de: &str,
+        name_it: &str,
         rules_uk: Option<&str>,
+        rules_es: Option<&str>,
+        rules_de: Option<&str>,
+        rules_it: Option<&str>,
     ) -> Result<crate::models::BattleKeyword> {
         Ok(sqlx::query_as::<_, crate::models::BattleKeyword>(
             "INSERT INTO battle_keywords (slug, name_en, name_ru, rules_en, rules_ru, icon_url, point_value,
-                                          name_uk, rules_uk)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",
+                                          name_uk, name_es, name_de, name_it,
+                                          rules_uk, rules_es, rules_de, rules_it)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *",
         )
         .bind(slug)
         .bind(name_en)
@@ -11251,7 +11711,13 @@ impl Repository {
         .bind(icon_url)
         .bind(point_value)
         .bind(name_uk)
+        .bind(name_es)
+        .bind(name_de)
+        .bind(name_it)
         .bind(rules_uk)
+        .bind(rules_es)
+        .bind(rules_de)
+        .bind(rules_it)
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -11267,12 +11733,19 @@ impl Repository {
         icon_url: Option<&str>,
         point_value: Option<f64>,
         name_uk: &str,
+        name_es: &str,
+        name_de: &str,
+        name_it: &str,
         rules_uk: Option<&str>,
+        rules_es: Option<&str>,
+        rules_de: Option<&str>,
+        rules_it: Option<&str>,
     ) -> Result<crate::models::BattleKeyword> {
         sqlx::query_as::<_, crate::models::BattleKeyword>(
             "UPDATE battle_keywords SET slug = $2, name_en = $3, name_ru = $4,
                     rules_en = $5, rules_ru = $6, icon_url = $7, point_value = $8,
-                    name_uk = $9, rules_uk = $10,
+                    name_uk = $9, name_es = $10, name_de = $11, name_it = $12,
+                    rules_uk = $13, rules_es = $14, rules_de = $15, rules_it = $16,
                     updated_at = NOW()
               WHERE id = $1 RETURNING *",
         )
@@ -11285,7 +11758,13 @@ impl Repository {
         .bind(icon_url)
         .bind(point_value)
         .bind(name_uk)
+        .bind(name_es)
+        .bind(name_de)
+        .bind(name_it)
         .bind(rules_uk)
+        .bind(rules_es)
+        .bind(rules_de)
+        .bind(rules_it)
         .fetch_optional(&self.pg_pool)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Battle keyword {id} not found")))
@@ -12520,7 +12999,7 @@ impl Repository {
     pub async fn list_market_copies(&self) -> Result<Vec<crate::models::CopyListingDto>> {
         Ok(sqlx::query_as::<_, crate::models::CopyListingDto>(
             "SELECT m.id, c.id AS copy_id, m.price, m.currency, c.serial, c.level,
-                    c.card_id, k.title_en, k.title_ru, k.title_uk, k.credit_name,
+                    c.card_id, k.title_en, k.title_ru, k.title_uk, k.title_es, k.title_de, k.title_it, k.credit_name,
                     u.display_name AS seller, m.created_at
                FROM market_listings m
                JOIN card_copies c ON c.id = m.subject_id
@@ -12539,7 +13018,7 @@ impl Repository {
     pub async fn list_my_copies(&self, owner: Uuid) -> Result<Vec<crate::models::MyCopyDto>> {
         Ok(sqlx::query_as::<_, crate::models::MyCopyDto>(
             "SELECT c.id, c.card_id, c.serial, c.level, c.locked_by IS NOT NULL AS locked,
-                    k.title_en, k.title_ru, k.title_uk
+                    k.title_en, k.title_ru, k.title_uk, k.title_es, k.title_de, k.title_it
                FROM card_copies c
                JOIN battle_cards k ON k.id = c.card_id
               WHERE c.owner_id = $1
@@ -12794,14 +13273,19 @@ impl Repository {
 
         let mut out = Vec::with_capacity(rows.len());
         for (id, listing, state, from, from_id, created_at) in rows {
+            let (want, want_titles) = names.get(&listing).cloned().unwrap_or_default();
+            let (gives, gives_titles): (Vec<_>, Vec<_>) =
+                gives.remove(&id).unwrap_or_default().into_iter().unzip();
             out.push(crate::models::TradeDto {
                 id,
                 listing_id: listing,
                 state,
                 from,
                 mine: from_id == who,
-                want: names.get(&listing).cloned().unwrap_or_default(),
-                gives: gives.remove(&id).unwrap_or_default(),
+                want,
+                want_titles,
+                gives,
+                gives_titles,
                 created_at,
             });
         }
@@ -12814,9 +13298,12 @@ impl Repository {
     async fn listing_names_batch(
         &self,
         listings: &[Uuid],
-    ) -> Result<std::collections::HashMap<Uuid, String>> {
-        let rows: Vec<(Uuid, String)> = sqlx::query_as(
-            "SELECT m.id, COALESCE(f.name, k.title_ru, '')
+    ) -> Result<std::collections::HashMap<Uuid, (String, std::collections::HashMap<String, String>)>> {
+        let rows: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
+            "SELECT m.id, COALESCE(f.name, k.title_ru, ''),
+                    CASE WHEN k.id IS NOT NULL THEN jsonb_strip_nulls(jsonb_build_object(
+                   'en', NULLIF(k.title_en, ''), 'ru', NULLIF(k.title_ru, ''), 'uk', NULLIF(k.title_uk, ''),
+                   'es', NULLIF(k.title_es, ''), 'de', NULLIF(k.title_de, ''), 'it', NULLIF(k.title_it, '')))::text END
                FROM market_listings m
                LEFT JOIN frame_licenses l ON l.id = m.subject_id AND m.kind = 'license'
                LEFT JOIN studio_frames f ON f.id = l.frame_id
@@ -12827,7 +13314,10 @@ impl Repository {
         .bind(listings)
         .fetch_all(&self.pg_pool)
         .await?;
-        Ok(rows.into_iter().collect())
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, titles)| (id, (name, crate::models::parse_name_translations(titles.as_deref()))))
+            .collect())
     }
 
     /// То же для того, что предложено В мену, тоже одним запросом на весь
@@ -12835,9 +13325,14 @@ impl Repository {
     async fn trade_items_batch(
         &self,
         trades: &[Uuid],
-    ) -> Result<std::collections::HashMap<Uuid, Vec<String>>> {
-        let rows: Vec<(Uuid, String)> = sqlx::query_as(
-            "SELECT i.trade_id, COALESCE(f.name, k.title_ru, '')
+    ) -> Result<
+        std::collections::HashMap<Uuid, Vec<(String, std::collections::HashMap<String, String>)>>,
+    > {
+        let rows: Vec<(Uuid, String, Option<String>)> = sqlx::query_as(
+            "SELECT i.trade_id, COALESCE(f.name, k.title_ru, ''),
+                    CASE WHEN k.id IS NOT NULL THEN jsonb_strip_nulls(jsonb_build_object(
+                   'en', NULLIF(k.title_en, ''), 'ru', NULLIF(k.title_ru, ''), 'uk', NULLIF(k.title_uk, ''),
+                   'es', NULLIF(k.title_es, ''), 'de', NULLIF(k.title_de, ''), 'it', NULLIF(k.title_it, '')))::text END
                FROM trade_items i
                LEFT JOIN frame_licenses l ON l.id = i.subject_id AND i.kind = 'license'
                LEFT JOIN studio_frames f ON f.id = l.frame_id
@@ -12848,10 +13343,14 @@ impl Repository {
         .bind(trades)
         .fetch_all(&self.pg_pool)
         .await?;
-        let mut out: std::collections::HashMap<Uuid, Vec<String>> =
-            std::collections::HashMap::new();
-        for (trade_id, name) in rows {
-            out.entry(trade_id).or_default().push(name);
+        let mut out: std::collections::HashMap<
+            Uuid,
+            Vec<(String, std::collections::HashMap<String, String>)>,
+        > = std::collections::HashMap::new();
+        for (trade_id, name, titles) in rows {
+            out.entry(trade_id)
+                .or_default()
+                .push((name, crate::models::parse_name_translations(titles.as_deref())));
         }
         Ok(out)
     }
@@ -12859,7 +13358,7 @@ impl Repository {
     // ── Свои роды ───────────────────────────────────────────────────────────
 
     const STUDIO_RACE_SELECT: &'static str =
-        "id, name_en, name_ru, name_uk, note_en, note_ru, note_uk, icon_url, status, keeper_word,
+        "id, name_en, name_ru, name_uk, name_es, name_de, name_it, note_en, note_ru, note_uk, note_es, note_de, note_it, icon_url, status, keeper_word,
          approved_at, race_id, created_at, updated_at";
 
     pub async fn list_studio_races(
@@ -12892,8 +13391,9 @@ impl Repository {
     ) -> Result<crate::models::StudioRaceDto> {
         Ok(sqlx::query_as::<_, crate::models::StudioRaceDto>(&format!(
             "INSERT INTO studio_races (owner_id, name_en, name_ru, note_en, note_ru, icon_url, lang,
-                                       name_uk, note_uk)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING {}",
+                                       name_uk, name_es, name_de, name_it,
+                                       note_uk, note_es, note_de, note_it)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING {}",
             Self::STUDIO_RACE_SELECT
         ))
         .bind(owner)
@@ -12904,7 +13404,13 @@ impl Repository {
         .bind(req.icon_url.as_deref())
         .bind(&req.lang)
         .bind(&req.name_uk)
+        .bind(&req.name_es)
+        .bind(&req.name_de)
+        .bind(&req.name_it)
         .bind(req.note_uk.as_deref())
+        .bind(req.note_es.as_deref())
+        .bind(req.note_de.as_deref())
+        .bind(req.note_it.as_deref())
         .fetch_one(&self.pg_pool)
         .await?)
     }
@@ -12920,7 +13426,8 @@ impl Repository {
         Ok(sqlx::query_as::<_, crate::models::StudioRaceDto>(&format!(
             "UPDATE studio_races
                 SET name_en = $3, name_ru = $4, note_en = $5, note_ru = $6, icon_url = $7,
-                    name_uk = $8, note_uk = $9,
+                    name_uk = $8, name_es = $9, name_de = $10, name_it = $11,
+                    note_uk = $12, note_es = $13, note_de = $14, note_it = $15,
                     updated_at = NOW()
               WHERE id = $1 AND owner_id = $2 AND status IN ('draft', 'withdrawn')
              RETURNING {}",
@@ -12934,7 +13441,13 @@ impl Repository {
         .bind(req.note_ru.as_deref())
         .bind(req.icon_url.as_deref())
         .bind(&req.name_uk)
+        .bind(&req.name_es)
+        .bind(&req.name_de)
+        .bind(&req.name_it)
         .bind(req.note_uk.as_deref())
+        .bind(req.note_es.as_deref())
+        .bind(req.note_de.as_deref())
+        .bind(req.note_it.as_deref())
         .fetch_optional(&self.pg_pool)
         .await?)
     }
@@ -12975,7 +13488,7 @@ impl Repository {
 
     pub async fn studio_race_queue(&self) -> Result<Vec<crate::models::StudioRaceQueueDto>> {
         Ok(sqlx::query_as::<_, crate::models::StudioRaceQueueDto>(
-            "SELECT r.id, r.name_en, r.name_ru, r.name_uk, r.note_en, r.note_ru, r.note_uk,
+            "SELECT r.id, r.name_en, r.name_ru, r.name_uk, r.name_es, r.name_de, r.name_it, r.note_en, r.note_ru, r.note_uk, r.note_es, r.note_de, r.note_it,
                     r.icon_url, u.display_name AS author, r.updated_at
                FROM studio_races r
                JOIN users u ON u.id = r.owner_id
@@ -13258,6 +13771,9 @@ impl Repository {
         Ok(sqlx::query_as::<_, crate::models::AuctionDto>(
             "SELECT a.id, a.kind, a.subject_id, u.display_name AS seller, a.estate,
                     COALESCE(f.name, k.title_ru, '') AS name,
+                    CASE WHEN k.id IS NOT NULL THEN jsonb_strip_nulls(jsonb_build_object(
+                   'en', NULLIF(k.title_en, ''), 'ru', NULLIF(k.title_ru, ''), 'uk', NULLIF(k.title_uk, ''),
+                   'es', NULLIF(k.title_es, ''), 'de', NULLIF(k.title_de, ''), 'it', NULLIF(k.title_it, '')))::text END AS card_titles_json,
                     c.card_id,
                     a.start_price, a.currency,
                     (SELECT MAX(b.amount) FROM auction_bids b WHERE b.auction_id = a.id) AS top_bid,
@@ -13273,7 +13789,13 @@ impl Repository {
               ORDER BY a.ends_at",
         )
         .fetch_all(&self.pg_pool)
-        .await?)
+        .await?
+        .into_iter()
+        .map(|mut a: crate::models::AuctionDto| {
+            a.card_titles = crate::models::parse_name_translations(a.card_titles_json.as_deref());
+            a
+        })
+        .collect())
     }
 
     /// Поставить. Ставка НИЧЕГО не списывает: пока идёт торг, деньги у человека

@@ -42,10 +42,12 @@ impl AppService {
         .fetch_all(self.repo.pg_pool())
         .await?;
         let have: HashMap<Uuid, String> = rows.into_iter().collect();
+        let ids: Vec<Uuid> = figs.iter().map(|f| f.id).collect();
+        let texts = self.repo.get_figurine_translations(&ids).await?;
         let stale = figs
             .iter()
             .filter(|f| {
-                let hash = Self::text_hash(&model, &Self::curatorial_text(f));
+                let hash = Self::text_hash(&model, &Self::curatorial_text(f, texts.get(&f.id)));
                 have.get(&f.id) != Some(&hash)
             })
             .map(|f| f.id)

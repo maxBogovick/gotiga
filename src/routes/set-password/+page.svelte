@@ -2,7 +2,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { t , brandName } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { VISUAL_CATEGORIES, iconLabel, getIconById, generatePersonalPool } from '$lib/data/visualIcons';
   import { lang } from '$lib/i18n';
@@ -106,8 +106,8 @@
           class="auth-icon-btn"
           class:selected={selections[currentStepIndex()] === icon.id}
           onclick={() => { selections[currentStepIndex()] = icon.id; }}
-          title={icon.labelRu}
-          aria-label={icon.labelRu}
+          title={iconLabel(icon, $lang)}
+          aria-label={iconLabel(icon, $lang)}
         >
           {@html icon.svg}
           <span class="auth-icon-label">{iconLabel(icon, $lang)}</span>

@@ -1,0 +1,17 @@
+{
+  "kind": "challenges",
+  "table": "battle_challenges",
+  "key": "slug",
+  "fields": {
+    "title": "title_{lang}",
+    "note": "note_{lang}"
+  },
+  "limits": {
+    "title": 80,
+    "note": 400
+  },
+  "original": "ru",
+  "count": 0,
+  "chars": 0,
+  "items": []
+}

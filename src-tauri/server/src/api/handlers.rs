@@ -5899,7 +5899,7 @@ pub async fn package_studio_frame(
     let mut name = String::new();
     let mut body: Option<serde_json::Value> = None;
     let mut publish = false;
-    let mut lang = String::from("ru");
+    let mut lang = String::from("en");
     let mut raw: Vec<(String, Vec<u8>)> = Vec::new();
 
     while let Some(field) = multipart

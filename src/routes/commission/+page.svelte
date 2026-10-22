@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import { api, resolveMediaUrl } from '$lib/api';
   import { t, lang , brandName } from '$lib/i18n';
+  import { localizeList, workName } from '$lib/workText';
   import { authStore } from '$lib/stores/auth.svelte';
   import { keepEmail } from '$lib/utils/nameEmail';
   import { isValidEmail } from '$lib/validation';
@@ -98,15 +99,18 @@
   let refSeries = $state('');
   let refPage = $state(1);
 
+  // Названия и серии на языке читателя; автору в заявку уходят английские (`refItems`).
+  let refShown = $derived(localizeList(refItems, $lang));
+
   let refSeriesOptions = $derived.by(() => {
     const set = new Set<string>();
-    for (const f of refItems) if (f.series) set.add(f.series);
+    for (const f of refShown) if (f.series) set.add(f.series);
     return [...set].sort((a, b) => a.localeCompare(b));
   });
 
   let filteredRefs = $derived.by(() => {
     const q = refSearch.trim().toLowerCase();
-    return refItems.filter(
+    return refShown.filter(
       (f) => (!q || f.name.toLowerCase().includes(q)) && (!refSeries || f.series === refSeries),
     );
   });
@@ -121,7 +125,7 @@
   });
 
   function refName(id: string) {
-    return refItems.find((f) => f.id === id)?.name ?? id;
+    return refShown.find((f) => f.id === id)?.name ?? id;
   }
 
   // Step 3 — contact
@@ -327,7 +331,7 @@
           {/if}
           <div class="source-card-copy">
             <span class="source-card-kicker">{$t('commissionSourceKicker')}</span>
-            <strong>{sourceFigurine?.name ?? $t('commissionSourceLoading')}</strong>
+            <strong>{(sourceFigurine && workName(sourceFigurine, $lang)) || $t('commissionSourceLoading')}</strong>
             <span>
               {#if sourceLoadError}
                 {$t('commissionSourceUnavailable')}

@@ -4,15 +4,15 @@
 // проверить отдельно. Загружает данные и спрашивает смысловой поиск сервера
 // (`/search`, тот же, что у поля на главной) компонент `SiteSearch`.
 //
-// Работы на сайте названы по-английски, а спрашивают их по-русски и
-// по-украински. Поэтому основы слов переводятся словарём `WORD_STEMS` в те
+// Работы на сайте названы по-английски, а спрашивают их по-русски,
+// по-украински, по-испански, по-немецки и по-итальянски. Поэтому основы слов переводятся словарём `WORD_STEMS` в те
 // английские слова, которые стоят в названиях. Смысловой поиск сервера тоже
 // понимает русский, но отвечает только про работы и не всегда сразу; словарь
 // даёт мгновенный ответ, а сервер дополняет его тем, что близко по смыслу.
 import { leafCopy } from '$lib/gazette';
 import { normalizeQuery } from '$lib/keeper-search';
-import type { Lang } from '$lib/i18n';
-import type { BattleCard, FigurineListItem, GazetteLeaf } from '$lib/types/api';
+import { localized, type Lang } from '$lib/i18n';
+import type { BattleCard, FigurineListItem, FigurineText, GazetteLeaf } from '$lib/types/api';
 
 export interface SiteIndex {
   works: FigurineListItem[];
@@ -84,15 +84,81 @@ const WORD_STEMS: [string, string][] = [
   ['глин', 'polymer clay'], ['шерст', 'wool'], ['вовн', 'wool'], ['ткан', 'fabric'], ['тканин', 'fabric'],
   ['проволок', 'wire'], ['дріт', 'wire'], ['акрил', 'acrylic'], ['дерев', 'wood'], ['металл', 'metal'], ['метал', 'metal'],
   ['кружев', 'lace'], ['мереж', 'lace'],
+  // Испанский, немецкий, итальянский. Основы записаны без знаков над буквами:
+  // `expand` сверяет и слово как есть, и слово без них (`plainLatin`).
+  ['bruj', 'witch'], ['hexe', 'witch'], ['streg', 'witch'], ['jaga', 'yaga'], ['cane', 'dog'], ['cani', 'dog'],
+  ['abuel', 'granny grandma'], ['oma', 'granny grandma'], ['omas', 'granny grandma'], ['grossmutter', 'granny grandma'], ['nonn', 'granny grandma'],
+  ['muneca', 'doll'], ['munec', 'doll'], ['puppe', 'doll'], ['bambol', 'doll'],
+  ['guardabos', 'forester'], ['forster', 'forester'], ['foerster', 'forester'],
+  ['gallin', 'hen chicken'], ['huhn', 'hen chicken'], ['huhner', 'hen chicken'], ['henne', 'hen chicken'], ['pollo', 'chicken'], ['polli', 'chicken'], ['pulcin', 'chicken'], ['kuken', 'chicken'],
+  ['pajar', 'bird birds'], ['vogel', 'bird birds'], ['uccell', 'bird birds'],
+  ['monstru', 'frankenstein'], ['mostr', 'frankenstein'], ['ungeheuer', 'frankenstein'],
+  ['cesta', 'basket'], ['cesto', 'basket'], ['cestin', 'basket'], ['korb', 'basket'], ['korbe', 'basket'],
+  ['gnom', 'gnome'], ['zwerg', 'gnome'], ['vampir', 'vampire'],
+  ['mago', 'wizard'], ['magos', 'wizard'], ['maghi', 'wizard'], ['zauberer', 'wizard'], ['hechicer', 'wizard'], ['stregon', 'wizard'],
+  ['chaman', 'shaman'], ['schaman', 'shaman'], ['sciaman', 'shaman'],
+  ['siren', 'mermaid'], ['meerjungfrau', 'mermaid'], ['nixe', 'mermaid'],
+  ['gato', 'cats'], ['gata', 'cats'], ['gatos', 'cats'], ['gatt', 'cats'], ['katze', 'cats'], ['katz', 'cats'], ['kater', 'cats'],
+  ['raton', 'mice'], ['maus', 'mice'], ['mause', 'mice'], ['topo', 'mice'], ['topi', 'mice'], ['topolin', 'mice'],
+  ['gorrion', 'sparrow sparrows'], ['spatz', 'sparrow sparrows'], ['passer', 'sparrow sparrows'],
+  ['serpient', 'snakes'], ['serpent', 'snakes'], ['schlang', 'snakes'],
+  ['escob', 'broom'], ['besen', 'broom'], ['scopa', 'broom'],
+  ['morter', 'mortar'], ['morser', 'mortar'], ['mortai', 'mortar'],
+  ['libro', 'book books'], ['libri', 'book books'], ['buch', 'book books'], ['bucher', 'book books'],
+  ['cuent', 'tales fairy'], ['marchen', 'tales fairy'], ['fiab', 'tales fairy'], ['favol', 'tales fairy'],
+  ['caracol', 'snail'], ['schneck', 'snail'], ['lumac', 'snail'], ['brot', 'bread'],
+  ['sastr', 'tailor'], ['schneider', 'tailor'], ['sarto', 'tailor'], ['sarta', 'tailor'],
+  ['cociner', 'cooking'], ['koch', 'cooking'], ['cuoc', 'cooking'],
+  ['perro', 'dog'], ['perrit', 'dog'], ['hund', 'dog'], ['cagnol', 'dog'],
+  ['halcon', 'falconer'], ['falkn', 'falconer'], ['falcon', 'falconer'],
+  ['jorobad', 'quazimodo notre'], ['glockner', 'quazimodo notre'], ['buckl', 'quazimodo notre'], ['gobb', 'quazimodo notre'], ['quasimod', 'quazimodo'],
+  ['music', 'musician'], ['musik', 'musician'], ['flautist', 'piper'], ['pfeifer', 'piper'], ['gaiter', 'piper'], ['dudelsack', 'piper'], ['zampogn', 'piper'],
+  ['rattenfanger', 'pied piper'], ['pifferaio', 'pied piper'],
+  ['cavernicol', 'caveman'], ['hohlenmensch', 'caveman'], ['modelo', 'model'], ['modell', 'model'],
+  ['hacha', 'axe'], ['axt', 'axe'], ['ascia', 'axe'],
+  ['bailarin', 'ballerina'], ['balleri', 'ballerina'],
+  ['nina', 'girl'], ['ninas', 'girl'], ['chica', 'girl'], ['madchen', 'girl'], ['ragazz', 'girl'],
+  ['cerdit', 'piglet'], ['cerdo', 'piglet'], ['ferkel', 'piglet'], ['schwein', 'piglet'], ['maial', 'piglet'], ['porcell', 'piglet'],
+  ['mosquet', 'musketeer porthos'], ['musket', 'musketeer porthos'], ['moschett', 'musketeer porthos'],
+  ['fantasm', 'ghost'], ['geist', 'ghost'], ['gespenst', 'ghost'], ['indio', 'indian'], ['indianer', 'indian'], ['indiano', 'indian'],
+  ['caperucit', 'riding hood'], ['rotkappchen', 'riding hood'], ['cappuccett', 'riding hood'],
+  ['mono', 'monkey'], ['monos', 'monkey'], ['affe', 'monkey'], ['scimmi', 'monkey'],
+  ['pelirroj', 'red-haired'], ['rothaarig', 'red-haired'], ['rossa', 'red-haired'], ['rosso', 'red-haired'],
+  ['catedral', 'notre-dame'], ['kathedral', 'notre-dame'], ['cattedral', 'notre-dame'],
+  ['negr', 'black'], ['schwarz', 'black'], ['nero', 'black'], ['nera', 'black'],
+  ['viej', 'old'], ['vecch', 'old'],
+  ['cocina', 'kitchen'], ['kuche', 'kitchen'], ['cucin', 'kitchen'],
+  ['dama', 'lady'], ['senora', 'lady'], ['signora', 'lady'], ['hombr', 'man'], ['mann', 'man'], ['uomo', 'man'],
+  ['arcill', 'polymer clay'], ['argill', 'polymer clay'], ['polimer', 'polymer clay'], ['modelliermasse', 'polymer clay'],
+  ['lana', 'wool'], ['wolle', 'wool'], ['tela', 'fabric'], ['stoff', 'fabric'], ['tessut', 'fabric'],
+  ['alambr', 'wire'], ['draht', 'wire'], ['acril', 'acrylic'], ['acryl', 'acrylic'],
+  ['mader', 'wood'], ['holz', 'wood'], ['legno', 'wood'], ['encaj', 'lace'], ['spitze', 'lace'], ['pizzo', 'lace'],
 ];
 
+/** Слово латиницей без знаков над буквами и с «ss» вместо «ß»: «muñeca» →
+ *  «muneca», «Mädchen» → «madchen». Кириллицу не трогает: там «й» и «ё» —
+ *  отдельные буквы, а не «и» и «е» со знаком. */
+function plainLatin(token: string): string {
+  if (!/^[\p{Script=Latin}\d'’-]+$/u.test(token)) return token;
+  return token.normalize('NFD').replace(/\p{M}/gu, '').replace(/ß/g, 'ss');
+}
+
 /** Служебные слова запроса: «бабушка с котами» ищет бабушку и котов, а не «с». */
-const STOP = new Set(['с', 'со', 'и', 'в', 'во', 'на', 'з', 'із', 'та', 'й', 'with', 'and', 'the', 'a', 'an', 'of']);
+const STOP = new Set([
+  'с', 'со', 'и', 'в', 'во', 'на', 'з', 'із', 'та', 'й', 'with', 'and', 'the', 'a', 'an', 'of',
+  'con', 'y', 'e', 'el', 'la', 'los', 'las', 'de', 'del', 'un', 'una', 'il', 'lo', 'gli', 'le', 'di', 'da', 'col',
+  'mit', 'und', 'der', 'die', 'das', 'den', 'dem', 'ein', 'eine', 'einen', 'von',
+]);
 
 function expand(token: string): string[] {
   const out = new Set([token]);
+  const plain = plainLatin(token);
+  // Недописанное слово тоже ищет («ведь» → ведьма). У латинских основ — с
+  // четырёх букв: иначе английское «cat» дописывалось бы до «catedral».
+  const hit = (word: string, stem: string) =>
+    word.startsWith(stem) || (word.length >= (/^[a-z]/.test(stem) ? 4 : 3) && stem.startsWith(word));
   for (const [stem, en] of WORD_STEMS) {
-    if (token.startsWith(stem) || (token.length >= 3 && stem.startsWith(token))) {
+    if (hit(token, stem) || (plain !== token && hit(plain, stem))) {
       for (const w of en.split(' ')) out.add(w);
     }
   }
@@ -108,16 +174,23 @@ function has(text: string | null | undefined, words: string[]): boolean {
 function cardTitle(card: BattleCard, lang: Lang): string {
   if (lang === 'ru') return card.titleRu || card.titleEn;
   if (lang === 'uk') return card.titleUk || card.titleRu || card.titleEn;
+  if (lang !== 'en') return localized(card, 'title', lang);
   return card.titleEn || card.titleRu;
 }
 
 function cardRace(card: BattleCard, lang: Lang): string {
   if (lang === 'ru') return card.raceNameRu ?? card.raceNameEn ?? '';
   if (lang === 'uk') return card.raceNameUk ?? card.raceNameRu ?? card.raceNameEn ?? '';
+  if (lang !== 'en') return localized(card, 'raceName', lang);
   return card.raceNameEn ?? card.raceNameRu ?? '';
 }
 
 export { cardTitle, cardRace };
+
+/** Название работы рядом с листом или картой — на всех языках. */
+function namesOfWork(rec: { figurineName?: string | null; figurineNameTranslations?: Partial<Record<string, string>> }): (string | null | undefined)[] {
+  return [rec.figurineName, ...Object.values(rec.figurineNameTranslations ?? {})];
+}
 
 /** Карта работы: у карты одна работа. Строения — не героини. */
 function cardsByWork(cards: BattleCard[]): Map<string, BattleCard> {
@@ -138,7 +211,7 @@ export function searchSite(
   meaningIds: string[] | null,
 ): SiteFound | null {
   const tokens = normalizeQuery(query)
-    .split(/[\s,.;:!?«»"“”()]+/)
+    .split(/[\s,.;:!?¿¡«»"“”„()]+/)
     .filter((t) => t.length >= 2 && !STOP.has(t));
   if (tokens.length === 0) return null;
   const sets = tokens.map(expand);
@@ -150,13 +223,17 @@ export function searchSite(
   const scored: { item: FigurineListItem; why: FoundWhy; score: number }[] = [];
   for (const w of index.works) {
     const card = cardOf.get(w.id) ?? null;
-    const titles = card ? [card.titleRu, card.titleEn, card.titleUk] : [];
-    const races = card ? [card.raceNameRu, card.raceNameEn, card.raceNameUk] : [];
-    const craft = [w.material, w.technique, w.series];
-    if (!every([w.name, ...titles, ...races, ...craft, w.shortText])) continue;
+    const titles = card ? [card.titleRu, card.titleEn, card.titleUk, card.titleEs, card.titleDe, card.titleIt] : [];
+    const races = card ? [card.raceNameRu, card.raceNameEn, card.raceNameUk, card.raceNameEs, card.raceNameDe, card.raceNameIt] : [];
+    // Тексты работы на всех языках сайта: работу находят по названию на любом.
+    const texts = [w, ...Object.values(w.translations ?? {})].filter(Boolean) as FigurineText[];
+    const names = texts.map((x) => x.name);
+    const craft = texts.flatMap((x) => [x.material, x.technique, x.series]);
+    const blurbs = texts.map((x) => x.shortText);
+    if (!every([...names, ...titles, ...races, ...craft, ...blurbs])) continue;
     let score = 0;
     let why: FoundWhy | null = null;
-    if (has(w.name, words)) { score += 10; why = { kind: 'name' }; }
+    if (names.some((x) => has(x, words))) { score += 10; why = { kind: 'name' }; }
     if (card && titles.some((x) => has(x, words))) { score += 8; why ??= { kind: 'card', title: cardTitle(card, lang) }; }
     if (card && races.some((x) => has(x, words))) { score += 5; why ??= { kind: 'race', race: cardRace(card, lang) }; }
     if (craft.some((x) => has(x, words))) { score += 2; why ??= { kind: 'craft' }; }
@@ -185,11 +262,12 @@ export function searchSite(
   const tales: Found<GazetteLeaf>[] = [];
   for (const leaf of index.tales) {
     const own = leafCopy(leaf, lang);
-    const other = [leaf.titleRu, leaf.titleEn, leaf.titleUk, leaf.dekRu, leaf.dekEn];
-    if (!every([own.title, own.dek, own.body, leaf.figurineName, ...other])) continue;
+    const other = [leaf.titleRu, leaf.titleEn, leaf.titleUk, leaf.titleEs, leaf.titleDe, leaf.titleIt, leaf.dekRu, leaf.dekEn, leaf.dekUk, leaf.dekEs, leaf.dekDe, leaf.dekIt];
+    const workNames = namesOfWork(leaf);
+    if (!every([own.title, own.dek, own.body, ...workNames, ...other])) continue;
     const why: FoundWhy = has(own.title, words) || has(own.dek, words)
       ? { kind: 'name' }
-      : has(leaf.figurineName, words)
+      : workNames.some((x) => has(x, words))
         ? { kind: 'work' }
         : { kind: 'text' };
     tales.push({ item: leaf, why });
@@ -198,16 +276,16 @@ export function searchSite(
   const gazette: Found<GazetteLeaf>[] = [];
   for (const leaf of index.gazette) {
     const own = leafCopy(leaf, lang);
-    if (!every([own.title, own.dek, own.body, leaf.figurineName, leaf.titleRu, leaf.titleEn])) continue;
+    if (!every([own.title, own.dek, own.body, ...namesOfWork(leaf), leaf.titleRu, leaf.titleEn])) continue;
     gazette.push({ item: leaf, why: has(own.title, words) ? { kind: 'name' } : { kind: 'text' } });
   }
 
   const cards: Found<BattleCard>[] = [];
   for (const c of index.cards) {
     if (c.kind === 'structure') continue;
-    const titles = [c.titleRu, c.titleEn, c.titleUk];
-    const races = [c.raceNameRu, c.raceNameEn, c.raceNameUk];
-    if (!every([...titles, ...races, c.figurineName])) continue;
+    const titles = [c.titleRu, c.titleEn, c.titleUk, c.titleEs, c.titleDe, c.titleIt];
+    const races = [c.raceNameRu, c.raceNameEn, c.raceNameUk, c.raceNameEs, c.raceNameDe, c.raceNameIt];
+    if (!every([...titles, ...races, ...namesOfWork(c)])) continue;
     const why: FoundWhy = titles.some((x) => has(x, words))
       ? { kind: 'name' }
       : races.some((x) => has(x, words))

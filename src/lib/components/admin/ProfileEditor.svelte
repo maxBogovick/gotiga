@@ -4,6 +4,17 @@
   import type { AuthorProfile } from '$lib/types/api';
   import { fade } from 'svelte/transition';
   import { t } from '$lib/i18n';
+  import TextLangSwitch, { fieldIn, type TextLang } from '$lib/components/admin/TextLangSwitch.svelte';
+
+  // Подпись и рассказ на других языках: `taglineRu` … `bioIt` рядом с английскими.
+  let textLang = $state<TextLang>('en');
+  type Loose = Record<string, string | null | undefined>;
+  const textGet = (stem: 'tagline' | 'bio') => ((profile as unknown as Loose)[fieldIn(stem, textLang)] ?? '') as string;
+  const textSet = (stem: 'tagline' | 'bio', v: string) => { (profile as unknown as Loose)[fieldIn(stem, textLang)] = v; };
+  const hintFor = (stem: 'tagline' | 'bio', fallback: string) =>
+    textLang === 'en' ? fallback : ((profile as unknown as Loose)[stem] ?? '').trim() || fallback;
+  const langFilled = (l: TextLang) =>
+    (['tagline', 'bio'] as const).some((stem) => ((profile as unknown as Loose)[fieldIn(stem, l)] ?? '').trim() !== '');
 
   let profile = $state<AuthorProfile>({
     name: '',
@@ -128,6 +139,7 @@
       <p class="text-xs text-[#5f4636] animate-pulse">{$t('adminLoading')}</p>
     {:else}
       <div class="space-y-5">
+        <TextLangSwitch bind:value={textLang} filled={langFilled} />
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
@@ -144,9 +156,9 @@
             <label for="profile-tagline" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfileTagline')}</label>
             <input
               id="profile-tagline"
-              bind:value={profile.tagline}
+              bind:value={() => textGet('tagline'), (v) => textSet('tagline', v)}
               type="text"
-              placeholder="Gothic miniature sculptor"
+              placeholder={hintFor('tagline', 'Gothic miniature sculptor')}
               class="admin-input w-full"
             />
           </div>
@@ -156,9 +168,9 @@
           <label for="profile-bio" class="block text-[10px] tracking-[0.06em] uppercase text-[#5f4636] mb-1">{$t('adminProfileBio')}</label>
           <textarea
             id="profile-bio"
-            bind:value={profile.bio}
+            bind:value={() => textGet('bio'), (v) => textSet('bio', v)}
             rows="6"
-            placeholder={$t('adminProfileBioPlaceholder')}
+            placeholder={hintFor('bio', $t('adminProfileBioPlaceholder'))}
             class="admin-input w-full resize-y"
           ></textarea>
         </div>

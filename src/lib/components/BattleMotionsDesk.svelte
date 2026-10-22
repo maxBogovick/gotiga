@@ -18,7 +18,7 @@
   // Повод на записи — подсказка, не замок: карта вешает вид на любой повод.
   import { onMount, untrack } from 'svelte';
   import { resolveMediaUrl } from '$lib/api';
-  import { t, lang, localized } from '$lib/i18n';
+  import { t, lang, localized, labelFor, textInLang } from '$lib/i18n';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import BattleMotionStage from '$lib/components/BattleMotionStage.svelte';
   import {
@@ -140,6 +140,9 @@
         nameEn: ready.nameEn,
         nameRu: ready.nameRu,
         nameUk: ready.nameUk,
+        nameEs: ready.nameEs,
+        nameDe: ready.nameDe,
+        nameIt: ready.nameIt,
         occasion: ready.occasion,
         gestures: ready.gestures.map((g) => ({ ...g })),
       };
@@ -443,12 +446,15 @@
     }
   }
 
-  function addBlank() {
+  async function addBlank() {
     if (motions.length >= MOTIONS_MAX) return;
     const born = newMotion('blow');
-    born.nameRu = $t('adminMotionsUntitled');
-    born.nameEn = 'New motion';
-    born.nameUk = 'Новий рух';
+    // Имя на каждом языке — из словарей; не загрузился словарь — поле пустое.
+    const [en, ru, uk, es, de, it] = await Promise.all(
+      (['en', 'ru', 'uk', 'es', 'de', 'it'] as const).map((l) => textInLang(l, 'adminMotionsUntitled').catch(() => '')),
+    );
+    if (motions.length >= MOTIONS_MAX) return;
+    Object.assign(born, { nameEn: en, nameRu: ru, nameUk: uk, nameEs: es, nameDe: de, nameIt: it });
     motions = [...motions, born];
     faceKind = 'mine';
     heldId = born.id;
@@ -465,6 +471,9 @@
       nameRu: `${src.nameRu} ·`,
       nameEn: `${src.nameEn} ·`,
       nameUk: src.nameUk ? `${src.nameUk} ·` : '',
+      nameEs: src.nameEs ? `${src.nameEs} ·` : '',
+      nameDe: src.nameDe ? `${src.nameDe} ·` : '',
+      nameIt: src.nameIt ? `${src.nameIt} ·` : '',
     };
     motions = [...motions, twin];
     heldId = twin.id;
@@ -2368,6 +2377,18 @@
                 <label>
                   <span class="kicker">{$t('adminMotionsNameUk')}</span>
                   <input bind:value={held.nameUk} />
+                </label>
+                <label>
+                  <span class="kicker">{labelFor($t('adminMotionsNameUk'), 'es')}</span>
+                  <input bind:value={held.nameEs} />
+                </label>
+                <label>
+                  <span class="kicker">{labelFor($t('adminMotionsNameUk'), 'de')}</span>
+                  <input bind:value={held.nameDe} />
+                </label>
+                <label>
+                  <span class="kicker">{labelFor($t('adminMotionsNameUk'), 'it')}</span>
+                  <input bind:value={held.nameIt} />
                 </label>
                 <label>
                   <span class="kicker">{$t('adminMotionsOccasion')}</span>

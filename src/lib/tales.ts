@@ -4,6 +4,8 @@
 // What is its own is the room: an address of its own, a shelf arranged by
 // hand instead of by date, and prose broken into paragraphs and ornaments.
 
+import { get } from 'svelte/store';
+import { countForm, lang, type Lang } from '$lib/i18n';
 import type { GazetteLeaf } from '$lib/types/api';
 import { SITE_LINK_RE, parseSiteLink, trimLink, type SiteRef } from '$lib/siteLinks';
 
@@ -194,19 +196,13 @@ export function readingMinutes(body: string | null | undefined): number {
 }
 
 /**
- * Which of the three Russian forms the minute count takes.
- *
- * No language is asked for on purpose. English has one form and spells all
- * three keys the same, so picking by the Russian rule lands on the right string
- * in both languages, and a `lang` argument here would be a branch that never
- * branches.
+ * Which form the minute count takes in the language on screen: three forms in
+ * Russian and Ukrainian, two in the others (`countForm`). The language is read
+ * at the call: the callers write `$t(minutesKey(n))`, and a language change
+ * re-runs that whole expression because `$t` changed.
  */
-export function minutesKey(mins: number): 'talesMinuteOne' | 'talesMinuteFew' | 'talesMinuteMany' {
-  const ten = mins % 10;
-  const hundred = mins % 100;
-  if (ten === 1 && hundred !== 11) return 'talesMinuteOne';
-  if (ten >= 2 && ten <= 4 && (hundred < 12 || hundred > 14)) return 'talesMinuteFew';
-  return 'talesMinuteMany';
+export function minutesKey(mins: number, l: Lang = get(lang)): 'talesMinuteOne' | 'talesMinuteFew' | 'talesMinuteMany' {
+  return `talesMinute${countForm(l, mins)}`;
 }
 
 /**

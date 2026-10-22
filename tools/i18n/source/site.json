@@ -1,0 +1,92 @@
+{
+  "kind": "site",
+  "table": "разные (см. where у строки)",
+  "key": "key",
+  "fields": {
+    "text": "см. where"
+  },
+  "notes": "Тексты главной, автора, витрины показов. Одноязычные поля — английский.",
+  "original": "en",
+  "count": 14,
+  "chars": 151,
+  "items": [
+    {
+      "key": "home_content.title",
+      "text": null,
+      "where": "app_resources key='home_content' (JSON в file_path)"
+    },
+    {
+      "key": "home_content.kicker",
+      "text": "Small handmade dolls and sculpture",
+      "where": "app_resources key='home_content' (JSON в file_path)"
+    },
+    {
+      "key": "home_content.lead",
+      "text": "One of a kind miniature dolls and sculpture for your dollhouse and home decor",
+      "where": "app_resources key='home_content' (JSON в file_path)"
+    },
+    {
+      "key": "home_content.heroCaptionTitle",
+      "text": null,
+      "where": "app_resources key='home_content' (JSON в file_path)"
+    },
+    {
+      "key": "home_content.heroCaptionMeta",
+      "text": null,
+      "where": "app_resources key='home_content' (JSON в file_path)"
+    },
+    {
+      "key": "home_content.heroCaptionCta",
+      "text": null,
+      "where": "app_resources key='home_content' (JSON в file_path)"
+    },
+    {
+      "key": "author_profile.name",
+      "text": "",
+      "where": "app_resources key='author_profile' (JSON в file_path)"
+    },
+    {
+      "key": "author_profile.tagline",
+      "text": null,
+      "where": "app_resources key='author_profile' (JSON в file_path)"
+    },
+    {
+      "key": "author_profile.bio",
+      "text": null,
+      "where": "app_resources key='author_profile' (JSON в file_path)"
+    },
+    {
+      "key": "programme_settings.curatorNote",
+      "text": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "where": "settings key='programme_settings' (JSON, поля …En/…Ru/…Uk)"
+    },
+    {
+      "key": "programme_settings.curatorSign",
+      "text": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "where": "settings key='programme_settings' (JSON, поля …En/…Ru/…Uk)"
+    },
+    {
+      "key": "showing_rooms.41d2a9ec-4d2f-4301-88c1-13354256c96c.name",
+      "text": "Night Hall",
+      "where": "showing_rooms.name (ключ id прода)"
+    },
+    {
+      "key": "showing_rooms.fa797ea4-553f-490b-a617-5470242ecf01.name",
+      "text": "Weekend",
+      "where": "showing_rooms.name (ключ id прода)"
+    },
+    {
+      "key": "showing_rooms.efcd23cf-e53c-4b67-818a-ff3d8a6eaa3f.name",
+      "text": "Wednesday special offer",
+      "where": "showing_rooms.name (ключ id прода)"
+    }
+  ]
+}

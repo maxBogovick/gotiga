@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { currentLocale } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { api, resolveMediaUrl } from '$lib/api';
   import type { CommissionDto, CommissionStatus, ThreadDetailDto, AttachmentInput, Figurine, FigurineListItem } from '$lib/types/api';
@@ -225,7 +226,7 @@
   }
 
   function chatFormatDate(iso: string) {
-    return new Date(iso).toLocaleString('en-US', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString(currentLocale(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
   // Delete petition as moderation (refused once work has started).
@@ -263,7 +264,7 @@
   };
 
   function formatDate(iso: string) {
-    return new Date(iso).toLocaleString('en-US', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString(currentLocale(), { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
   const filterTabs: [string, string][] = [['', 'All'], ...STATUSES.map((s) => [s, statusLabel[s]] as [string, string])];
 </script>

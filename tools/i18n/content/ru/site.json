@@ -1,0 +1,26 @@
+{
+  "kind": "site",
+  "lang": "ru",
+  "items": [
+    {
+      "key": "home_content.kicker",
+      "text": "Маленькие куклы и скульптура ручной работы"
+    },
+    {
+      "key": "home_content.lead",
+      "text": "Авторские миниатюрные куклы и скульптура в единственном экземпляре — для кукольного домика и для дома"
+    },
+    {
+      "key": "showing_rooms.41d2a9ec-4d2f-4301-88c1-13354256c96c.name",
+      "text": "Ночной зал"
+    },
+    {
+      "key": "showing_rooms.fa797ea4-553f-490b-a617-5470242ecf01.name",
+      "text": "Выходные"
+    },
+    {
+      "key": "showing_rooms.efcd23cf-e53c-4b67-818a-ff3d8a6eaa3f.name",
+      "text": "Показ по средам"
+    }
+  ]
+}

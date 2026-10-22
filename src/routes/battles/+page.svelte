@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   // Скромные эпические битвы — the shelf of cards.
   //
   // Not a shop window, whatever the presence of prices might suggest. The room
@@ -441,7 +442,7 @@
   {@const copy = cardCopy(card, $lang)}
   {@const prices = pricesOf(card)}
   {@const held = holdingOf(card.id)}
-  {@const name = copy.title || card.figurineName || ''}
+  {@const name = copy.title || figurineNameIn(card, $lang)}
   {@const kin = [headerCopy(card, $lang).race, frameName(frameFor(card.tier, frames), $lang)].filter(Boolean).join(' · ')}
   <!-- Стоимость и сила напечатаны в углах самой карты, и вторая запись под
        ней говорила бы то же самое дважды. Здесь то, чего на малой карте не

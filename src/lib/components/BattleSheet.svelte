@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   // Лист карты — разворот рядом с лицом, не бланк на весь экран.
   // Карта слева якорем, паспорт справа вплотную: ширина по содержимому.
   // Ноль — это число, на листе его видно.
@@ -127,7 +128,7 @@
   let head = $derived(headerCopy(card, $lang));
   let prices = $derived(pricesOf(card));
   let href = $derived(workHref(card));
-  let workName = $derived(card.figurineName?.trim() || '');
+  let workName = $derived(figurineNameIn(card, $lang));
 
   // Байка о той же работе: лист карты ведёт к её истории, а не только к фото.
   let tales = $state<GazetteLeaf[]>([]);

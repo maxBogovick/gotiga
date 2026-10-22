@@ -16,7 +16,7 @@
    * own pinned specimen card in the hero (visible to every visitor, not just
    * returning ones) — see `pinnedSpecimenFig` in `routes/+page.svelte`.
    */
-  import { t } from '$lib/i18n';
+  import { t, lang, quote } from '$lib/i18n';
   import type { FigurineListItem } from '$lib/types/api';
   import { diffVisit, commitVisit, type RoomRef, type VisitChanges } from '$lib/visit-ledger';
 
@@ -82,7 +82,7 @@
         {#each homed as f (f.id)}
           <a class="mark mark-link" href={`/figurines/${f.id}`}>
             <span class="mark-seal" aria-hidden="true">✦</span>
-            <span class="mark-named">«{f.name}»</span>
+            <span class="mark-named">{quote($lang, f.name)}</span>
             <span class="mark-label">{$t('homeLedgerHomed')}</span>
           </a>
         {/each}
@@ -98,7 +98,7 @@
         {#each newRooms as r (r.id)}
           <a class="mark mark-link" href={`/hall/${r.id}`}>
             <span class="mark-seal" aria-hidden="true">❦</span>
-            <span class="mark-named">«{r.name}»</span>
+            <span class="mark-named">{quote($lang, r.name)}</span>
             <span class="mark-label">{$t('homeLedgerRoomWaking')}</span>
           </a>
         {/each}

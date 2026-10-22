@@ -12,7 +12,7 @@
    * No backend of its own (load() reuses showing-rooms + the figurine list).
    */
   import { onMount } from 'svelte';
-  import { t, lang, brandName, LANG_META } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META, localizedBase } from '$lib/i18n';
   import HomeFigurineTile from '$lib/components/HomeFigurineTile.svelte';
   import { houseClock } from '$lib/stores/house-clock.svelte';
   import {
@@ -50,7 +50,7 @@
 </script>
 
 <svelte:head>
-  <title>{data.room ? `${data.room.name} — ${$brandName}` : $t('hallNotFound')}</title>
+  <title>{data.room ? `${localizedBase(data.room, 'name', $lang)} — ${$brandName}` : $t('hallNotFound')}</title>
   <meta name="robots" content="noindex" />
 </svelte:head>
 
@@ -70,7 +70,7 @@
   {:else}
     <header class="hall-head">
       <p class="eyebrow"><span class="eyebrow-rule"></span>{$t('hallEyebrow')}</p>
-      <h1 class="hall-name">{data.room.name}</h1>
+      <h1 class="hall-name">{localizedBase(data.room, 'name', $lang)}</h1>
       {#if gated}
         <p class="hall-schedule" class:is-open={openNow}>{scheduleLine}</p>
         <p class="hall-note">{openNow ? $t('hallOpenNote') : $t('hallSealedNote')}</p>

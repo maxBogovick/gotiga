@@ -24,6 +24,9 @@ import build_images  # noqa: E402
 import cards as C  # noqa: E402
 import layout  # noqa: E402
 
+sys.path.insert(0, str(HERE.parent / "i18n"))
+import texts as T  # noqa: E402  (es/de/it from tools/i18n/content)
+
 INK_LIGHT, INK_DARK = "#f4ead8", "#0d0703"
 SILVER = {"cost": "#e9e6f2", "health": "#f4e8e8", "power": "#f6ece0", "mana": "#e6eef6"}
 
@@ -95,11 +98,12 @@ def card_body(c, race_id, fig, art_url, fo, power, health):
         "effectEn": e[0], "effectRu": e[1], "effectUk": e[2],
         "cost": c["cost"], "power": power, "health": health, "mana": c["mana"],
         "armor": c["armor"], "ward": c["ward"], "attackChannel": c["channel"], "reach": c["reach"],
-        "step": 1, "speed": 3, "mend": 0, "traits": [], "abilities": c["abilities"],
+        "step": 1, "speed": 3, "mend": 0, "traits": [], "abilities": T.card_abilities(c["slug"], c["abilities"]),
         "priceDust": c["price_dust"], "priceFeed": None, "artUrl": art_url,
         "frameOverride": json.dumps(fo, ensure_ascii=False),
         "motionWear": json.dumps(c["motion"]), "figurineId": fig,
         "shoots": bool(c.get("shoots")),
+        **T.card_fields(c["slug"]),
     }
 
 
@@ -136,7 +140,8 @@ def main():
         if slug in race_id:
             continue
         code, r = http("POST", f"{a.base}/admin/battles/races", key, {
-            "slug": slug, "nameEn": en, "nameRu": ru, "nameUk": uk, "noteRu": note, "noteEn": note, "noteUk": note})
+            "slug": slug, "nameEn": en, "nameRu": ru, "nameUk": uk, "noteRu": note, "noteEn": note, "noteUk": note,
+            **T.race_fields(slug)})
         print("race", slug, code)
         race_id[slug] = r["id"]
 
@@ -177,10 +182,13 @@ def main():
     # race damage ring (needs every race id)
     _, rs = http("GET", f"{a.base}/battles/races")
     ids = {r["slug"]: r["id"] for r in rs}
+    now = {r["slug"]: r for r in rs}
     for slug, en, ru, uk, note, _hue in C.RACES:
         target = C.RACE_RING[slug]
         body = {"slug": slug, "nameEn": en, "nameRu": ru, "nameUk": uk, "noteEn": note, "noteRu": note,
-                "noteUk": note, "raceDamage": {"attack": 1, "against": [ids[target]], "defence": 0, "from": []}}
+                "noteUk": note, "raceDamage": {"attack": 1, "against": [ids[target]], "defence": 0, "from": []},
+                **T.race_fields(slug)}
+        T.carry(body, now.get(slug), ("name", "note"))
         code, res = http("PUT", f"{a.base}/admin/battles/races/{ids[slug]}", key, body)
         print("race damage", slug, "->", target, code)
 

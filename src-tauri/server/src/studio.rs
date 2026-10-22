@@ -407,7 +407,7 @@ pub const SNIPE_MINUTES: i64 = 10;
 pub const TRADE_ITEMS_MAX: usize = 6;
 
 pub fn default_lang() -> String {
-    "ru".to_string()
+    "en".to_string()
 }
 
 #[cfg(test)]

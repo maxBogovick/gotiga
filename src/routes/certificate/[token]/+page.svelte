@@ -4,6 +4,8 @@
   import QRCode from 'qrcode';
   import { api } from '$lib/api';
   import type { PublicCertificateDto } from '$lib/types/api';
+  import { t, lang, LANG_META } from '$lib/i18n';
+  import { figurineNameIn } from '$lib/workText';
 
   let token = $derived(page.params.token ?? '');
   let certificate = $state<PublicCertificateDto | null>(null);
@@ -13,7 +15,7 @@
   let qrDataUrl = $state('');
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return new Date(iso).toLocaleDateString(LANG_META[$lang].locale, {
       day: '2-digit',
       month: 'long',
       year: 'numeric',
@@ -34,7 +36,7 @@
         },
       });
     } catch {
-      error = 'Certificate was not found.';
+      error = 'not-found';
     } finally {
       loading = false;
     }
@@ -42,11 +44,8 @@
 </script>
 
 <svelte:head>
-  <title>Collector Certificate</title>
-  <meta
-    name="description"
-    content="Public collector certificate verification for an authenticated Ritunia reserve."
-  />
+  <title>{$t('certPageTitle')}</title>
+  <meta name="description" content={$t('certPageDescription')} />
 </svelte:head>
 
 <main class="min-h-screen bg-[#fff9f0] px-5 py-10 text-[#34251c]">
@@ -55,59 +54,59 @@
 
     {#if loading}
       <div class="mt-12 border border-[#34251c]/10 bg-white p-8">
-        <p class="font-['Fraunces'] text-2xl">Checking certificate…</p>
+        <p class="font-['Fraunces'] text-2xl">{$t('certChecking')}</p>
       </div>
     {:else if error || !certificate}
       <div class="mt-12 border border-red-900/15 bg-white p-8">
-        <p class="text-xs uppercase tracking-[0.18em] text-red-700">Not verified</p>
-        <h1 class="mt-2 font-['Fraunces'] text-3xl">Certificate not found</h1>
+        <p class="text-xs uppercase tracking-[0.18em] text-red-700">{$t('certNotVerified')}</p>
+        <h1 class="mt-2 font-['Fraunces'] text-3xl">{$t('certNotFound')}</h1>
         <p class="mt-3 text-sm text-[#5f4636]">
-          This verification link does not match an issued collector certificate.
+          {$t('certNotFoundText')}
         </p>
       </div>
     {:else}
       <div class="mt-8 grid gap-6 md:grid-cols-[minmax(0,1fr)_260px]">
         <article class="border border-[#34251c]/10 bg-white p-8">
           <p class="text-xs uppercase tracking-[0.18em] {certificate.revoked ? 'text-red-700' : 'text-emerald-800'}">
-            {certificate.revoked ? 'Revoked certificate' : 'Verified certificate'}
+            {certificate.revoked ? $t('certRevoked') : $t('certVerified')}
           </p>
-          <h1 class="mt-3 font-['Fraunces'] text-4xl leading-tight">Collector Certificate</h1>
+          <h1 class="mt-3 font-['Fraunces'] text-4xl leading-tight">{$t('certPageTitle')}</h1>
           <dl class="mt-8 space-y-5 text-sm">
             <div>
-              <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">Certificate number</dt>
+              <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">{$t('certNumber')}</dt>
               <dd class="mt-1 font-['Fraunces'] text-2xl">{certificate.certificateNumber}</dd>
             </div>
             <div>
-              <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">Work</dt>
+              <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">{$t('certWork')}</dt>
               <dd class="mt-1">
                 {#if certificate.figurineId}
                   <a class="text-[#6f3b24] hover:underline" href="/figurines/{certificate.figurineId}">
-                    {certificate.figurineName}
+                    {figurineNameIn(certificate, $lang)}
                   </a>
                 {:else}
-                  <span class="text-[#34251c]">{certificate.figurineName}</span>
+                  <span class="text-[#34251c]">{figurineNameIn(certificate, $lang)}</span>
                 {/if}
               </dd>
             </div>
             <div>
-              <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">Issued</dt>
+              <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">{$t('certIssued')}</dt>
               <dd class="mt-1">{formatDate(certificate.issuedAt)}</dd>
             </div>
             <div>
-              <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">Public status</dt>
+              <dt class="text-[10px] uppercase tracking-[0.16em] text-[#5f4636]/70">{$t('certStatus')}</dt>
               <dd class="mt-1">
                 {certificate.revoked
-                  ? 'This certificate has been revoked and should not be treated as active.'
-                  : 'This certificate is active and matches an issued reserve certificate.'}
+                  ? $t('certStatusRevoked')
+                  : $t('certStatusActive')}
               </dd>
             </div>
           </dl>
         </article>
 
         <aside class="border border-[#34251c]/10 bg-white p-5">
-          <p class="text-xs uppercase tracking-[0.16em] text-[#5f4636]/70">Verification QR</p>
+          <p class="text-xs uppercase tracking-[0.16em] text-[#5f4636]/70">{$t('certQr')}</p>
           {#if qrDataUrl}
-            <img class="mt-4 h-[220px] w-[220px]" src={qrDataUrl} alt="Certificate verification QR code" />
+            <img class="mt-4 h-[220px] w-[220px]" src={qrDataUrl} alt={$t('certQrAlt')} />
           {/if}
           <p class="mt-4 break-all text-xs text-[#5f4636]">{verifyUrl}</p>
         </aside>

@@ -3,12 +3,13 @@
   import { page } from '$app/state';
   import QRCode from 'qrcode';
   import NotFound from '$lib/components/NotFound.svelte';
-  import { brandName, t } from '$lib/i18n';
+  import { brandName, t, lang } from '$lib/i18n';
+  import { localizeWork } from '$lib/workText';
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
   import type { Figurine, FigurineStatus } from '$lib/types/api';
 
   let { data } = $props();
-  let figurine = $derived(data.figurine as Figurine | null);
+  let figurine = $derived(data.figurine ? localizeWork(data.figurine as Figurine, $lang) : null);
   let id = $derived(page.params.id ?? '');
   let qrDataUrl = $state('');
 
@@ -103,7 +104,7 @@
   <NotFound message={$t('notFoundMessage')} />
 {:else}
   <main class="passport-page">
-    <nav class="passport-nav" aria-label="Passport navigation">
+    <nav class="passport-nav" aria-label={$t('passportNavLabel')}>
       <a href="/figurines/{id}">{$t('passportBackToWork')}</a>
       <button type="button" onclick={() => window.print()}>{$t('passportPrint')}</button>
     </nav>
@@ -135,7 +136,7 @@
 
         <hr class="ps-rule" aria-hidden="true" />
 
-        <dl class="ps-ledger" aria-label="Passport facts">
+        <dl class="ps-ledger" aria-label={$t('passportFactsLabel')}>
           {#each facts as fact}
             <div class="ps-row">
               <dt>{fact.label}</dt>
@@ -147,7 +148,7 @@
 
         {#if notes.length}
           <hr class="ps-rule" aria-hidden="true" />
-          <section class="ps-notes" aria-label="Passport notes">
+          <section class="ps-notes" aria-label={$t('passportNotesLabel')}>
             {#each notes as note}
               <div class="ps-note">
                 <h2>{note.label}</h2>
@@ -159,7 +160,7 @@
 
         <div class="ps-validation">
           {#if qrDataUrl}
-            <img src={qrDataUrl} alt="Passport verification QR code" />
+            <img src={qrDataUrl} alt={$t('passportQrAlt')} />
           {/if}
           <div class="ps-validation-text">
             <span class="ps-validation-mark">{$t('passportFooterVerified')}</span>

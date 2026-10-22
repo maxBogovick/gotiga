@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   // Поиск в шапке. Два вида одного и того же:
   //   · `field` — строка с лупой в верхней строке шапки на компьютере; лист
   //     выдачи раскрывается из-под неё;
@@ -20,7 +21,8 @@
   import { leafCopy, leafHref, quietDate, leafWhen, leafCoverUrl } from '$lib/gazette';
   import { cardHref } from '$lib/world';
   import { api, resolveMediaUrl } from '$lib/api';
-  import { loadIndex } from '$lib/site-index';
+  import { indexIn, loadIndex } from '$lib/site-index';
+  import { buildVocabulary, suggest } from '$lib/site-suggest';
   import { interact } from '$lib/analytics';
   import { navCounts } from '$lib/stores/nav-counts.svelte';
   import {
@@ -44,7 +46,9 @@
   const listId = `site-search-list-${uid}`;
   const archId = `site-search-arch-${uid}`;
 
-  let index = $state.raw<SiteIndex | null>(null);
+  let indexRaw = $state.raw<SiteIndex | null>(null);
+  // Названия работ на языке читателя (`indexIn`).
+  let index = $derived(indexRaw ? indexIn(indexRaw, $lang) : null);
   let loadFailed = $state(false);
   let query = $state('');
   let open = $state(false);
@@ -61,6 +65,21 @@
   let found = $derived<SiteFound | null>(index ? searchSite(index, query, $lang, meaning) : null);
   let asked = $derived(query.trim().length >= 2);
 
+  // Подсказки при вводе: хвост слова серым и ряд вариантов под полем.
+  let vocab = $derived(index ? buildVocabulary(index, $lang) : []);
+  let sugg = $derived(suggest(vocab, query));
+  /** Хвост виден, только пока курсор в конце строки: иначе он лёг бы поверх набранного. */
+  let caretAtEnd = $state(true);
+  function syncCaret() {
+    caretAtEnd = !!input && input.selectionStart === query.length && input.selectionEnd === query.length;
+  }
+  function acceptGhost(): boolean {
+    if (!sugg.ghost || !caretAtEnd) return false;
+    query += sugg.ghost;
+    interact('site_suggest', 'accept');
+    return true;
+  }
+
   // ── Подсказка в пустом поле: пример сменяется раз в три секунды ─────────
   let hints = $derived($t('searchHints').split('|'));
   let hintAt = $state(0);
@@ -68,9 +87,9 @@
 
   // ── Данные ──────────────────────────────────────────────────────────────
   function ensureIndex() {
-    if (index) return;
+    if (indexRaw) return;
     loadIndex()
-      .then((i) => { index = i; loadFailed = false; })
+      .then((i) => { indexRaw = i; loadFailed = false; })
       .catch(() => { loadFailed = true; });
   }
 
@@ -247,6 +266,10 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    if ((e.key === 'Tab' || e.key === 'ArrowRight') && active < 0 && !e.shiftKey && acceptGhost()) {
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (!open) void openPanel(false);
@@ -343,7 +366,13 @@
       onfocus={() => void openPanel(false)}
       onpointerenter={ensureIndex}
       onkeydown={onKey}
+      onkeyup={syncCaret}
+      onclick={syncCaret}
+      oninput={syncCaret}
     />
+    {#if sugg.ghost && caretAtEnd}
+      <span class="ghost" aria-hidden="true"><span class="ghost-typed">{query}</span>{sugg.ghost}<kbd class="ghost-key">Tab</kbd></span>
+    {/if}
     {#if !query}
       <span class="hint" aria-hidden="true">
         <span class="hint-lead">{$t('searchLead')}</span>
@@ -427,6 +456,17 @@
         <clipPath id={archId} clipPathUnits="objectBoundingBox"><path d="M0 1V.42C0 .21.24.06.5 0c.26.06.5.21.5.42V1z" /></clipPath>
       </svg>
       {#if variant === 'button'}{@render inputRow(true)}{/if}
+
+      {#if sugg.chips.length}
+        <div class="live" role="group" aria-label={$t('searchSuggest')}>
+          <span class="live-label">{$t('searchSuggest')}</span>
+          <div class="sugg">
+            {#each sugg.chips as word (word)}
+              <button type="button" onpointerdown={(e) => e.preventDefault()} onclick={() => { interact('site_suggest', 'chip'); useExample(word); }}>{word}</button>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       <div class="scopes" role="group" aria-label={$t('searchLabel')}>
         {#each SCOPES as s (s.key)}
@@ -521,7 +561,7 @@
                   <a href={leafHref(f.item, SRC)} class="rw" class:act={active === at} role="option" id="{listId}-{at}" aria-selected={active === at} data-row={at} style:--i={at}
                     onclick={(e) => { e.preventDefault(); choose(rows[at]); }} onpointerenter={() => (active = at)}>
                     <span class="th">{#if leafCoverUrl(f.item)}<img src={resolveMediaUrl(leafCoverUrl(f.item))} alt="" loading="lazy" />{/if}</span>
-                    <span class="tx"><span class="tt">{@render parts(copy.title || f.item.figurineName || '')}</span>{#if copy.dek}<span class="dk">{@render parts(copy.dek)}</span>{/if}</span>
+                    <span class="tx"><span class="tt">{@render parts(copy.title || figurineNameIn(f.item, $lang))}</span>{#if copy.dek}<span class="dk">{@render parts(copy.dek)}</span>{/if}</span>
                     <span class="meta">{quietDate(leafWhen(f.item), $lang)}</span>
                   </a>
                 {/each}
@@ -648,6 +688,53 @@
   }
   .field--panel .hint {
     left: 50px;
+  }
+  /* Хвост подсказки: набранное невидимо и держит место, дальше серый остаток. */
+  .ghost {
+    position: absolute;
+    left: 34px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    font-family: var(--font-display, Fraunces, Georgia, serif);
+    font-style: italic;
+    font-size: 20px;
+    color: color-mix(in srgb, var(--ss-ink-3) 70%, transparent);
+    white-space: pre;
+    overflow: hidden;
+    max-width: calc(100% - 100px);
+  }
+  .field--panel .ghost {
+    left: 50px;
+  }
+  .ghost-typed {
+    color: transparent;
+  }
+  .ghost-key {
+    margin-left: 10px;
+    padding: 0 5px;
+    border: 1px solid var(--ss-line);
+    border-radius: 3px;
+    font-family: var(--font-ui, Inter, system-ui, sans-serif);
+    font-style: normal;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    color: var(--ss-ink-3);
+    vertical-align: 3px;
+  }
+  .live {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 12px 26px 2px;
+  }
+  .live-label {
+    flex: none;
+    font-family: var(--font-ui, Inter, system-ui, sans-serif);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ss-ink-3);
   }
   .hint-word {
     display: inline-block;

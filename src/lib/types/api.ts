@@ -76,12 +76,46 @@ export interface FigurineListItem {
     /** До трёх похожих работ в порядке автора (номера). Приходят только в основном
      *  списке работ; док на главной показывает их тремя миниатюрами. */
     similarIds?: string[];
+    /** Тексты работы на других языках — только поля, видные в списке. Нет языка или
+     *  поля — печатается английское поле самой работы (`workText`). */
+    translations?: FigurineTranslations;
 }
+
+/** Языки, на которых у работы бывает перевод; английский — в самой работе. */
+export type WorkLang = 'ru' | 'uk' | 'es' | 'de' | 'it';
+
+/** Тексты одной работы на одном языке (`figurine_translations`). */
+export interface FigurineText {
+    name?: string | null;
+    shortText?: string | null;
+    fullDescription?: string | null;
+    material?: string | null;
+    technique?: string | null;
+    dimensions?: string | null;
+    series?: string | null;
+    edition?: string | null;
+    createdPeriod?: string | null;
+    careInstructions?: string | null;
+    provenanceNote?: string | null;
+    authenticityNote?: string | null;
+    includedItems?: string | null;
+    secretText?: string | null;
+}
+
+/** `en` сервер не присылает: его кладёт только копия для показа (`localizeWork`),
+ *  чтобы поиск по странице находил работу и по английскому названию. */
+export type FigurineTranslations = Partial<Record<WorkLang | 'en', FigurineText>>;
 
 /** A named, shared showing window several works can point at (e.g. "Night hall"). */
 export interface ShowingRoom {
     id: string;
     name: string;
+    /** Название на других языках; нет — `name` (английское). */
+    nameRu?: string | null;
+    nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     openFromMin: number;
     openUntilMin: number;
     /** Allowed weekdays bitmask (bit0=Mon … bit6=Sun); null → every day. */
@@ -100,6 +134,8 @@ export interface FigurineImage {
     originalUrl: string | null;
     thumbUrl: string | null;
     altText: string | null;
+    /** Описание фотографии на других языках; нет языка — `altText`. */
+    altTranslations?: Partial<Record<WorkLang, string>>;
     /**
      * Precomputed monocular depth map (grayscale), used by LivingDaguerreotype
      * for 2.5D parallax. Optional — when absent the renderer derives depth from
@@ -240,6 +276,9 @@ export interface Figurine {
     /** Похожие работы, выбранные автором (до трёх, по порядку). Форма работы в
      *  админке читает и присылает назад; нет поля — сервер оставляет прежний выбор. */
     similarIds?: string[];
+    /** Тексты на других языках, все поля. При сохранении: нет поля — не трогать;
+     *  названные языки переписываются целиком, пустые строки удаляются. */
+    translations?: FigurineTranslations;
 }
 
 export type DisplayConfigBackground =
@@ -311,6 +350,37 @@ export interface HomeContent {
     heroMode: 'auto' | 'showcase' | 'release' | null;
     /** Admin-pinned figurine for the "exhibit of the day" vitrine — independent of heroFigurineId. null → daily rotation. */
     vitrineFigurineId: string | null;
+    /** Тексты на других языках; нет — поле без суффикса (английское). */
+    titleRu?: string | null;
+    titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
+    kickerRu?: string | null;
+    kickerUk?: string | null;
+    kickerEs?: string | null;
+    kickerDe?: string | null;
+    kickerIt?: string | null;
+    leadRu?: string | null;
+    leadUk?: string | null;
+    leadEs?: string | null;
+    leadDe?: string | null;
+    leadIt?: string | null;
+    heroCaptionTitleRu?: string | null;
+    heroCaptionTitleUk?: string | null;
+    heroCaptionTitleEs?: string | null;
+    heroCaptionTitleDe?: string | null;
+    heroCaptionTitleIt?: string | null;
+    heroCaptionMetaRu?: string | null;
+    heroCaptionMetaUk?: string | null;
+    heroCaptionMetaEs?: string | null;
+    heroCaptionMetaDe?: string | null;
+    heroCaptionMetaIt?: string | null;
+    heroCaptionCtaRu?: string | null;
+    heroCaptionCtaUk?: string | null;
+    heroCaptionCtaEs?: string | null;
+    heroCaptionCtaDe?: string | null;
+    heroCaptionCtaIt?: string | null;
 }
 
 export type AvatarShape = 'circle' | 'square';
@@ -319,6 +389,17 @@ export interface AuthorProfile {
     name: string;
     tagline: string | null;
     bio: string | null;
+    /** Подпись и рассказ на других языках; нет — `tagline` / `bio` (английские). */
+    taglineRu?: string | null;
+    taglineUk?: string | null;
+    taglineEs?: string | null;
+    taglineDe?: string | null;
+    taglineIt?: string | null;
+    bioRu?: string | null;
+    bioUk?: string | null;
+    bioEs?: string | null;
+    bioDe?: string | null;
+    bioIt?: string | null;
     photoUrl: string | null;
     /** Portrait for the site-header avatar — distinct from `photoUrl` (used
      *  by the bio/author page). Falls back to a static asset when unset. */
@@ -356,6 +437,8 @@ export interface OrderRequest {
     mode: OrderMode;
     /** Self-certified "I am 16 or older" checkbox. */
     ageConfirmed: boolean;
+    /** Язык страницы при отправке; `api` подставляет его сам. */
+    lang?: string | null;
 }
 
 export interface Order {
@@ -812,7 +895,7 @@ export interface CommissionRequest {
     attachmentUrls?: AttachmentInput[];
     /** Honeypot — leave empty. */
     website?: string | null;
-    /** UI language at submission ('en' | 'ru' | 'uk'). */
+    /** UI language at submission ('en' | 'ru' | 'uk' | 'es' | 'de' | 'it'). */
     lang?: string | null;
     /** Self-certified "I am 16 or older" checkbox. */
     ageConfirmed: boolean;
@@ -1042,6 +1125,8 @@ export interface CreateBookingRequest {
     endsAt: string;
     /** Self-certified "I am 16 or older" checkbox. */
     ageConfirmed: boolean;
+    /** Язык страницы при отправке; `api` подставляет его сам. */
+    lang?: string | null;
 }
 
 export interface SaveShowingRequest {
@@ -1207,6 +1292,8 @@ export interface UserBookingDto {
     id: string;
     figurineId: string;
     figurineName: string;
+    /** Название работы на других языках; нет языка — `figurineName`. */
+    figurineNameTranslations?: Partial<Record<WorkLang, string>>;
     startsAt: string;
     endsAt: string;
     status: BookingStatus;
@@ -1221,6 +1308,8 @@ export interface UserOrderDto {
     id: string;
     figurineId: string;
     figurineName: string;
+    /** Название работы на других языках; нет языка — `figurineName`. */
+    figurineNameTranslations?: Partial<Record<WorkLang, string>>;
     mode: OrderMode;
     status: OrderStatus;
     createdAt: string;
@@ -1247,6 +1336,8 @@ export interface PublicCertificateDto {
     certificateNumber: string;
     figurineId: string;
     figurineName: string;
+    /** Название работы на других языках; нет языка — `figurineName`. */
+    figurineNameTranslations?: Partial<Record<WorkLang, string>>;
     issuedAt: string;
     revoked: boolean;
 }
@@ -1394,6 +1485,8 @@ export interface SubmitCommentRequest {
     authorName?: string;
     authorEmail?: string;
     body: string;
+    /** Язык страницы при отправке; `api` подставляет его сам. */
+    lang?: string | null;
 }
 
 // === БАЙКИ: ОТКЛИК ЧИТАТЕЛЯ ===
@@ -1404,6 +1497,9 @@ export interface AdminTaleCommentDto {
     taleTitleEn: string;
     taleTitleRu: string;
     taleTitleUk?: string | null;
+    taleTitleEs?: string | null;
+    taleTitleDe?: string | null;
+    taleTitleIt?: string | null;
     taleSlug: string;
     authorName: string;
     authorEmail: string | null;
@@ -1661,9 +1757,15 @@ export interface ProgrammeSettings {
     curatorNoteEn: string | null;
     curatorNoteRu: string | null;
     curatorNoteUk?: string | null;
+    curatorNoteEs?: string | null;
+    curatorNoteDe?: string | null;
+    curatorNoteIt?: string | null;
     curatorSignEn: string | null;
     curatorSignRu: string | null;
     curatorSignUk?: string | null;
+    curatorSignEs?: string | null;
+    curatorSignDe?: string | null;
+    curatorSignIt?: string | null;
     /** Base bronze hex for the case molding; null = built-in bronze. */
     frameTone: string | null;
     /** Molding thickness in px; null = built-in clamp. */
@@ -1694,6 +1796,8 @@ export interface CreateWaitlistRequest {
     note: string | null;
     /** Self-certified "I am 16 or older" checkbox. */
     ageConfirmed: boolean;
+    /** Язык страницы при отправке; `api` подставляет его сам. */
+    lang?: string | null;
 }
 
 export interface WaitlistEntryDto {
@@ -1811,6 +1915,9 @@ export interface CopyOverrides {
     en: Record<string, string>;
     ru: Record<string, string>;
     uk: Record<string, string>;
+    es: Record<string, string>;
+    de: Record<string, string>;
+    it: Record<string, string>;
 }
 
 // ============================================================
@@ -2163,14 +2270,25 @@ export interface GazetteLeaf {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     dekEn: string | null;
     dekRu: string | null;
     dekUk?: string | null;
+    dekEs?: string | null;
+    dekDe?: string | null;
+    dekIt?: string | null;
     bodyEn: string | null;
     bodyRu: string | null;
     bodyUk?: string | null;
+    bodyEs?: string | null;
+    bodyDe?: string | null;
+    bodyIt?: string | null;
     figurineId: string | null;
     figurineName: string | null;
+    /** Название работы на других языках; нет языка — `figurineName`. */
+    figurineNameTranslations?: Partial<Record<WorkLang, string>>;
     figurineSlug: string | null;
     href: string | null;
     sourceName: string | null;
@@ -2199,6 +2317,9 @@ export interface GazetteNeighbor {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
 }
 
 export interface SaveGazetteLeafRequest {
@@ -2208,12 +2329,21 @@ export interface SaveGazetteLeafRequest {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     dekEn?: string | null;
     dekRu?: string | null;
     dekUk?: string | null;
+    dekEs?: string | null;
+    dekDe?: string | null;
+    dekIt?: string | null;
     bodyEn?: string | null;
     bodyRu?: string | null;
     bodyUk?: string | null;
+    bodyEs?: string | null;
+    bodyDe?: string | null;
+    bodyIt?: string | null;
     figurineId?: string | null;
     href?: string | null;
     sourceName?: string | null;
@@ -2268,6 +2398,9 @@ export interface GazetteWatchInfo {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     notified: boolean;
     /** Адрес подтверждён; нет — слежение ждёт ссылки из письма. */
     confirmed: boolean;
@@ -2280,6 +2413,9 @@ export interface GazetteWatchDto {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     cancelToken: string;
     notifiedAt: string | null;
     createdAt: string;
@@ -2359,9 +2495,15 @@ export interface CardTrait {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     textEn: string;
     textRu: string;
     textUk?: string | null;
+    textEs?: string | null;
+    textDe?: string | null;
+    textIt?: string | null;
 }
 
 export interface BattleCard {
@@ -2375,6 +2517,9 @@ export interface BattleCard {
     raceNameEn: string | null;
     raceNameRu: string | null;
     raceNameUk?: string | null;
+    raceNameEs?: string | null;
+    raceNameDe?: string | null;
+    raceNameIt?: string | null;
     /** The race's shared icon, already a public URL. */
     raceIconUrl: string | null;
     /** The race's own dress per level, joined in the same way as the icon:
@@ -2388,16 +2533,28 @@ export interface BattleCard {
     typeEn: string | null;
     typeRu: string | null;
     typeUk?: string | null;
+    typeEs?: string | null;
+    typeDe?: string | null;
+    typeIt?: string | null;
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     /** Up to 400 characters: room for a list of named abilities on a dressed card. */
     effectEn: string | null;
     effectRu: string | null;
     effectUk?: string | null;
+    effectEs?: string | null;
+    effectDe?: string | null;
+    effectIt?: string | null;
     loreEn: string | null;
     loreRu: string | null;
     loreUk?: string | null;
+    loreEs?: string | null;
+    loreDe?: string | null;
+    loreIt?: string | null;
     /** Top-left corner of the card. */
     cost: number;
     /** Strength. */
@@ -2462,6 +2619,8 @@ export interface BattleCard {
     minted: number;
     figurineId: string | null;
     figurineName: string | null;
+    /** Название работы на других языках; нет языка — `figurineName`. */
+    figurineNameTranslations?: Partial<Record<WorkLang, string>>;
     figurineSlug: string | null;
     createdAt: string;
     updatedAt: string;
@@ -2475,15 +2634,27 @@ export interface SaveBattleCardRequest {
     typeEn?: string | null;
     typeRu?: string | null;
     typeUk?: string | null;
+    typeEs?: string | null;
+    typeDe?: string | null;
+    typeIt?: string | null;
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     effectEn?: string | null;
     effectRu?: string | null;
     effectUk?: string | null;
+    effectEs?: string | null;
+    effectDe?: string | null;
+    effectIt?: string | null;
     loreEn?: string | null;
     loreRu?: string | null;
     loreUk?: string | null;
+    loreEs?: string | null;
+    loreDe?: string | null;
+    loreIt?: string | null;
     cost: number;
     power: number;
     health: number;
@@ -2733,9 +2904,15 @@ export interface StudioRace {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     iconUrl?: string | null;
     /** `taken` терминально: род стал строкой словаря дома. */
     status: 'draft' | 'shown' | 'withdrawn' | 'taken';
@@ -2752,9 +2929,15 @@ export interface StudioRaceWaiting {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     iconUrl?: string | null;
     author: string;
     updatedAt: string;
@@ -2764,9 +2947,15 @@ export interface SaveStudioRaceRequest {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     iconUrl?: string | null;
     lang?: string;
 }
@@ -2847,6 +3036,9 @@ export interface CopyListing {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     creditName?: string | null;
     seller: string;
     createdAt: string;
@@ -2863,6 +3055,9 @@ export interface MyCopy {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
 }
 
 /** Лот с молотка. */
@@ -2874,6 +3069,8 @@ export interface Auction {
     seller?: string | null;
     estate: boolean;
     name: string;
+    /** Название карты на всех языках (язык → название); у рамы нет. */
+    cardTitles?: Record<string, string>;
     cardId?: string | null;
     startPrice: number;
     currency: 'dust' | 'feed';
@@ -2894,8 +3091,12 @@ export interface Trade {
     mine: boolean;
     /** Что просят с той стороны прилавка. */
     want: string;
+    /** То же на всех языках (язык → название); нет — `want`. */
+    wantTitles?: Record<string, string>;
     /** Что за это дают — словами: у вещи в мене нет цены. */
     gives: string[];
+    /** Названия того же на всех языках, в том же порядке, что `gives`. */
+    givesTitles?: Record<string, string>[];
     createdAt: string;
 }
 
@@ -3196,6 +3397,9 @@ export interface BattleFrame {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     paper: string;
     ink: string;
     border: string;
@@ -3450,9 +3654,15 @@ export interface BattleRace {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     noteEn: string | null;
     noteRu: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     /** Shown in the header band of every card of this race. */
     iconUrl: string | null;
     /** This race's own dress per level of an owned copy — JSON array of 5
@@ -3577,6 +3787,9 @@ export interface Motion {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     occasion: MotionOccasion;
     /** Пол длительности, мс. 0 — только по жестам. Больше последнего жеста —
      *  тишина после него. Потолок всё равно `MOTION_MS_MAX`: это не второй
@@ -3756,6 +3969,9 @@ export interface CardAbility {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     verb: AbilityVerb;
     channel: BattleChannel;
     amount: number;
@@ -3909,9 +4125,15 @@ export interface BattleChallenge {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     noteEn: string | null;
     noteRu: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     setup: ChallengeSetup;
     botDepth: number;
     /** Paid once per challenge, never per victory. */
@@ -3955,9 +4177,15 @@ export interface SaveBattleChallengeRequest {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     setup: ChallengeSetup;
     botDepth: number;
     rewardDust: number;
@@ -4214,9 +4442,15 @@ export interface AdminBattleErrand {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     noteEn: string | null;
     noteRu: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     rule: string;
     threshold: number;
     currency: 'dust' | 'feed';
@@ -4240,9 +4474,15 @@ export interface SaveBattleErrandRequest {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     noteEn: string | null;
     noteRu: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     rule: string;
     threshold: number;
     currency: 'dust' | 'feed';
@@ -4296,9 +4536,15 @@ export interface BattleErrand {
     titleEn: string;
     titleRu: string;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     noteEn: string | null;
     noteRu: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     /** Слово из словаря условий — по нему же выбирается, куда вести человека. */
     rule: string;
     threshold: number;
@@ -4551,6 +4797,9 @@ export interface BattleMatchRow {
     challengeId: string | null;
     titleRu: string | null;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     titleEn: string | null;
     /** `player` — победил гость, `keeper` — дом, `draw` — ничья, null — не доиграна. */
     outcome: 'player' | 'keeper' | 'draw' | null;
@@ -4565,6 +4814,9 @@ export interface BattleChallengeTally {
     challengeId: string | null;
     titleRu: string | null;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     titleEn: string | null;
     played: number;
     guestWon: number;
@@ -4580,6 +4832,9 @@ export interface BattleCardTally {
     slug: string;
     titleRu: string | null;
     titleUk?: string | null;
+    titleEs?: string | null;
+    titleDe?: string | null;
+    titleIt?: string | null;
     titleEn: string | null;
     played: number;
     won: number;
@@ -4616,10 +4871,16 @@ export interface BattleKeyword {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     /** The canonical wording of the rule, one per game. */
     rulesEn: string | null;
     rulesRu: string | null;
     rulesUk?: string | null;
+    rulesEs?: string | null;
+    rulesDe?: string | null;
+    rulesIt?: string | null;
     iconUrl: string | null;
     /** Points per unit, from the exchange table. `null` — not priced yet. */
     pointValue: number | null;
@@ -4631,9 +4892,15 @@ export interface SaveBattleKeywordRequest {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     rulesEn?: string | null;
     rulesRu?: string | null;
     rulesUk?: string | null;
+    rulesEs?: string | null;
+    rulesDe?: string | null;
+    rulesIt?: string | null;
     iconUrl?: string | null;
     pointValue?: number | null;
 }
@@ -4643,9 +4910,15 @@ export interface SaveBattleRaceRequest {
     nameEn: string;
     nameRu: string;
     nameUk?: string | null;
+    nameEs?: string | null;
+    nameDe?: string | null;
+    nameIt?: string | null;
     noteEn?: string | null;
     noteRu?: string | null;
     noteUk?: string | null;
+    noteEs?: string | null;
+    noteDe?: string | null;
+    noteIt?: string | null;
     iconUrl?: string | null;
     levelFrames?: string | null;
     motionWear?: string | null;

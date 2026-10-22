@@ -62,7 +62,7 @@
   const matches = (c: BattleCardDto) => {
     const q = query.trim().toLowerCase();
     if (!q) return true;
-    return `${c.titleRu} ${c.titleEn} ${c.titleUk ?? ""} ${c.figurineName ?? ""}`
+    return `${c.titleRu} ${c.titleEn} ${c.titleUk ?? ""} ${c.titleEs ?? ""} ${c.titleDe ?? ""} ${c.titleIt ?? ""} ${c.figurineName ?? ""}`
       .toLowerCase()
       .includes(q);
   };

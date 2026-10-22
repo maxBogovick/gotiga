@@ -25,7 +25,7 @@
     SheetSlot,
     SliceSide,
   } from '$lib/types/api';
-  import { t, lang, type Lang } from '$lib/i18n';
+  import { t, lang, LANGS, type Lang } from '$lib/i18n';
   import {
     cardCopy,
     frameFor,
@@ -1546,7 +1546,7 @@
   /** Сырой текст места на языке — до `lineInLang`, который молча снимает
    *  кириллицу из английского поля. Нужен заглушке, чтобы сказать почему. */
   function markRaw(slot: FreePrintedSlot, side: Lang): string {
-    const cap = side === 'ru' ? 'Ru' : side === 'uk' ? 'Uk' : 'En';
+    const cap = side[0].toUpperCase() + side.slice(1);
     const stem =
       slot === 'title' ? 'title' : slot === 'effect' ? 'effect' : slot === 'lore' ? 'lore' : slot === 'kind' ? 'type' : '';
     if (!stem) return '';
@@ -1567,7 +1567,7 @@
     if (side === 'en' && own && mostlyCyrillic(own)) {
       return $t('adminBattlesReadyCyrillicInEn').replace('{label}', label);
     }
-    const other = (['en', 'ru', 'uk'] as Lang[]).filter((l) => l !== side).map((l) => markRaw(slot, l)).find(Boolean) ?? '';
+    const other = LANGS.filter((l) => l !== side).map((l) => markRaw(slot, l)).find(Boolean) ?? '';
     if (!own && other) {
       return $t('adminBattlesReadyNoLang').replace('{label}', label).replace('{lang}', LANG);
     }

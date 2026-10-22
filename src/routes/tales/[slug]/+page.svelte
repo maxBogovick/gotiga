@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   import { untrack } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
@@ -465,7 +466,7 @@
                   this={work ? 'a' : 'div'}
                   class="margin-scene"
                   href={work || undefined}
-                  aria-label={data.leaf?.figurineName ?? undefined}
+                  aria-label={figurineNameIn(data.leaf, $lang) || undefined}
                 >
                   {#if scene.kind === 'plate' && scene.effect}
                     <TaleScenePlate figure={scene.figure} effect={scene.effect} bleed={scene.bleed} frames={scene.frames} transitions={scene.transitions} ratio={scene.ratio} position={scene.position} />
@@ -480,15 +481,15 @@
                   href={work || undefined}
                   style={morph ? `view-transition-name: ${morph}` : undefined}
                 >
-                  <AppImage src={plate} alt={data.leaf?.figurineName ?? ''} class="margin-img" sizes="168px" />
+                  <AppImage src={plate} alt={figurineNameIn(data.leaf, $lang)} class="margin-img" sizes="168px" />
                 </svelte:element>
               {/if}
               {#if data.leaf?.figurineName}
-                <p class="margin-name">{data.leaf.figurineName}</p>
+                <p class="margin-name">{figurineNameIn(data.leaf, $lang)}</p>
               {/if}
             </aside>
           {/if}
-          {#if scene && sceneOn && scene.place === 'inline' && scene.after && scene.glow && i === sceneAfter(scene.after, $lang)}
+          {#if scene && sceneOn && scene.place === 'inline' && scene.after && scene.glow && i === sceneAfter(scene.after, $lang, data.leaf ? { en: data.leaf.bodyEn, ru: data.leaf.bodyRu, uk: data.leaf.bodyUk, es: data.leaf.bodyEs, de: data.leaf.bodyDe, it: data.leaf.bodyIt } : undefined)}
             <TaleStage figure={scene.figure} veins={scene.glow} />
           {/if}
           {/snippet}
@@ -502,7 +503,7 @@
               href={work || undefined}
               style={morph ? `view-transition-name: ${morph}` : undefined}
             >
-              <AppImage src={plate} alt={data.leaf.figurineName ?? ''} class="margin-img" sizes="168px" />
+              <AppImage src={plate} alt={figurineNameIn(data.leaf, $lang)} class="margin-img" sizes="168px" />
             </svelte:element>
           </aside>
         {/if}

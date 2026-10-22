@@ -2,7 +2,7 @@ import { writable, derived, get } from 'svelte/store';
 import { en, type TranslationKey as PublicKey } from './en';
 import type { AdminTranslationKey } from './en.admin';
 
-export const LANGS = ['en', 'ru', 'uk'] as const;
+export const LANGS = ['en', 'ru', 'uk', 'es', 'de', 'it'] as const;
 export type Lang = (typeof LANGS)[number];
 export type TranslationKey = PublicKey | AdminTranslationKey;
 
@@ -28,6 +28,9 @@ export const LANG_META: Record<Lang, LangMeta> = {
 	en: { native: 'English', mark: 'EN', locale: 'en-US', og: 'en_US', quotes: ['“', '”'] },
 	ru: { native: 'Русский', mark: 'RU', locale: 'ru-RU', og: 'ru_RU', quotes: ['«', '»'] },
 	uk: { native: 'Українська', mark: 'UA', locale: 'uk-UA', og: 'uk_UA', quotes: ['«', '»'] },
+	es: { native: 'Español', mark: 'ES', locale: 'es-ES', og: 'es_ES', quotes: ['«', '»'] },
+	de: { native: 'Deutsch', mark: 'DE', locale: 'de-DE', og: 'de_DE', quotes: ['„', '“'] },
+	it: { native: 'Italiano', mark: 'IT', locale: 'it-IT', og: 'it_IT', quotes: ['«', '»'] },
 };
 
 export function isLang(value: unknown): value is Lang {
@@ -38,14 +41,20 @@ const dicts: Record<Lang, Dict> = {
 	en: { ...en },
 	ru: { ...en },
 	uk: { ...en },
+	es: { ...en },
+	de: { ...en },
+	it: { ...en },
 };
 
-const loaded: Record<Lang, boolean> = { en: true, ru: false, uk: false };
+const loaded: Record<Lang, boolean> = { en: true, ru: false, uk: false, es: false, de: false, it: false };
 const loading: Partial<Record<Lang, Promise<void>>> = {};
 
 const loaders: Record<Exclude<Lang, 'en'>, () => Promise<Dict>> = {
 	ru: () => import('./ru').then((m) => m.ru),
 	uk: () => import('./uk').then((m) => m.uk),
+	es: () => import('./es').then((m) => m.es),
+	de: () => import('./de').then((m) => m.de),
+	it: () => import('./it').then((m) => m.it),
 };
 
 /** Brings one language's dictionary into memory. English ships with the page;
@@ -57,6 +66,13 @@ export async function loadLang(l: Lang): Promise<void> {
 		loaded[l] = true;
 	});
 	await loading[l];
+}
+
+/** One dictionary text in a named language, whatever the page is read in —
+ *  for records that store every language at once (a new motion's names). */
+export async function textInLang(l: Lang, key: PublicKey): Promise<string> {
+	await loadLang(l);
+	return String((dicts[l] as Record<string, unknown>)[key] ?? '');
 }
 
 /** The language a first-time reader gets: an explicit `?lang=`, then what they
@@ -75,14 +91,16 @@ function getInitialLang(): Lang {
 	const wanted = (navigator.languages?.length ? navigator.languages : [navigator.language]) ?? [];
 	for (const raw of wanted) {
 		const base = String(raw || '').toLowerCase().split('-')[0];
-		if (base === 'uk') return 'uk';
-		if (base === 'ru') return 'ru';
-		if (base === 'en') return 'en';
+		if (isLang(base)) return base;
 	}
 	return 'en';
 }
 
 const initialLang = getInitialLang();
+
+function emptyCopy(): Record<Lang, Record<string, string>> {
+	return Object.fromEntries(LANGS.map((l) => [l, {}])) as Record<Lang, Record<string, string>>;
+}
 
 export const lang = writable<Lang>(initialLang);
 
@@ -97,7 +115,7 @@ if (typeof window !== 'undefined' && initialLang !== 'en') {
 	void loadLang(initialLang).then(() => lang.update((l) => l));
 }
 
-export const copyOverrides = writable<Record<Lang, Record<string, string>>>({ en: {}, ru: {}, uk: {} });
+export const copyOverrides = writable<Record<Lang, Record<string, string>>>(emptyCopy());
 
 // Brand name resolution. Precedence:
 //   1. admin override (copyOverrides → `brandName` key, per-language, en as fallback)
@@ -146,13 +164,13 @@ export async function setLang(l: Lang): Promise<void> {
 }
 
 export function setCopyOverrides(overrides: Partial<Record<Lang, Record<string, string>>>): void {
-	copyOverrides.set({ en: {}, ru: {}, uk: {}, ...overrides });
+	copyOverrides.set({ ...emptyCopy(), ...overrides });
 }
 
 /** Merge admin copy into the live dictionaries. Call from the admin route
  *  so the public bundle never ships those strings. */
-export function registerAdminDicts(admin: Record<Lang, Dict>): void {
-	for (const l of LANGS) Object.assign(dicts[l], admin[l]);
+export function registerAdminDicts(admin: Partial<Record<Lang, Dict>>): void {
+	for (const l of LANGS) Object.assign(dicts[l], admin[l] ?? {});
 	copyOverrides.update((v) => v);
 }
 
@@ -165,6 +183,9 @@ const FALLBACK: Record<Lang, readonly Lang[]> = {
 	en: ['en', 'ru', 'uk'],
 	ru: ['ru', 'en', 'uk'],
 	uk: ['uk', 'en', 'ru'],
+	es: ['es', 'en', 'ru', 'uk'],
+	de: ['de', 'en', 'ru', 'uk'],
+	it: ['it', 'en', 'ru', 'uk'],
 };
 
 /** One value per language, for the few places that choose by language in
@@ -172,6 +193,18 @@ const FALLBACK: Record<Lang, readonly Lang[]> = {
  *  English. */
 export function pick<T>(l: Lang, values: { en: T } & Partial<Record<Exclude<Lang, 'en'>, T>>): T {
 	return values[l] ?? values.en;
+}
+
+/** Which language `firstText` would take the text from; nothing — `null`. */
+export function firstTextLang(l: Lang, texts: Partial<Record<Lang, string | null | undefined>>): Lang | null {
+	for (const k of FALLBACK[l]) if (texts[k]?.trim()) return k;
+	return null;
+}
+
+/** A name in the quotation marks of the language (`LANG_META.quotes`). */
+export function quote(l: Lang, text: string): string {
+	const [open, close] = LANG_META[l].quotes;
+	return `${open}${text}${close}`;
 }
 
 /** The first non-empty text of the list for this language. */
@@ -184,6 +217,23 @@ export function firstText(l: Lang, texts: Partial<Record<Lang, string | null | u
 }
 
 const cap = (l: Lang) => l[0].toUpperCase() + l.slice(1);
+
+/** A record whose English text sits in the bare field (`title`) and the
+ *  other languages beside it with a suffix (`titleRu`, `titleEs`, …). */
+export function localizedBase(
+	record: object | null | undefined,
+	stem: string,
+	l: Lang,
+): string {
+	if (!record) return '';
+	const r = record as Record<string, unknown>;
+	const texts: Partial<Record<Lang, string>> = {};
+	for (const k of LANGS) {
+		const v = r[k === 'en' ? stem : stem + cap(k)];
+		if (typeof v === 'string') texts[k] = v;
+	}
+	return firstText(l, texts);
+}
 
 /** `titleEn` / `titleRu` / `titleUk` of one record, by field stem. */
 export function localized(
@@ -199,4 +249,33 @@ export function localized(
 		if (typeof v === 'string') texts[k] = v;
 	}
 	return firstText(l, texts);
+}
+
+/** A field label written for Ukrainian — «Title (UK)», «Name (uk)» — moved
+ *  to another language: the code in brackets is replaced, the word kept. Lets
+ *  the admin forms name Spanish, German and Italian fields without a key per
+ *  field and language. */
+export function labelFor(ukLabel: string, l: Lang): string {
+	return ukLabel.replace(/\((uk|UK)\)/, (_m, code: string) => `(${code === 'UK' ? l.toUpperCase() : l})`);
+}
+
+/** «Name, Ukrainian» → «Name, Spanish»: the word after the last comma is
+ *  swapped for `word`. The studio labels are written that way in every
+ *  dictionary. */
+export function labelInLang(ukLabel: string, word: string): string {
+	return /,[^,]*$/.test(ukLabel) ? ukLabel.replace(/,[^,]*$/, `, ${word}`) : `${ukLabel} · ${word}`;
+}
+
+/** Which form a counted word takes. Russian and Ukrainian have three
+ *  («1 карта», «2 карты», «5 карт»); English, Spanish, German and Italian two,
+ *  «One» only for exactly one, «Many» otherwise. Dictionaries spell the
+ *  `…One` / `…Few` / `…Many` keys; a two-form language fills «Few» the same as
+ *  «Many». */
+export function countForm(l: Lang, n: number): 'One' | 'Few' | 'Many' {
+	if (l !== 'ru' && l !== 'uk') return n === 1 ? 'One' : 'Many';
+	const ten = n % 10;
+	const hundred = n % 100;
+	if (ten === 1 && hundred !== 11) return 'One';
+	if (ten >= 2 && ten <= 4 && (hundred < 12 || hundred > 14)) return 'Few';
+	return 'Many';
 }

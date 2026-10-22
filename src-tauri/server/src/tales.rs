@@ -72,6 +72,15 @@ pub fn compose_letter(l: &TaleLetter) -> (String, String) {
         (LetterReason::New, Lang::Ru) => format!("Новая небылица: {title}"),
         (LetterReason::New, Lang::En) => format!("A new tall tale: {title}"),
         (LetterReason::New, Lang::Uk) => format!("Нова небилиця: {title}"),
+        (LetterReason::Sequel, Lang::Es) => format!("La historia continúa: {title}"),
+        (LetterReason::Sequel, Lang::De) => format!("Die Geschichte geht weiter: {title}"),
+        (LetterReason::Sequel, Lang::It) => format!("La storia continua: {title}"),
+        (LetterReason::Chosen, Lang::Es) => format!("El cuento que eligieron los lectores: {title}"),
+        (LetterReason::Chosen, Lang::De) => format!("Die Geschichte, die die Leser gewählt haben: {title}"),
+        (LetterReason::Chosen, Lang::It) => format!("Il racconto scelto dai lettori: {title}"),
+        (LetterReason::New, Lang::Es) => format!("Un cuento nuevo: {title}"),
+        (LetterReason::New, Lang::De) => format!("Eine neue Geschichte: {title}"),
+        (LetterReason::New, Lang::It) => format!("Un nuovo racconto: {title}"),
     };
 
     let opening = match (l.reason, l.lang) {
@@ -108,9 +117,42 @@ pub fn compose_letter(l: &TaleLetter) -> (String, String) {
         (LetterReason::New, Lang::Ru) => "В доме записана новая небылица.".to_string(),
         (LetterReason::New, Lang::En) => "A new tall tale has been written down in the house.".to_string(),
         (LetterReason::New, Lang::Uk) => "У домі записана нова небилиця.".to_string(),
+        (LetterReason::Sequel, Lang::Es) => match original {
+            Some(o) => format!("Pidió la continuación de «{o}». Ya está escrita."),
+            None => "Pidió la continuación de un cuento. Ya está escrita.".to_string(),
+        },
+        (LetterReason::Sequel, Lang::De) => match original {
+            Some(o) => format!("Sie haben um eine Fortsetzung von „{o}“ gebeten. Sie ist jetzt geschrieben."),
+            None => "Sie haben um eine Fortsetzung gebeten. Sie ist jetzt geschrieben.".to_string(),
+        },
+        (LetterReason::Sequel, Lang::It) => match original {
+            Some(o) => format!("Ha chiesto il seguito di «{o}». Ora è scritto."),
+            None => "Ha chiesto il seguito di un racconto. Ora è scritto.".to_string(),
+        },
+        (LetterReason::Chosen, Lang::Es) => match chosen {
+            Some(w) => format!(
+                "Votó sobre quién sería el protagonista del próximo cuento. Los lectores eligieron «{w}», y aquí está."
+            ),
+            None => "Votó sobre quién sería el protagonista del próximo cuento. Aquí está.".to_string(),
+        },
+        (LetterReason::Chosen, Lang::De) => match chosen {
+            Some(w) => format!(
+                "Sie haben abgestimmt, von wem die nächste Geschichte handeln soll. Die Leser haben „{w}“ gewählt, und hier ist sie."
+            ),
+            None => "Sie haben abgestimmt, von wem die nächste Geschichte handeln soll. Hier ist sie.".to_string(),
+        },
+        (LetterReason::Chosen, Lang::It) => match chosen {
+            Some(w) => format!(
+                "Ha votato su chi dovesse essere il protagonista del prossimo racconto. I lettori hanno scelto «{w}», ed eccolo."
+            ),
+            None => "Ha votato su chi dovesse essere il protagonista del prossimo racconto. Eccolo.".to_string(),
+        },
+        (LetterReason::New, Lang::Es) => "En el sitio hay un cuento nuevo.".to_string(),
+        (LetterReason::New, Lang::De) => "Auf der Website gibt es eine neue Geschichte.".to_string(),
+        (LetterReason::New, Lang::It) => "Sul sito c’è un nuovo racconto.".to_string(),
     };
 
-    let read = l.lang.pick("Read it", "Читать", "Читати");
+    let read = l.lang.pick("Read it", "Читать", "Читати", "Leer", "Lesen", "Leggi");
     let mut body = format!("{opening}\n\n{title}\n");
     if let Some(d) = dek {
         body.push_str(d);
@@ -148,6 +190,31 @@ pub fn compose_letter(l: &TaleLetter) -> (String, String) {
         (None, _, Lang::Uk) => {
             body.push_str("Цей лист один: ви просили повідомити, і дім повідомив.\n")
         }
+        (Some(door), _, Lang::Es) => body.push_str(&format!(
+            "Recibe esta carta porque su dirección está en la lista de correo del sitio. Para salir de ella: {door}\n"
+        )),
+        (Some(door), _, Lang::De) => body.push_str(&format!(
+            "Sie erhalten diesen Brief, weil Ihre Adresse in der Mailingliste der Website steht. Austragen: {door}\n"
+        )),
+        (Some(door), _, Lang::It) => body.push_str(&format!(
+            "Riceve questa lettera perché il suo indirizzo è nella lista di posta del sito. Per uscirne: {door}\n"
+        )),
+        (None, LetterReason::New, Lang::Es) => {
+            body.push_str("Recibe esta carta porque su dirección está en la lista de correo del sitio.\n")
+        }
+        (None, LetterReason::New, Lang::De) => {
+            body.push_str("Sie erhalten diesen Brief, weil Ihre Adresse in der Mailingliste der Website steht.\n")
+        }
+        (None, LetterReason::New, Lang::It) => {
+            body.push_str("Riceve questa lettera perché il suo indirizzo è nella lista di posta del sito.\n")
+        }
+        (None, _, Lang::Es) => body.push_str("Esta es la única carta: pidió que le avisáramos, y le avisamos.\n"),
+        (None, _, Lang::De) => {
+            body.push_str("Dies ist der einzige Brief: Sie wollten Bescheid bekommen, und hier ist er.\n")
+        }
+        (None, _, Lang::It) => {
+            body.push_str("È l’unica lettera: ha chiesto di essere avvisato, e la avvisiamo.\n")
+        }
     }
     (subject, body)
 }
@@ -172,8 +239,20 @@ pub fn compose_note(lang: Lang, title: &str, original: Option<&str>) -> (String,
             "<b>Продовження записане</b>\nВи просили продовження небилиці «{o}». Ось воно: «{title}»."
         ),
         (Lang::Uk, None) => format!("<b>Продовження записане</b>\nВи просили продовження — ось воно: «{title}»."),
+        (Lang::Es, Some(o)) => format!(
+            "<b>La historia continúa</b>\nPidió la continuación de «{o}». Aquí está: «{title}»."
+        ),
+        (Lang::Es, None) => format!("<b>La historia continúa</b>\nPidió la continuación; aquí está: «{title}»."),
+        (Lang::De, Some(o)) => format!(
+            "<b>Die Geschichte geht weiter</b>\nSie haben um eine Fortsetzung von „{o}“ gebeten. Hier ist sie: „{title}“."
+        ),
+        (Lang::De, None) => format!("<b>Die Geschichte geht weiter</b>\nSie haben um eine Fortsetzung gebeten, hier ist sie: „{title}“."),
+        (Lang::It, Some(o)) => format!(
+            "<b>La storia continua</b>\nHa chiesto il seguito di «{o}». Eccolo: «{title}»."
+        ),
+        (Lang::It, None) => format!("<b>La storia continua</b>\nHa chiesto il seguito; eccolo: «{title}»."),
     };
-    (text, lang.pick("Read it", "Читать", "Читати"))
+    (text, lang.pick("Read it", "Читать", "Читати", "Leer", "Lesen", "Leggi"))
 }
 
 /// Записка подписчику книги в Telegram о новой небылице. Заглавие и вводка
@@ -183,13 +262,32 @@ pub fn compose_book_note(lang: Lang, title: &str, dek: Option<&str>) -> (String,
     use crate::telegram::esc;
     let title = esc(title.trim());
     let dek = dek.map(str::trim).filter(|s| !s.is_empty()).map(esc);
-    let lead = lang.pick("A new tall tale", "Новая небылица", "Нова небилиця");
-    let stop = lang.pick("To stop these: /stop", "Не писать мне: /stop", "Не писати мені: /stop");
-    let text = match dek {
-        Some(d) => format!("<b>{lead}</b>\n«{title}»\n{d}\n\n{stop}"),
-        None => format!("<b>{lead}</b>\n«{title}»\n\n{stop}"),
+    let lead = lang.pick(
+        "A new tall tale",
+        "Новая небылица",
+        "Нова небилиця",
+        "Un cuento nuevo",
+        "Eine neue Geschichte",
+        "Un nuovo racconto",
+    );
+    let stop = lang.pick(
+        "To stop these: /stop",
+        "Не писать мне: /stop",
+        "Не писати мені: /stop",
+        "Para no recibir más: /stop",
+        "Keine weiteren Nachrichten: /stop",
+        "Per non riceverne più: /stop",
+    );
+    // German quotes its titles „so“, the others «so».
+    let (open, close) = match lang {
+        Lang::De => ("„", "“"),
+        _ => ("«", "»"),
     };
-    (text, lang.pick("Read it", "Читать", "Читати"))
+    let text = match dek {
+        Some(d) => format!("<b>{lead}</b>\n{open}{title}{close}\n{d}\n\n{stop}"),
+        None => format!("<b>{lead}</b>\n{open}{title}{close}\n\n{stop}"),
+    };
+    (text, lang.pick("Read it", "Читать", "Читати", "Leer", "Lesen", "Leggi"))
 }
 
 /// Публичная ссылка на канал по его имени в настройках. `@имя` даёт
@@ -266,11 +364,14 @@ pub fn in_lang(
     en_side: Option<&str>,
     ru_side: Option<&str>,
     uk_side: Option<&str>,
+    es_side: Option<&str>,
+    de_side: Option<&str>,
+    it_side: Option<&str>,
 ) -> Option<String> {
-    crate::lang::in_lang(lang, en_side, ru_side, uk_side)
+    crate::lang::in_lang(lang, en_side, ru_side, uk_side, es_side, de_side, it_side)
 }
 
-/// Язык письма: три, всё остальное — английский.
+/// Язык письма: шесть, всё остальное — английский.
 pub fn letter_lang(raw: Option<&str>) -> &'static str {
     raw.and_then(|r| Lang::parse(r)).unwrap_or(Lang::En).code()
 }
@@ -295,7 +396,7 @@ mod tests {
     #[test]
     fn every_letter_carries_its_tale_and_the_way_to_it() {
         for reason in [LetterReason::Sequel, LetterReason::Chosen, LetterReason::New] {
-            for lang in [Lang::Ru, Lang::En, Lang::Uk] {
+            for lang in Lang::ALL {
                 let (subject, body) = letter(reason, lang, None);
                 assert!(subject.contains("Свидетель физики"), "{subject}");
                 assert!(body.contains("Мне не нужны факты"), "{body}");
@@ -362,6 +463,21 @@ mod tests {
         let (text, _) = compose_book_note(Lang::Uk, "Кіт", Some("Вступ"));
         assert!(text.contains("Нова небилиця"), "{text}");
         assert!(text.contains("Не писати мені: /stop"), "{text}");
+    }
+
+    #[test]
+    fn spanish_german_and_italian_letters_speak_their_own_language() {
+        let (subject, body) = letter(LetterReason::Sequel, Lang::De, None);
+        assert!(subject.starts_with("Die Geschichte geht weiter: "), "{subject}");
+        assert!(body.contains("„Лесник“"), "{body}");
+        assert!(body.contains("Lesen: "), "{body}");
+        let (subject, _) = letter(LetterReason::New, Lang::Es, None);
+        assert!(subject.starts_with("Un cuento nuevo: "), "{subject}");
+        let (text, button) = compose_note(Lang::It, "Gatto", None);
+        assert!(text.contains("La storia continua"), "{text}");
+        assert_eq!(button, "Leggi");
+        let (text, _) = compose_book_note(Lang::De, "Katze", None);
+        assert!(text.contains("„Katze“"), "{text}");
     }
 
     #[test]

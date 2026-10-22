@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   // Этюды хранителя.
   //
   // Расстановка составлена рукой — обе стороны сразу, как шахматный этюд. Гость
@@ -254,7 +255,7 @@
           .slice(0, 4)
           .map((card) => ({
             card,
-            name: localized(card, 'title', $lang) || card.figurineName || '',
+            name: localized(card, 'title', $lang) || figurineNameIn(card, $lang),
             work: workHref(card),
             tale: talesOfWork(world!, card.figurineId)[0] ?? null,
           }))

@@ -45,7 +45,7 @@
     /** Поле на двух языках, а правится одна сторона за раз. Метки EN / RU у
      *  подписи говорят, где пусто, не переключая языка, — иначе пустая
      *  сторона видна только тому, кто догадался туда заглянуть. */
-    langs?: { en: boolean; ru: boolean; uk?: boolean; current: Side };
+    langs?: { en: boolean; ru: boolean; uk?: boolean; es?: boolean; de?: boolean; it?: boolean; current: Side };
     /** Нажатие на метку языка. */
     onlang?: (side: Side) => void;
     children: Snippet;
@@ -78,7 +78,7 @@
               class="lang"
               class:lang--on={langs.current === side}
               class:lang--empty={!(langs[side] ?? true)}
-              class:lang--soft={side === 'uk'}
+              class:lang--soft={side !== 'en' && side !== 'ru'}
               title={`${side.toUpperCase()} · ${langs[side] ? $t('adminBattlesLangFilled') : $t('adminBattlesLangEmpty')}`}
               onclick={(e) => pick(e, side)}
               onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && pick(e, side)}

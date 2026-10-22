@@ -1,0 +1,48 @@
+{
+  "kind": "races",
+  "lang": "it",
+  "items": [
+    {
+      "key": "witch",
+      "id": "edfbc1a9-2812-4abd-84e1-6ae5e2012447",
+      "name": "Strega",
+      "note": "Strega"
+    },
+    {
+      "key": "witches",
+      "id": "e9e98f1c-ece6-42a7-b396-6a27f04e763d",
+      "name": "Streghe",
+      "note": "Lanciano maledizioni e veleni."
+    },
+    {
+      "key": "water",
+      "id": "38056b8b-c1f3-45c7-b26f-f62272afa4d5",
+      "name": "Popolo dell’acqua",
+      "note": "Vivono nell’acqua, sulla riva si indeboliscono."
+    },
+    {
+      "key": "gnomes",
+      "id": "d543819e-e323-42d6-985a-f927884cfc94",
+      "name": "Gnomi",
+      "note": "Bassi e robusti, vivono vicino alla pietra e al fuoco."
+    },
+    {
+      "key": "people",
+      "id": "b31c7524-d426-49d8-a163-982879925cba",
+      "name": "Umani",
+      "note": "Gente comune: niente incantesimi, ma tanto addestramento."
+    },
+    {
+      "key": "mages",
+      "id": "b6d8cc92-d823-4065-bfdf-23470340334f",
+      "name": "Maghi",
+      "note": "Lanciano incantesimi a comando e colpiscono da lontano."
+    },
+    {
+      "key": "undead",
+      "id": "d7c151e9-b86b-4c4f-94f7-cb6937f210e1",
+      "name": "Non morti",
+      "note": "Morti che continuano ad agire."
+    }
+  ]
+}

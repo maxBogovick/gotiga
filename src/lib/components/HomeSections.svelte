@@ -14,7 +14,7 @@
   // Байки и список этюдов читаются в браузере (`loadWorld`): главная
   // пререндерится, а эти разделы меняются чаще, чем её собирают.
   import { onMount } from 'svelte';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, quote } from '$lib/i18n';
   import { interact } from '$lib/analytics';
   import AppImage from '$lib/components/AppImage.svelte';
   import { leafCopy, leafCoverUrl, leafHref } from '$lib/gazette';
@@ -78,7 +78,7 @@
         <b class="door-name">{$t('navTales')}</b>
         <span class="door-hint">{$t('worldTalesHint')}</span>
         {#if taleCopy}
-          <span class="door-quote">«{taleCopy.title}»{#if taleCopy.dek}{' — '}{taleCopy.dek.replace(/^[\s—–-]+/, '')}{/if}</span>
+          <span class="door-quote">{quote($lang, taleCopy.title)}{#if taleCopy.dek}{' — '}{taleCopy.dek.replace(/^[\s—–-]+/, '')}{/if}</span>
           <span class="door-go">{$t('worldTalesGo')} →</span>
         {/if}
       </span>

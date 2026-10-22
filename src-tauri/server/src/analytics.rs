@@ -273,6 +273,9 @@ fn normalize_lang(raw: &str) -> Option<String> {
         "en" => Some("en".into()),
         "ru" => Some("ru".into()),
         "uk" => Some("uk".into()),
+        "es" => Some("es".into()),
+        "de" => Some("de".into()),
+        "it" => Some("it".into()),
         _ => None,
     }
 }

@@ -7,6 +7,7 @@
   import { tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { t, lang } from '$lib/i18n';
+  import { localizeList } from '$lib/workText';
   import AppImage from '$lib/components/AppImage.svelte';
   import { figurineHref } from '$lib/figurineHref';
   import { keeper } from '$lib/stores/keeper.svelte';
@@ -30,12 +31,14 @@
 
   let inputEl = $state<HTMLInputElement | null>(null);
 
-  let figById = $derived(new Map(keeper.figurines.map((f) => [f.id, f])));
-  let allowed = $derived(new Set(keeper.figurines.map((f) => f.id)));
+  // Названия на языке читателя; поиск по словам смотрит и в переводы.
+  let figs = $derived(localizeList(keeper.figurines, $lang));
+  let figById = $derived(new Map(figs.map((f) => [f.id, f])));
+  let allowed = $derived(new Set(figs.map((f) => f.id)));
   let reelSet = $derived(new Set(keeper.reelIds));
-  let whispers = $derived(whisperSeeds(keeper.figurines, $lang));
+  let whispers = $derived(whisperSeeds(figs, $lang));
   let localHits = $derived(
-    keeper.query.trim().length < 2 ? [] : localMatch(keeper.figurines, keeper.query),
+    keeper.query.trim().length < 2 ? [] : localMatch(figs, keeper.query),
   );
   let blotter = $derived(
     assembleResults(keeper.hits, localHits, figById, allowed, KEEPER_BLOTTER_MAX).slice(

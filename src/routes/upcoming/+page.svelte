@@ -2,7 +2,8 @@
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import type { FigurineListItem } from '$lib/types/api';
-    import { t , brandName } from '$lib/i18n';
+    import { t, brandName, lang, LANG_META } from '$lib/i18n';
+    import { localizeList, workBase } from '$lib/workText';
     import { SITE_URL } from '$lib/site';
     import OrderModal from '$lib/components/OrderModal.svelte';
     import AppImage from '$lib/components/AppImage.svelte';
@@ -10,15 +11,17 @@
     // Data from the universal load (+page.ts): real items at prerender time so bots see
     // the in-progress pieces, fresh fetch on client-side navigation.
     let { data } = $props();
-    let items = $derived(data.items);
+    let items = $derived(localizeList(data.items ?? [], $lang));
 
     let modalOpen = $state(false);
     let modalFigurineId = $state('');
     let modalFigurineName = $state('');
+    let modalDisplayName = $state('');
 
     function openBook(fig: FigurineListItem) {
         modalFigurineId = fig.id;
-        modalFigurineName = fig.name;
+        modalFigurineName = workBase(fig, 'name');
+        modalDisplayName = fig.name;
         modalOpen = true;
     }
 
@@ -28,7 +31,7 @@
     <title>{$t('upcomingTitle')} — {$brandName}</title>
     <meta name="description" content="Author-made figures in progress. Available to reserve." />
     <meta property="og:site_name" content={$brandName} />
-    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale" content={LANG_META[$lang].og} />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="{$t('upcomingTitle')} — {$brandName}" />
     <meta property="og:description" content="Author-made figures in progress. Available to reserve." />
@@ -133,6 +136,7 @@
     isOpen={modalOpen}
     figurineId={modalFigurineId}
     figurineName={modalFigurineName}
+    displayName={modalDisplayName}
     mode="request"
     onClose={() => { modalOpen = false; }}
 />

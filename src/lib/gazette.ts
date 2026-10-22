@@ -3,7 +3,7 @@ import type { FigurineListItem, GazetteCutting, GazetteKind, GazetteLeaf } from 
 import { localized, pick, type Lang, type TranslationKey } from '$lib/i18n';
 
 /** Dates in the gazette read in British order in English, as they always have. */
-const gazetteLocale = (lang: Lang) => pick(lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA' });
+const gazetteLocale = (lang: Lang) => pick(lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA', es: 'es-ES', de: 'de-DE', it: 'it-IT' });
 
 export const TITLE_MAX = 200;
 export const DEK_MAX = 500;
@@ -63,7 +63,7 @@ export function decodeEntities(s: string): string {
  *  shown instead (English first, then the other). */
 export function leafCopy(
   leaf: Pick<GazetteLeaf, 'titleEn' | 'titleRu' | 'dekEn' | 'dekRu' | 'bodyEn' | 'bodyRu'> &
-    Partial<Pick<GazetteLeaf, 'titleUk' | 'dekUk' | 'bodyUk'>>,
+    Partial<Pick<GazetteLeaf, 'titleUk' | 'dekUk' | 'bodyUk' | 'titleEs' | 'dekEs' | 'bodyEs' | 'titleDe' | 'dekDe' | 'bodyDe' | 'titleIt' | 'dekIt' | 'bodyIt'>>,
   lang: Lang,
 ): { title: string; dek: string; body: string } {
   return {
@@ -165,9 +165,15 @@ export interface GazetteTemplateFill {
   titleEn: string;
   titleRu: string;
   titleUk: string;
+  titleEs: string;
+  titleDe: string;
+  titleIt: string;
   dekEn: string;
   dekRu: string;
   dekUk: string;
+  dekEs: string;
+  dekDe: string;
+  dekIt: string;
 }
 
 function dateOnlyIso(value: string): string {
@@ -256,6 +262,12 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
         dekRu: n ? `«${n}» появилась в каталоге.` : 'Новая работа появилась в каталоге.',
         titleUk: n || 'Нова робота',
         dekUk: n ? `«${n}» з’явилася в каталозі.` : 'Нова робота з’явилася в каталозі.',
+        titleEs: n || 'Nueva obra',
+        dekEs: n ? `«${n}» se ha añadido al catálogo.` : 'Se ha añadido una obra nueva al catálogo.',
+        titleDe: n || 'Neue Arbeit',
+        dekDe: n ? `„${n}“ ist neu im Katalog.` : 'Eine neue Arbeit ist neu im Katalog.',
+        titleIt: n || 'Nuova opera',
+        dekIt: n ? `«${n}» è stata aggiunta al catalogo.` : 'Una nuova opera è stata aggiunta al catalogo.',
       };
     case 'showing':
       return {
@@ -265,6 +277,12 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
         dekRu: 'Даты и детали показа.',
         titleUk: n ? `Показ: ${n}` : 'Анонс показу',
         dekUk: 'Дати й подробиці показу.',
+        titleEs: n ? `Exposición: ${n}` : 'Próxima exposición',
+        dekEs: 'Fechas y detalles de la exposición.',
+        titleDe: n ? `Ausstellung: ${n}` : 'Kommende Ausstellung',
+        dekDe: 'Termine und Einzelheiten der Ausstellung.',
+        titleIt: n ? `Esposizione: ${n}` : 'Prossima esposizione',
+        dekIt: 'Date e dettagli dell’esposizione.',
       };
     case 'sketch':
       return {
@@ -274,6 +292,12 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
         dekRu: n ? `«${n}» ещё в работе.` : 'Наброски из мастерской.',
         titleUk: n || 'У роботі',
         dekUk: n ? `«${n}» ще в роботі.` : 'Начерки з майстерні.',
+        titleEs: n || 'En proceso',
+        dekEs: n ? `«${n}» todavía está en proceso.` : 'Bocetos del taller.',
+        titleDe: n || 'In Arbeit',
+        dekDe: n ? `„${n}“ ist noch in Arbeit.` : 'Skizzen aus der Werkstatt.',
+        titleIt: n || 'In lavorazione',
+        dekIt: n ? `«${n}» è ancora in lavorazione.` : 'Schizzi dal laboratorio.',
       };
     case 'collage':
     case 'guest_story':
@@ -283,21 +307,36 @@ export function fillTemplate(kind: GazetteKind, name: string): GazetteTemplateFi
         titleEn: n ? n : '',
         titleRu: n ? n : '',
         titleUk: n ? n : '',
+        titleEs: n ? n : '',
+        titleDe: n ? n : '',
+        titleIt: n ? n : '',
         dekEn: '',
         dekRu: '',
         dekUk: '',
+        dekEs: '',
+        dekDe: '',
+        dekIt: '',
       };
     case 'world':
       return {
         titleEn: n,
         titleRu: n,
         titleUk: n,
+        titleEs: n,
+        titleDe: n,
+        titleIt: n,
         dekEn: '',
         dekRu: '',
         dekUk: '',
+        dekEs: '',
+        dekDe: '',
+        dekIt: '',
       };
     default:
-      return { titleEn: '', titleRu: '', titleUk: '', dekEn: '', dekRu: '', dekUk: '' };
+      return {
+        titleEn: '', titleRu: '', titleUk: '', titleEs: '', titleDe: '', titleIt: '',
+        dekEn: '', dekRu: '', dekUk: '', dekEs: '', dekDe: '', dekIt: '',
+      };
   }
 }
 
@@ -428,7 +467,7 @@ export function roomDateline(
 }
 
 export function neighborTitle(
-  n: { titleEn: string; titleRu: string; titleUk?: string | null },
+  n: { titleEn: string; titleRu: string; titleUk?: string | null; titleEs?: string | null; titleDe?: string | null; titleIt?: string | null },
   lang: Lang,
 ): string {
   return decodeEntities(localized(n, 'title', lang));

@@ -8,6 +8,8 @@ export type GlobalClaimData = {
   token: string;
   figurineId: string;
   figurineName: string;
+  /** Название работы на других языках; нет языка — `figurineName`. */
+  figurineNameTranslations?: Partial<Record<'ru' | 'uk' | 'es' | 'de' | 'it', string>>;
   startsAt: string;
   endsAt: string;
   submittedAt: string;
@@ -18,6 +20,8 @@ export type StatusNotification = {
   id: string;
   token: string;
   figurineName: string;
+  /** Название работы на других языках; нет языка — `figurineName`. */
+  figurineNameTranslations?: Partial<Record<'ru' | 'uk' | 'es' | 'de' | 'it', string>>;
   figurineId: string;
   newStatus: ClaimStatus;
 };
@@ -163,6 +167,7 @@ class AllClaimsStore {
       id,
       token: claim.token,
       figurineName: claim.figurineName,
+      figurineNameTranslations: claim.figurineNameTranslations,
       figurineId: claim.figurineId,
       newStatus: claim.status,
     }];

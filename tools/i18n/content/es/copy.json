@@ -1,0 +1,10 @@
+{
+  "kind": "copy",
+  "lang": "es",
+  "items": [
+    {
+      "key": "homeTitle",
+      "text": "Muñecas y esculturas de autor hechas a mano"
+    }
+  ]
+}

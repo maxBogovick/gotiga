@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, currentLocale } from '$lib/i18n';
   import type { ShowingDto, SaveShowingRequest, FigurineListItem, GazetteSeed } from '$lib/types/api';
 
   let {
@@ -123,7 +123,7 @@
   }
 
   function formatDate(iso: string) {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', {
+    return new Date(iso + 'T00:00:00').toLocaleDateString(currentLocale(), {
       day: '2-digit', month: 'short', year: 'numeric'
     });
   }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { resolveMediaUrl } from '$lib/api';
   import type { AttachmentDto } from '$lib/types/api';
 
@@ -14,7 +15,7 @@
         type="button"
         class="att-thumb"
         onclick={() => (lightboxUrl = resolveMediaUrl(att.url))}
-        title="Open image"
+        title={$t('attachmentOpen')}
       >
         <img src={resolveMediaUrl(att.thumbUrl ?? att.url)} alt="" loading="lazy" />
       </button>
@@ -27,7 +28,7 @@
     class="att-lightbox"
     role="button"
     tabindex="0"
-    aria-label="Close"
+    aria-label={$t('uiClose')}
     onclick={() => (lightboxUrl = null)}
     onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') lightboxUrl = null; }}
   >

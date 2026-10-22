@@ -2,12 +2,7 @@
     import { onMount } from 'svelte';
     import { api } from '$lib/api';
     import { t, setCopyOverrides, LANGS } from '$lib/i18n';
-    import { en } from '$lib/i18n/en';
-    import { ru } from '$lib/i18n/ru';
-    import { enAdmin } from '$lib/i18n/en.admin';
-    import { ruAdmin } from '$lib/i18n/ru.admin';
-    import { uk } from '$lib/i18n/uk';
-    import { ukAdmin } from '$lib/i18n/uk.admin';
+    import { fullDicts } from '$lib/i18n/admin-dicts';
     import type { TranslationKey, Lang } from '$lib/i18n';
     import type { CopyOverrides } from '$lib/types/api';
 
@@ -16,21 +11,21 @@
     let saving = $state(false);
     let saved = $state(false);
     let error = $state('');
-    let overridesDraft = $state<CopyOverrides>({ en: {}, ru: {}, uk: {} });
+    let overridesDraft = $state<CopyOverrides>(emptyDraft());
     let showModifiedOnly = $state(false);
 
-    const staticDicts: Record<Lang, Record<string, string>> = {
-        en: { ...en, ...enAdmin },
-        ru: { ...ru, ...ruAdmin },
-        uk: { ...uk, ...ukAdmin },
-    };
+    function emptyDraft(): CopyOverrides {
+        return Object.fromEntries(LANGS.map((l) => [l, {}])) as unknown as CopyOverrides;
+    }
+
+    const staticDicts: Record<Lang, Record<string, string>> = fullDicts();
 
     onMount(async () => {
         try {
             const remote = await api.getCopyOverrides();
-            overridesDraft = { en: { ...remote.en }, ru: { ...remote.ru }, uk: { ...(remote.uk ?? {}) } };
+            overridesDraft = Object.fromEntries(LANGS.map((l) => [l, { ...(remote[l] ?? {}) }])) as unknown as CopyOverrides;
         } catch {
-            overridesDraft = { en: {}, ru: {}, uk: {} };
+            overridesDraft = emptyDraft();
         }
     });
 

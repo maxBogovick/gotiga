@@ -20,6 +20,9 @@ import build  # noqa: E402
 import build_images  # noqa: E402
 import cards as C  # noqa: E402
 import races  # noqa: E402
+
+sys.path.insert(0, str(HERE.parent / "i18n"))
+import texts as T  # noqa: E402
 from PIL import Image  # noqa: E402
 
 OUT = ROOT / "deploy" / "card-set"
@@ -62,7 +65,7 @@ def main():
                 shutil.copy(f, OUT / "motion-images" / f.name)
                 g["image"] = "{{MOTION:" + f.name + "}}"
     package = {
-        "races": [{"slug": s, "nameEn": en, "nameRu": ru, "nameUk": uk, "note": note}
+        "races": [{"slug": s, "nameEn": en, "nameRu": ru, "nameUk": uk, "note": note, "texts": T.race_fields(s)}
                   for s, en, ru, uk, note, _ in C.RACES],
         "ring": C.RACE_RING, "cards": cards, "motions": motions,
     }

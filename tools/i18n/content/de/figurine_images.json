@@ -1,0 +1,882 @@
+{
+ "kind": "figurine_images",
+ "lang": "de",
+ "items": [
+  {
+   "key": "096ccc92-9fdb-5b7a-afb2-67e417b0a39a",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 1"
+  },
+  {
+   "key": "160a3ea8-7bfe-5a8e-bee1-0d6e5fdbe77e",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 2"
+  },
+  {
+   "key": "c38aa0e8-9820-5a18-86cf-e167ea99f54a",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 3"
+  },
+  {
+   "key": "94967115-589d-5122-8036-4ff63ef10991",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 4"
+  },
+  {
+   "key": "23d7e2d7-891a-58b7-8415-c35bf0fd621b",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 5"
+  },
+  {
+   "key": "4c88e128-93d7-5555-8b82-4a446d2d4e23",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 6"
+  },
+  {
+   "key": "70a87de9-f286-5bc9-ad31-77b728b45328",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 7"
+  },
+  {
+   "key": "c2f6ba38-2d4b-59da-9e23-cd6ef3f32fad",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 8"
+  },
+  {
+   "key": "073453c8-e9fd-5dc8-997b-62438c1824ed",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 9"
+  },
+  {
+   "key": "a13fb5d5-ddcc-5ca8-ab14-26237f602db5",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 10"
+  },
+  {
+   "key": "dcca64ea-98fd-5c97-8580-0467251bf85a",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 11"
+  },
+  {
+   "key": "e53f9c40-66d3-54a9-8b8d-f4f1b330ef45",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 12"
+  },
+  {
+   "key": "4a4f7a34-2348-552b-bc27-9e959c2d3c35",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 13"
+  },
+  {
+   "key": "2fe9e327-3e52-535a-b95f-1b22c6882dca",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 14"
+  },
+  {
+   "key": "cddbe7bf-e801-52d4-a059-88214ed5a636",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 15"
+  },
+  {
+   "key": "1fb6e1ea-97b3-508d-8417-71e226281dd2",
+   "altText": "Kleine Künstlerpuppe „Großmutter am Küchentisch“ – handgefertigte Puppe, ein Unikat. Eine alte Frau. Foto 16"
+  },
+  {
+   "key": "710c755c-efa3-5209-b019-15bd7c3f8399",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 1"
+  },
+  {
+   "key": "8a05fcdb-46ed-571f-aa8b-1c6728650c8e",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 2"
+  },
+  {
+   "key": "9bc75185-fc90-5131-addb-2c85a1cdae5a",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 3"
+  },
+  {
+   "key": "0d3f12d7-6df7-5c4e-871c-d152d11a2f6e",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 4"
+  },
+  {
+   "key": "8e314c5c-78da-5c15-8b0f-9e736554e514",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 5"
+  },
+  {
+   "key": "95fd9380-5657-5dc1-8207-1132e6a5716d",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 6"
+  },
+  {
+   "key": "8dc48763-c8b0-5624-960c-b2511a90766b",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 7"
+  },
+  {
+   "key": "a15bea14-b170-51e2-af15-4aca14e7f9dd",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 8"
+  },
+  {
+   "key": "cdbc3be5-76d1-594a-a847-ddb13c6f57f1",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 9"
+  },
+  {
+   "key": "63b05ffd-7baf-5d9c-b593-d08b06db7e89",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 10"
+  },
+  {
+   "key": "eb77e5f9-e0c8-5202-baef-73352daae255",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 11"
+  },
+  {
+   "key": "9306abcd-04d7-568e-8927-0bc75a9eebdc",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 12"
+  },
+  {
+   "key": "0d410a9d-75c5-577d-9e05-acfb24a0aea1",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen und Buch – handgefertigte Miniaturpuppe, ein Unikat. Foto 13"
+  },
+  {
+   "key": "aea56fb1-a1ac-5e23-8008-ceaabaac5bbb",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 1"
+  },
+  {
+   "key": "4d82a942-6218-5f74-bdcf-7cc2ee762e1d",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 2"
+  },
+  {
+   "key": "66aea7d2-7445-563a-9f47-c14c6bbd6591",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 3"
+  },
+  {
+   "key": "2015beec-59b9-5685-be39-119fdc55bf2e",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 4"
+  },
+  {
+   "key": "e7c2d1f1-b2e9-5826-987c-f3c379c94ecb",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 5"
+  },
+  {
+   "key": "9bb33472-9dcd-5a1d-9b93-00c633688f79",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 6"
+  },
+  {
+   "key": "620f544d-a91b-50e0-980a-2dc05f4169fe",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 7"
+  },
+  {
+   "key": "dce0a44c-a8a4-5b65-ba10-c7ef1c5fe770",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 8"
+  },
+  {
+   "key": "856c1829-9615-5222-ab65-bc6b97cef4db",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 9"
+  },
+  {
+   "key": "31f0990c-2c90-5566-a3fe-2ebc3652eb29",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 10"
+  },
+  {
+   "key": "efb0014a-d88c-50a7-bf0d-d86a2882214f",
+   "altText": "Kleine Künstlerpuppe: Zauberer mit Vögeln – handgefertigte Fantasy-Figur, ein Unikat. Foto 11"
+  },
+  {
+   "key": "952f89b1-287a-591a-a561-a1356386c61c",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 1"
+  },
+  {
+   "key": "fc2aa885-8c7d-5d10-af53-adbc8e472764",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 2"
+  },
+  {
+   "key": "c33029c1-7fe3-5b26-94f1-dbee8b4b62ee",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 3"
+  },
+  {
+   "key": "182a251f-78c7-5210-a142-46e1ab5571a5",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 4"
+  },
+  {
+   "key": "ccff49a2-09e2-50b3-aa17-c72b83623a0a",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 5"
+  },
+  {
+   "key": "5842e7bf-df26-5e6f-bcaf-b0d711a93b5f",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 6"
+  },
+  {
+   "key": "bc279281-b992-5210-9b10-7232ae4518ff",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 7"
+  },
+  {
+   "key": "06146ddf-b31a-5e91-8d71-b28ca9de215a",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 8"
+  },
+  {
+   "key": "678793cb-1f05-5389-ad07-ab6bbf59698a",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 9"
+  },
+  {
+   "key": "905e420a-4605-56f4-93bb-60e366c3a8d8",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 10"
+  },
+  {
+   "key": "dd501ce7-3022-56b6-9377-39408f903ec7",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 11"
+  },
+  {
+   "key": "0a0db47e-318d-55bf-b419-98c23e7a54ab",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 12"
+  },
+  {
+   "key": "ac159c07-e06d-58d6-ae70-024ac7549fd5",
+   "altText": "Kleine Künstlerpuppe „Großmutter mit Hausschnecke“ – eine winzige handgefertigte Puppe, ein Unikat. Foto 13"
+  },
+  {
+   "key": "1fdba401-c4b7-5cc8-8cdf-521b9ca4f653",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 1"
+  },
+  {
+   "key": "0fa22768-d81b-58d6-afc2-f05997f3c7ac",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 2"
+  },
+  {
+   "key": "206ffa1c-7fc4-5cc5-9bba-150d512d7d42",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 3"
+  },
+  {
+   "key": "a004c868-5950-5cb7-9886-a8ddda5a4a90",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 4"
+  },
+  {
+   "key": "987369e1-3d54-5ccf-87ef-02d56be9b1d5",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 5"
+  },
+  {
+   "key": "6e7a07b1-4e3c-5ccd-9675-12dc7e724513",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 6"
+  },
+  {
+   "key": "e077d4bc-dc99-53a5-811a-e95ddcd5e355",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 7"
+  },
+  {
+   "key": "682fc639-9f97-5c3a-99b3-9b4308748b54",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 8"
+  },
+  {
+   "key": "01255bb6-5476-57e7-be2f-dc219031edae",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 9"
+  },
+  {
+   "key": "a78d9c8c-2427-5bfa-aed6-5cf21fadbf8d",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 10"
+  },
+  {
+   "key": "e92a94c4-841b-5b9e-bd59-4183474f6bd0",
+   "altText": "Kleine Künstlerpuppe „Winziger Gnom“ mit Büchern und Vögeln – handgefertigte bewegliche Puppe, ein Unikat. Foto 11"
+  },
+  {
+   "key": "0a6edf16-9190-5573-a210-368e3020328d",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 1"
+  },
+  {
+   "key": "2fe0c874-ee8a-5fd8-87bf-8642ff4af2d4",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 2"
+  },
+  {
+   "key": "c95c6a6e-ca95-5340-a34e-6a962c3a5775",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 3"
+  },
+  {
+   "key": "9bc5dc23-071b-5a27-8862-47dd077162a4",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 4"
+  },
+  {
+   "key": "d22bab5f-e68e-5635-949f-ab2530c3b71a",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 5"
+  },
+  {
+   "key": "57142778-cf40-568a-8560-33390393713f",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 6"
+  },
+  {
+   "key": "79a060b5-6548-5a61-b9df-8958e9876926",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 7"
+  },
+  {
+   "key": "7df3eeba-d94c-56ef-a231-05e7e083bbfa",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 8"
+  },
+  {
+   "key": "b7f54d24-d241-5955-b619-637506a919b0",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Schlangen und Besen – handgefertigt, ein Unikat, mit veränderbarer Haltung. Foto 9"
+  },
+  {
+   "key": "e9c94a0e-0e95-56b9-9535-76a67598eb73",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 1"
+  },
+  {
+   "key": "26541e96-b4ad-51b7-a812-0a81e82c7956",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 2"
+  },
+  {
+   "key": "f5a5f102-3417-5229-8dd4-82a95b6e8e7f",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 3"
+  },
+  {
+   "key": "83ebf538-78ee-5553-89b6-46b0052491e8",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 4"
+  },
+  {
+   "key": "6e293934-122a-5766-a408-b8cb6351fee3",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 5"
+  },
+  {
+   "key": "a3762e5d-3304-5fc2-abc6-20eaedc339d1",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 6"
+  },
+  {
+   "key": "967174c8-dec9-54c3-92e9-209acfbcadf3",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 7"
+  },
+  {
+   "key": "f8b4b628-cd58-57e8-a469-486b47313e0f",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 8"
+  },
+  {
+   "key": "e4f01722-5502-55a3-b825-ba3a3f3be59f",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 9"
+  },
+  {
+   "key": "4c439014-cb51-5606-9e7e-1278c574d81b",
+   "altText": "Kleine Künstlerpuppe: Hexe mit Besen – handgefertigte Figur der Baba Jaga in ungewöhnlicher Haltung, ein Unikat. Foto 10"
+  },
+  {
+   "key": "8d612dfc-f68b-509f-9fa4-308d5c2f65d8",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 1"
+  },
+  {
+   "key": "96beca44-9353-57c6-8ac6-8c1aa87114b9",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 2"
+  },
+  {
+   "key": "8b6f91df-9210-54a1-9466-6e3b96cf9484",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 3"
+  },
+  {
+   "key": "79deca40-7e78-5876-a2c6-6304874c33c4",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 4"
+  },
+  {
+   "key": "e4045c3d-7587-5d31-8087-54f163cc6136",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 5"
+  },
+  {
+   "key": "3d4ae4f8-91cc-5aa8-a78e-96ad665e769d",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 6"
+  },
+  {
+   "key": "a1b63ed0-2ef3-5028-8709-07ec2cc19e0b",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 7"
+  },
+  {
+   "key": "e0083ddf-0873-58da-8e3c-f8f01bef2eec",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 8"
+  },
+  {
+   "key": "847eb61f-75a2-5c38-a1c9-aff7c80f0970",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 9"
+  },
+  {
+   "key": "e0e265d8-0fb0-573e-8ec1-b8886d82f9d4",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 10"
+  },
+  {
+   "key": "54a999c7-0fbb-5050-a278-09437b65deeb",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 11"
+  },
+  {
+   "key": "743ab2a6-0527-5a31-b997-f9994b972063",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 12"
+  },
+  {
+   "key": "d117df6f-d9d6-58bc-b22e-fecf5a0b0066",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 13"
+  },
+  {
+   "key": "0e2d4c3b-9206-5b57-8453-5cc33d69edb7",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 14"
+  },
+  {
+   "key": "672bea5b-d6b1-5f81-afa1-533eb400ceba",
+   "altText": "Kleine Künstlerpuppe: Gnom mit Mäusen – handgefertigte Puppe aus Polymerton, ein Unikat. Foto 15"
+  },
+  {
+   "key": "a66a6b23-69e0-5a21-b7af-49fd2230d113",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 1"
+  },
+  {
+   "key": "ddc1461b-8dca-5ebe-b921-75b2fccde91d",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 2"
+  },
+  {
+   "key": "896c121a-de8b-5c8e-b0f0-16fce1bbb762",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 3"
+  },
+  {
+   "key": "a1b6c8d8-bb42-56dd-b844-b214564e991a",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 4"
+  },
+  {
+   "key": "3fd5cd0b-6876-5c11-a648-f58c3b5dbb01",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 5"
+  },
+  {
+   "key": "313215ba-8703-5c0c-8df4-cfbd1ffdcc49",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 6"
+  },
+  {
+   "key": "f0ead13b-baea-58f1-9557-bc44f69384c7",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 7"
+  },
+  {
+   "key": "d322f071-72dd-582f-b69b-52492cb2367c",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 8"
+  },
+  {
+   "key": "314ae17f-cb5e-5173-b9df-ace8cfb883f7",
+   "altText": "Meerjungfrau im Steampunk-Stil aus Polymerton: bewegliche Figur, ein Unikat. Foto 9"
+  },
+  {
+   "key": "2c8ffed5-f83d-58ba-b3ea-e8f100aa9b25",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 1"
+  },
+  {
+   "key": "dfaaa828-a314-54bf-ac07-3e24299f5c14",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 2"
+  },
+  {
+   "key": "e3290eb3-d5ee-5962-a06f-7bb43fe909a7",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 3"
+  },
+  {
+   "key": "0b53db56-4a4a-5cfc-b3aa-9febea13a2e2",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 4"
+  },
+  {
+   "key": "380bde15-ce07-5f0f-bc04-b85c453e9829",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 5"
+  },
+  {
+   "key": "98675fa5-e615-5170-ac63-c75de284ba20",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 6"
+  },
+  {
+   "key": "ce9ea689-8770-5093-8945-fc0aa0a5b35b",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 7"
+  },
+  {
+   "key": "30998bff-4acd-582f-be97-5bf020a7b68f",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 8"
+  },
+  {
+   "key": "28f8c949-90d9-546e-b990-ae2e4439fe55",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 9"
+  },
+  {
+   "key": "891253c3-dce3-5244-813c-d1dd6ffb13e8",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 10"
+  },
+  {
+   "key": "bdaf592f-65ca-569f-bfb6-7240f5b4633a",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 11"
+  },
+  {
+   "key": "1f831bdf-28c4-5ceb-88a6-2afc5c988d4b",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 12"
+  },
+  {
+   "key": "545d43b8-caad-55e1-b569-587760f6072d",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 13"
+  },
+  {
+   "key": "189e23e0-61f9-52c4-9ce3-4a2c6e3b0186",
+   "altText": "Kleine Künstlerpuppe „Höhlenmensch“ – handgefertigte winzige Miniatur, ein Unikat. Foto 14"
+  },
+  {
+   "key": "61474bc1-6891-58c3-b392-b005e41abd18",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 1"
+  },
+  {
+   "key": "816fba09-ef51-5ce8-9f95-3f287a7a9e87",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 2"
+  },
+  {
+   "key": "8c23a742-6290-5f0d-a410-40294753a5e4",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 3"
+  },
+  {
+   "key": "1654e1cf-c355-5e5a-9468-36785c53452f",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 4"
+  },
+  {
+   "key": "da0de4b6-c5d7-5c49-9494-b6c67cec8c8d",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 5"
+  },
+  {
+   "key": "d4c9e95e-3395-5811-a4a7-653bb7b1c0e1",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 6"
+  },
+  {
+   "key": "ef992d3f-cc08-507b-bde7-89eba10ce458",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 7"
+  },
+  {
+   "key": "0cf5efc7-55d3-57f6-b0db-6e08d6efb9af",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 8"
+  },
+  {
+   "key": "425621f7-54b3-5f86-8403-950c395fa188",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 9"
+  },
+  {
+   "key": "e41524a3-3930-5677-ab1e-784b1f1b7f49",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 10"
+  },
+  {
+   "key": "045b1c52-265d-5f76-b1c8-3e41dec39ea8",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 11"
+  },
+  {
+   "key": "342b9205-64d8-5b4e-8fa1-605fbcb707ae",
+   "altText": "Kleine Künstlerpuppe: Baba Jaga mit Besen – handgefertigte bewegliche Puppe „Großmutter“, ein Unikat. Foto 12"
+  },
+  {
+   "key": "467c2848-fbfb-51f2-897b-9d6f6f9ed0f3",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 1"
+  },
+  {
+   "key": "52b9c1a7-1212-5552-b63b-525b56668dcf",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 2"
+  },
+  {
+   "key": "7564908e-5e06-5746-9d3d-13359cc861a0",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 3"
+  },
+  {
+   "key": "1344993f-5f4f-54d3-a814-9c802eaf5910",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 4"
+  },
+  {
+   "key": "3efbab3b-6cd2-5346-9256-75bfcbbba739",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 5"
+  },
+  {
+   "key": "1af83576-e3f4-514c-861a-1498f2acaa43",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 6"
+  },
+  {
+   "key": "b140cfae-8274-5e10-9e8a-dc1db7376414",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 7"
+  },
+  {
+   "key": "c487629f-b33f-55d0-aeab-13decc4ba4fb",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 8"
+  },
+  {
+   "key": "3954c8a8-e331-5220-92c2-32efd9b7c7d5",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 9"
+  },
+  {
+   "key": "c627fdff-5af7-59d1-9a6f-b1076541775b",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 10"
+  },
+  {
+   "key": "9681ea67-57a9-562c-a380-a0516ffb52a5",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 11"
+  },
+  {
+   "key": "87a2f658-9288-5543-bf81-2895d099d9ce",
+   "altText": "Kleine Künstlerpuppe „Alte Ballerina“ – handgefertigte hängende Tänzerin, ein Unikat. Foto 12"
+  },
+  {
+   "key": "0800203b-902c-51f2-b054-7666ca45a612",
+   "altText": "Kleine Künstlerpuppe „Dorfmädchen mit Vogel“ – handgefertigte Puppe mit veränderbarer Haltung, ein Unikat. Foto 1"
+  },
+  {
+   "key": "2e8de6dd-9cb7-531c-b833-93dad8be2d8d",
+   "altText": "Kleine Künstlerpuppe „Dorfmädchen mit Vogel“ – handgefertigte Puppe mit veränderbarer Haltung, ein Unikat. Foto 2"
+  },
+  {
+   "key": "b4386996-bb95-5cdb-97a8-6ace058adfe2",
+   "altText": "Kleine Künstlerpuppe „Dorfmädchen mit Vogel“ – handgefertigte Puppe mit veränderbarer Haltung, ein Unikat. Foto 3"
+  },
+  {
+   "key": "0f410a44-6006-508d-803d-89efc4b5fd2b",
+   "altText": "Kleine Künstlerpuppe „Dorfmädchen mit Vogel“ – handgefertigte Puppe mit veränderbarer Haltung, ein Unikat. Foto 4"
+  },
+  {
+   "key": "137f83e7-4471-5195-b404-4fbfa4d55448",
+   "altText": "Kleine Künstlerpuppe „Dorfmädchen mit Vogel“ – handgefertigte Puppe mit veränderbarer Haltung, ein Unikat. Foto 5"
+  },
+  {
+   "key": "4c4b9b58-16fc-5b0e-aae4-cb5febc10d8d",
+   "altText": "Kleine Künstlerpuppe „Dorfmädchen mit Vogel“ – handgefertigte Puppe mit veränderbarer Haltung, ein Unikat. Foto 6"
+  },
+  {
+   "key": "0e01d4f0-a41c-5c6f-95ea-460efcc6c0db",
+   "altText": "Kleine Künstlerpuppe „Dorfmädchen mit Vogel“ – handgefertigte Puppe mit veränderbarer Haltung, ein Unikat. Foto 7"
+  },
+  {
+   "key": "31381493-c138-56b6-9b6f-1ed31f9d97c5",
+   "altText": "Kleine Künstlerpuppe „Dorfmädchen mit Vogel“ – handgefertigte Puppe mit veränderbarer Haltung, ein Unikat. Foto 8"
+  },
+  {
+   "key": "2b47046f-b9f7-5dc8-9a4b-c7a853453d6f",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 1"
+  },
+  {
+   "key": "02a81df0-ee7f-576f-9887-52dd134af7c7",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 2"
+  },
+  {
+   "key": "09a5a303-05d1-52a8-9c5e-ddd8b1b94080",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 3"
+  },
+  {
+   "key": "9010df13-5716-5f06-bd40-0bd2efee9bb4",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 4"
+  },
+  {
+   "key": "5cb7da23-5bc5-5577-a72a-46e997d05fe0",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 5"
+  },
+  {
+   "key": "b3a5abc0-a318-5a66-bc74-4f7215797211",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 6"
+  },
+  {
+   "key": "b52ee644-3854-5c8d-b8af-9ea7bf39e967",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 7"
+  },
+  {
+   "key": "eb2ed57d-9765-5edc-a786-338a4f23d212",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 8"
+  },
+  {
+   "key": "e4da3718-1ec4-5dbd-ad58-95172c64cc9c",
+   "altText": "Miniatur-Buchskulptur „Notre-Dame“: ein Geschenk aus Ton für Bücherfreunde Foto 9"
+  },
+  {
+   "key": "5a89985c-84c8-59e0-b556-6c918bb23648",
+   "altText": "Kleine Künstlerpuppe „Alte Meerjungfrau“ – handgefertigte Puppe mit beweglichen Gliedern zum Aufhängen, ein Unikat. Foto 1"
+  },
+  {
+   "key": "2aff46c4-26af-56c1-ad57-13ae7512616e",
+   "altText": "Kleine Künstlerpuppe „Alte Meerjungfrau“ – handgefertigte Puppe mit beweglichen Gliedern zum Aufhängen, ein Unikat. Foto 2"
+  },
+  {
+   "key": "ce32d6eb-18c3-569c-b3ab-9f5d528b80b2",
+   "altText": "Kleine Künstlerpuppe „Alte Meerjungfrau“ – handgefertigte Puppe mit beweglichen Gliedern zum Aufhängen, ein Unikat. Foto 3"
+  },
+  {
+   "key": "f38a2bd4-d4e5-59d5-a561-dbf02f80aaee",
+   "altText": "Kleine Künstlerpuppe „Alte Meerjungfrau“ – handgefertigte Puppe mit beweglichen Gliedern zum Aufhängen, ein Unikat. Foto 4"
+  },
+  {
+   "key": "9171a0d9-a9bc-5655-b8c7-4bd53fd3c822",
+   "altText": "Kleine Künstlerpuppe „Alte Meerjungfrau“ – handgefertigte Puppe mit beweglichen Gliedern zum Aufhängen, ein Unikat. Foto 5"
+  },
+  {
+   "key": "46d4cc1a-c2e9-57de-8146-69e7fc0e01c2",
+   "altText": "Kleine Künstlerpuppe „Alte Meerjungfrau“ – handgefertigte Puppe mit beweglichen Gliedern zum Aufhängen, ein Unikat. Foto 6"
+  },
+  {
+   "key": "e245c6fa-a3d2-5919-b69e-83bae230742b",
+   "altText": "Kleine Künstlerpuppe „Alte Meerjungfrau“ – handgefertigte Puppe mit beweglichen Gliedern zum Aufhängen, ein Unikat. Foto 7"
+  },
+  {
+   "key": "1bec46e8-9254-5f30-8e1c-35d1a99daa85",
+   "altText": "Kleine Künstlerpuppe „Alte Meerjungfrau“ – handgefertigte Puppe mit beweglichen Gliedern zum Aufhängen, ein Unikat. Foto 8"
+  },
+  {
+   "key": "3d66a91c-34e0-5493-ad2d-93bdf60cfa8c",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 1"
+  },
+  {
+   "key": "928e65a8-c2cc-565d-b756-64163ec9d8eb",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 2"
+  },
+  {
+   "key": "bf03573e-b9f3-57dc-be8f-3985c59bfb3a",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 3"
+  },
+  {
+   "key": "a3e0494a-b758-5ef5-a498-44b7290d6c5e",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 4"
+  },
+  {
+   "key": "065a8086-0b3f-591e-baee-53079fb17311",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 5"
+  },
+  {
+   "key": "9fdd764a-f00a-5c5f-95ed-ce06c47f0a07",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 6"
+  },
+  {
+   "key": "1a6993e9-6fc1-5244-8f2f-047b3f41b7b3",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 7"
+  },
+  {
+   "key": "a39bacea-3276-5915-ad85-4184fffff448",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 8"
+  },
+  {
+   "key": "9a8395b3-5df5-5bfc-baa7-c2005617d09c",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 9"
+  },
+  {
+   "key": "5de40baa-dcf5-543e-bdb0-70d5298b9b6e",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 10"
+  },
+  {
+   "key": "01b497c8-d7bb-5f98-aa53-5c60e39f70f8",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 11"
+  },
+  {
+   "key": "5ccad6d9-3587-58d3-a28e-e1177aba9bc0",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 12"
+  },
+  {
+   "key": "d07e9c4b-3e41-564b-be4b-ad319e9a706c",
+   "altText": "Kleine Künstlerpuppe „Dame mit Ferkel“ – handgefertigte bewegliche Puppe „Kleine Großmutter“, ein Unikat. Foto 13"
+  },
+  {
+   "key": "6e9305a7-f714-5352-853d-6fcebfd402be",
+   "altText": "Miniatur-Buchskulptur nach Edgar Allan Poe: gotischer Schmuck aus Polymerton, von Hand gefertigt Foto 1"
+  },
+  {
+   "key": "797fae7e-249c-51b2-b7af-fe7d25a507b4",
+   "altText": "Miniatur-Buchskulptur nach Edgar Allan Poe: gotischer Schmuck aus Polymerton, von Hand gefertigt Foto 2"
+  },
+  {
+   "key": "eccb9c46-4790-54ea-8598-5cdd94023166",
+   "altText": "Miniatur-Buchskulptur nach Edgar Allan Poe: gotischer Schmuck aus Polymerton, von Hand gefertigt Foto 3"
+  },
+  {
+   "key": "6bdab8cf-f5b6-55e4-9ebb-e742face9e2a",
+   "altText": "Miniatur-Buchskulptur nach Edgar Allan Poe: gotischer Schmuck aus Polymerton, von Hand gefertigt Foto 4"
+  },
+  {
+   "key": "9487150a-4966-5148-b00b-2bc665bb0c85",
+   "altText": "Miniatur-Buchskulptur nach Edgar Allan Poe: gotischer Schmuck aus Polymerton, von Hand gefertigt Foto 5"
+  },
+  {
+   "key": "01b9bbb8-411d-540d-8cc0-ccbbd8c94813",
+   "altText": "Miniatur-Buchskulptur nach Edgar Allan Poe: gotischer Schmuck aus Polymerton, von Hand gefertigt Foto 6"
+  },
+  {
+   "key": "de752238-ed3d-5a5f-805b-642ca3928414",
+   "altText": "Miniatur-Buchskulptur nach Edgar Allan Poe: gotischer Schmuck aus Polymerton, von Hand gefertigt Foto 7"
+  },
+  {
+   "key": "37f1c482-fcea-50cd-af15-36be41dd74c2",
+   "altText": "Miniatur-Buchskulptur nach Edgar Allan Poe: gotischer Schmuck aus Polymerton, von Hand gefertigt Foto 8"
+  },
+  {
+   "key": "1ecc691d-7dad-568c-a140-ef7f17abd76c",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 1"
+  },
+  {
+   "key": "9e957632-363c-5ebc-801d-738769df3794",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 2"
+  },
+  {
+   "key": "d0bb8399-a737-586d-a801-15337ea22f6f",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 3"
+  },
+  {
+   "key": "35ad1c62-1d4a-5f5d-ae20-6840d1796b26",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 4"
+  },
+  {
+   "key": "7b8b1515-a870-5c66-82a0-2133515b8bdb",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 5"
+  },
+  {
+   "key": "accca2d6-24cf-53b8-a10f-8872b1ddc416",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 6"
+  },
+  {
+   "key": "a7f86597-ced1-5e6d-8bf4-71c816a274f8",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 7"
+  },
+  {
+   "key": "1a6c3995-11c8-59ea-a1c0-cda4e735bff0",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 8"
+  },
+  {
+   "key": "290ce60b-450e-5e25-8af8-a4e1c48361b9",
+   "altText": "Bewegliche Puppe Baba Jaga: Hexenfigur aus Polymerton, ein Unikat. Foto 9"
+  },
+  {
+   "key": "0bbf466a-56f0-5afb-acd9-6c97b2e394a8",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 1"
+  },
+  {
+   "key": "91320ed2-3b69-52fe-ae61-6c3a30008afe",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 2"
+  },
+  {
+   "key": "83281c2c-49d1-5fc7-a491-a666c72e29f7",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 3"
+  },
+  {
+   "key": "d06b04a2-37a9-5085-a936-301ce4a1c8d9",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 4"
+  },
+  {
+   "key": "908ca874-316f-5a0f-ae18-7b21e3afdc32",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 5"
+  },
+  {
+   "key": "04f03e9f-49bf-5ca0-ae2e-bc5c2103ff8b",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 6"
+  },
+  {
+   "key": "29f05573-ce0f-50df-bf6d-4c5a32b08f64",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 7"
+  },
+  {
+   "key": "61f493ab-f1ee-5ab8-99d0-0ae2a27e987c",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 8"
+  },
+  {
+   "key": "c024fba2-5e76-51d0-9a35-cab8bc54fd37",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 9"
+  },
+  {
+   "key": "e3c67783-6ec5-5be6-a239-b20918f7faa0",
+   "altText": "Künstlerpuppe Musketier, ein Unikat: bewegliche Figur aus Polymerton Foto 10"
+  },
+  {
+   "key": "b679fe6b-620c-5ec9-b80b-c984c02f3683",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 1"
+  },
+  {
+   "key": "7d08b541-7bf7-50cf-8065-1a0e357a1f06",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 2"
+  },
+  {
+   "key": "a3979fc0-b299-5f2a-8bf1-571891380e9f",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 3"
+  },
+  {
+   "key": "bb0da9e4-b3e6-5156-a7b4-66d9b5cf105e",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 4"
+  },
+  {
+   "key": "417b82fa-23c3-5d83-b7d3-1b09390029fd",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 5"
+  },
+  {
+   "key": "2ac59529-41af-5c2a-bed0-b80ad495bd6d",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 6"
+  },
+  {
+   "key": "87051ca6-78af-57c4-9ac1-4d75dc813e39",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 7"
+  },
+  {
+   "key": "17637328-a4c7-5907-83b4-ffe1fb652fdc",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 8"
+  },
+  {
+   "key": "e4a31007-dae1-59f8-a272-5337f6f6d96e",
+   "altText": "Puppe Baba Jaga, ein Unikat: Hexenfigur aus Polymerton im Mörser, Hängeschmuck mit verstellbarer Schnur. Foto 9"
+  }
+ ]
+}

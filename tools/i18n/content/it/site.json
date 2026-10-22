@@ -1,0 +1,26 @@
+{
+  "kind": "site",
+  "lang": "it",
+  "items": [
+    {
+      "key": "home_content.kicker",
+      "text": "Piccole bambole e sculture fatte a mano"
+    },
+    {
+      "key": "home_content.lead",
+      "text": "Bambole e sculture in miniatura, pezzi unici, per la tua casa delle bambole e per l’arredamento"
+    },
+    {
+      "key": "showing_rooms.41d2a9ec-4d2f-4301-88c1-13354256c96c.name",
+      "text": "Sala notturna"
+    },
+    {
+      "key": "showing_rooms.fa797ea4-553f-490b-a617-5470242ecf01.name",
+      "text": "Fine settimana"
+    },
+    {
+      "key": "showing_rooms.efcd23cf-e53c-4b67-818a-ff3d8a6eaa3f.name",
+      "text": "Visita del mercoledì"
+    }
+  ]
+}

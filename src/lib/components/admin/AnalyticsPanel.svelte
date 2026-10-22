@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { locale } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
@@ -677,7 +678,7 @@
   let conversionLabel = $derived(overview ? rateLabel(overview.summary.submissions, overview.summary.engagedViews) : null);
 
   // ── Formatting helpers ───────────────────────────────────────────────────
-  const nf = new Intl.NumberFormat('en-US');
+  let nf = $derived(new Intl.NumberFormat($locale));
   function fmt(n: number): string { return nf.format(n); }
 
   function rate(value: number, total: number): number {

@@ -2,7 +2,7 @@
   import { interact } from '$lib/analytics';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { t , brandName } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
@@ -252,8 +252,8 @@
               class="auth-icon-btn"
               class:selected={selectedTokens[catIdx] === item.token}
               onclick={() => { selectedTokens[catIdx] = item.token; }}
-              title={icon.labelRu}
-              aria-label={icon.labelRu}
+              title={iconLabel(icon, $lang)}
+              aria-label={iconLabel(icon, $lang)}
             >
               {@html icon.svg}
               <span class="auth-icon-label">{iconLabel(icon, $lang)}</span>

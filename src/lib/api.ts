@@ -191,6 +191,14 @@ import type {
     ChallengeSetup,
 } from './types/api';
 import { isGazetteReservedSlug } from './gazette';
+import { get as readStore } from 'svelte/store';
+import { lang as langStore } from './i18n';
+
+/** Язык страницы в момент отправки: на нём сервер отвечает посетителю
+ *  (письма, ветка переписки). Явно названный в запросе язык не трогается. */
+function withLang<T extends { lang?: string | null }>(req: T): T {
+    return { ...req, lang: req.lang || readStore(langStore) };
+}
 
 export type { AppSettings };
 export type ImportedMedia = {
@@ -1336,7 +1344,7 @@ export const api = {
         return webFetch('/orders', {
             method: 'POST',
             headers,
-            body: JSON.stringify(order),
+            body: JSON.stringify(withLang(order)),
         });
     },
 
@@ -1414,7 +1422,7 @@ export const api = {
         return webFetch(`/figurines/${req.figurineId}/book`, {
             method: 'POST',
             headers,
-            body: JSON.stringify(req),
+            body: JSON.stringify(withLang(req)),
         });
     },
 
@@ -1481,7 +1489,7 @@ export const api = {
         return webFetch(`/figurines/${figurineId}/waitlist`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(req),
+            body: JSON.stringify(withLang(req)),
         });
     },
 
@@ -2176,7 +2184,7 @@ export const api = {
         await webFetch(`/figurines/${figurineId}/comments`, {
             method: 'POST',
             headers,
-            body: JSON.stringify(req),
+            body: JSON.stringify(withLang(req)),
         });
     },
 
@@ -2224,7 +2232,7 @@ export const api = {
         await webFetch(`/tales/${taleId}/comments`, {
             method: 'POST',
             headers,
-            body: JSON.stringify(req),
+            body: JSON.stringify(withLang(req)),
         });
     },
 

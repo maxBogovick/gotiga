@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { FigurineSchedule, BookingRules } from '$lib/types/api';
-  import { t, lang } from '$lib/i18n';
+  import { t, lang, quote } from '$lib/i18n';
 
   let {
     schedule = { entries: [] } as FigurineSchedule,
@@ -125,7 +125,7 @@
         from <= e.endsAt && to >= e.startsAt
       );
       const base = b?.entryType === 'showing'
-        ? `${$t('calConflictOverlapShowing')} «${b.title}»`
+        ? `${$t('calConflictOverlapShowing')} ${quote($lang, b.title ?? "")}`
         : $t('calConflictOverlapBooking');
       onError(`${base} ${$t('calConflictSuffix')}`);
       startsAt = ds; endsAt = ''; return;
@@ -157,9 +157,9 @@
 <div class="cal">
   <!-- Header -->
   <div class="cal-head">
-    <button type="button" onclick={prev} class="cal-nav" aria-label="Previous month">‹</button>
+    <button type="button" onclick={prev} class="cal-nav" aria-label={$t('monthPrev')}>‹</button>
     <span class="cal-month">{monthName(viewYear, viewMonth)}</span>
-    <button type="button" onclick={next} class="cal-nav" aria-label="Next month">›</button>
+    <button type="button" onclick={next} class="cal-nav" aria-label={$t('monthNext')}>›</button>
   </div>
 
   <!-- Grid -->

@@ -55,12 +55,21 @@
   let titleEn = $state('');
   let titleRu = $state('');
   let titleUk = $state('');
+  let titleEs = $state('');
+  let titleDe = $state('');
+  let titleIt = $state('');
   let dekEn = $state('');
   let dekRu = $state('');
   let dekUk = $state('');
+  let dekEs = $state('');
+  let dekDe = $state('');
+  let dekIt = $state('');
   let bodyEn = $state('');
   let bodyRu = $state('');
   let bodyUk = $state('');
+  let bodyEs = $state('');
+  let bodyDe = $state('');
+  let bodyIt = $state('');
   let figurineId = $state('');
   // Кем написана история. Одно поле на оба языка: имя не переводится.
   let author = $state('');
@@ -153,22 +162,33 @@
 
   // One text per language, read and written by code: the desk used to know two
   // languages and every `editLang === 'ru'` was a fork between them.
-  const getTitle = (l: Lang) => (l === 'ru' ? titleRu : l === 'uk' ? titleUk : titleEn);
-  const getDek = (l: Lang) => (l === 'ru' ? dekRu : l === 'uk' ? dekUk : dekEn);
-  const getBody = (l: Lang) => (l === 'ru' ? bodyRu : l === 'uk' ? bodyUk : bodyEn);
+  const getTitle = (l: Lang) =>
+    ({ en: titleEn, ru: titleRu, uk: titleUk, es: titleEs, de: titleDe, it: titleIt })[l];
+  const getDek = (l: Lang) => ({ en: dekEn, ru: dekRu, uk: dekUk, es: dekEs, de: dekDe, it: dekIt })[l];
+  const getBody = (l: Lang) =>
+    ({ en: bodyEn, ru: bodyRu, uk: bodyUk, es: bodyEs, de: bodyDe, it: bodyIt })[l];
   function setTitle(l: Lang, v: string) {
     if (l === 'ru') titleRu = v;
     else if (l === 'uk') titleUk = v;
+    else if (l === 'es') titleEs = v;
+    else if (l === 'de') titleDe = v;
+    else if (l === 'it') titleIt = v;
     else titleEn = v;
   }
   function setDek(l: Lang, v: string) {
     if (l === 'ru') dekRu = v;
     else if (l === 'uk') dekUk = v;
+    else if (l === 'es') dekEs = v;
+    else if (l === 'de') dekDe = v;
+    else if (l === 'it') dekIt = v;
     else dekEn = v;
   }
   function setBody(l: Lang, v: string) {
     if (l === 'ru') bodyRu = v;
     else if (l === 'uk') bodyUk = v;
+    else if (l === 'es') bodyEs = v;
+    else if (l === 'de') bodyDe = v;
+    else if (l === 'it') bodyIt = v;
     else bodyEn = v;
   }
   /** The language a reader of `l` is shown when `l` has no text: English first,
@@ -193,7 +213,7 @@
   let chars = $derived(bodyNow.length);
   let fill = $derived(Math.min(1, chars / LITTLE));
   let tooLong = $derived(chars > LITTLE);
-  let open = $derived(selectedId !== null || titleEn !== '' || titleRu !== '' || titleUk !== '');
+  let open = $derived(selectedId !== null || LANGS.some((l) => getTitle(l) !== ''));
   let mine = $derived(selectedId ? stats[selectedId] ?? null : null);
   let minutes = $derived(readingMinutes(bodyNow));
   /** Какая половина сайта осталась без текста. */
@@ -201,6 +221,9 @@
     en: !bodyEn.trim(),
     ru: !bodyRu.trim(),
     uk: !bodyUk.trim(),
+    es: !bodyEs.trim(),
+    de: !bodyDe.trim(),
+    it: !bodyIt.trim(),
   });
   /** Адрес на сайте. Ссылка открывается только у байки, которая на людях. */
   let siteHref = $derived(selectedId && slug ? leafHref({ kind: 'tale', slug } as GazetteLeaf) : '');
@@ -213,7 +236,8 @@
 
   function fieldsKey(): string {
     return JSON.stringify({
-      titleEn, titleRu, titleUk, dekEn, dekRu, dekUk, bodyEn, bodyRu, bodyUk, author,
+      titleEn, titleRu, titleUk, titleEs, titleDe, titleIt, dekEn, dekRu, dekUk, dekEs, dekDe, dekIt,
+      bodyEn, bodyRu, bodyUk, bodyEs, bodyDe, bodyIt, author,
       figurineId, imageUrls, slug, status, pinned, scheduledAt,
     });
   }
@@ -332,12 +356,21 @@
     titleEn = '';
     titleRu = '';
     titleUk = '';
+    titleEs = '';
+    titleDe = '';
+    titleIt = '';
     dekEn = '';
     dekRu = '';
     dekUk = '';
+    dekEs = '';
+    dekDe = '';
+    dekIt = '';
     bodyEn = '';
     bodyRu = '';
     bodyUk = '';
+    bodyEs = '';
+    bodyDe = '';
+    bodyIt = '';
     figurineId = '';
     author = '';
     imageUrls = [];
@@ -366,12 +399,21 @@
     titleEn = leaf.titleEn;
     titleRu = leaf.titleRu;
     titleUk = leaf.titleUk ?? '';
+    titleEs = leaf.titleEs ?? '';
+    titleDe = leaf.titleDe ?? '';
+    titleIt = leaf.titleIt ?? '';
     dekEn = leaf.dekEn ?? '';
     dekRu = leaf.dekRu ?? '';
     dekUk = leaf.dekUk ?? '';
+    dekEs = leaf.dekEs ?? '';
+    dekDe = leaf.dekDe ?? '';
+    dekIt = leaf.dekIt ?? '';
     bodyEn = leaf.bodyEn ?? '';
     bodyRu = leaf.bodyRu ?? '';
     bodyUk = leaf.bodyUk ?? '';
+    bodyEs = leaf.bodyEs ?? '';
+    bodyDe = leaf.bodyDe ?? '';
+    bodyIt = leaf.bodyIt ?? '';
     figurineId = leaf.figurineId ?? '';
     author = leaf.author ?? '';
     imageUrls = leaf.imageUrls?.length ? leaf.imageUrls.filter(Boolean) : leaf.imageUrl ? [leaf.imageUrl] : [];
@@ -416,12 +458,21 @@
     titleEn = (d.titleEn as string) ?? titleEn;
     titleRu = (d.titleRu as string) ?? titleRu;
     titleUk = (d.titleUk as string) ?? titleUk;
+    titleEs = (d.titleEs as string) ?? titleEs;
+    titleDe = (d.titleDe as string) ?? titleDe;
+    titleIt = (d.titleIt as string) ?? titleIt;
     dekEn = (d.dekEn as string) ?? dekEn;
     dekRu = (d.dekRu as string) ?? dekRu;
     dekUk = (d.dekUk as string) ?? dekUk;
+    dekEs = (d.dekEs as string) ?? dekEs;
+    dekDe = (d.dekDe as string) ?? dekDe;
+    dekIt = (d.dekIt as string) ?? dekIt;
     bodyEn = (d.bodyEn as string) ?? bodyEn;
     bodyRu = (d.bodyRu as string) ?? bodyRu;
     bodyUk = (d.bodyUk as string) ?? bodyUk;
+    bodyEs = (d.bodyEs as string) ?? bodyEs;
+    bodyDe = (d.bodyDe as string) ?? bodyDe;
+    bodyIt = (d.bodyIt as string) ?? bodyIt;
     author = (d.author as string) ?? author;
     // Работа и фотография — тоже часть написанного: восстановленный текст
     // без них вернул бы байку к чужой обложке.
@@ -514,7 +565,7 @@
 
   $effect(() => {
     if (!reading) return;
-    const refs = siteRefsIn(`${bodyEn}\n${bodyRu}\n${bodyUk}`);
+    const refs = siteRefsIn(LANGS.map((l) => getBody(l)).join('\n'));
     if (!refs.length) {
       readingLinks = {};
       return;
@@ -547,19 +598,28 @@
       // them would put Russian prose on the English page — and, worse, the
       // copy used to land back in the editor, so writing in one language made
       // text appear in the other while the author was still typing.
-      // Ukrainian is optional and never mirrored: a tale not yet translated
+      // Ukrainian (and Spanish, German, Italian) is optional and never mirrored: a tale not yet translated
       // shows English to a Ukrainian reader, which is the honest thing. A tale
       // written ONLY in Ukrainian still gets a title in the other two (the
       // server copies it) — the table requires both of them.
       titleEn: copyOr(titleEn, titleRu),
       titleRu: copyOr(titleRu, titleEn),
       titleUk: titleUk.trim(),
+      titleEs: titleEs.trim(),
+      titleDe: titleDe.trim(),
+      titleIt: titleIt.trim(),
       dekEn: dekEn.trim() || null,
       dekRu: dekRu.trim() || null,
       dekUk: dekUk.trim() || null,
+      dekEs: dekEs.trim() || null,
+      dekDe: dekDe.trim() || null,
+      dekIt: dekIt.trim() || null,
       bodyEn: bodyEn.trim() || null,
       bodyRu: bodyRu.trim() || null,
       bodyUk: bodyUk.trim() || null,
+      bodyEs: bodyEs.trim() || null,
+      bodyDe: bodyDe.trim() || null,
+      bodyIt: bodyIt.trim() || null,
       figurineId: figurineId || null,
       // Пустое поле — это «нет подписи», и оно обязано доехать до сервера:
       // пропущенное поле там значит то же самое, но молча.
@@ -585,7 +645,7 @@
    * identity the server owns is taken back.
    */
   async function save(): Promise<boolean> {
-    if (!titleEn.trim() && !titleRu.trim() && !titleUk.trim()) return false;
+    if (LANGS.every((l) => !getTitle(l).trim())) return false;
     const wasNew = selectedId === null;
     const sent = fieldsKey();
     saving = true;
@@ -610,7 +670,7 @@
       } else {
         tales = tales.map((tale) =>
           tale.id === saved.id
-            ? { ...tale, titleEn: saved.titleEn, titleRu: saved.titleRu, titleUk: saved.titleUk, bodyEn: saved.bodyEn, bodyRu: saved.bodyRu, bodyUk: saved.bodyUk, status: saved.status, pinned: saved.pinned, figurineName: saved.figurineName }
+            ? { ...tale, titleEn: saved.titleEn, titleRu: saved.titleRu, titleUk: saved.titleUk, titleEs: saved.titleEs, titleDe: saved.titleDe, titleIt: saved.titleIt, bodyEn: saved.bodyEn, bodyRu: saved.bodyRu, bodyUk: saved.bodyUk, bodyEs: saved.bodyEs, bodyDe: saved.bodyDe, bodyIt: saved.bodyIt, status: saved.status, pinned: saved.pinned, figurineName: saved.figurineName }
             : tale,
         );
       }
@@ -626,7 +686,9 @@
   /** Замечания перед выходом. Не запрещают — называют. */
   function releaseWarnings(): string[] {
     const out: string[] = [];
-    for (const code of LANGS) {
+    // Испанский, немецкий и итальянский не обязательны: пустые на них не
+    // замечание, читатель увидит английский.
+    for (const code of ['en', 'ru', 'uk'] as const) {
       const other = fallbackOf(code);
       const mark = LANG_META[code].mark;
       const otherMark = LANG_META[other].mark;
@@ -646,13 +708,13 @@
    * меняется, пока листок не подтвердили.
    */
   async function beginRelease(target: 'published' | 'scheduled', at: string | null) {
-    if (!titleEn.trim() && !titleRu.trim() && !titleUk.trim()) {
+    if (LANGS.every((l) => !getTitle(l).trim())) {
       flash($t('adminTalesNeedTitle'));
       return;
     }
     // Пустое тело — не замечание, а отказ: письмо «вышла новая байка» о
     // байке без единой строки уйти не должно.
-    if (!bodyEn.trim() && !bodyRu.trim() && !bodyUk.trim()) {
+    if (LANGS.every((l) => !getBody(l).trim())) {
       flash($t('adminTalesCheckNoBody'));
       return;
     }
@@ -721,7 +783,7 @@
   function whenLetters(p: NonNullable<typeof preflight>): string {
     const mins = Math.round((p.forecast?.graceSecs ?? 600) / 60);
     if (p.target === 'scheduled' && p.at) {
-      const at = new Date(p.at).toLocaleString(pick($lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA' }), {
+      const at = new Date(p.at).toLocaleString(pick($lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA', es: 'es-ES', de: 'de-DE', it: 'it-IT' }), {
         day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
       });
       return $t('adminTalesLettersAfter').replace('{min}', String(mins)).replace('{at}', at);
@@ -855,7 +917,7 @@
       if (!file) return;
       uploading = true;
       try {
-        const imported = await api.importMediaWithVariants(file, 'images', titleEn || titleRu || titleUk || 'tale');
+        const imported = await api.importMediaWithVariants(file, 'images', titleEn || titleRu || titleUk || titleEs || titleDe || titleIt || 'tale');
         imageUrls = [imported.url];
       } catch (e) {
         flash(String(e), 6000);
@@ -878,7 +940,7 @@
   }
 
   function clock(at: Date): string {
-    return at.toLocaleTimeString(pick($lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA' }), {
+    return at.toLocaleTimeString(pick($lang, { en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA', es: 'es-ES', de: 'de-DE', it: 'it-IT' }), {
       hour: '2-digit',
       minute: '2-digit',
     });
@@ -1038,7 +1100,7 @@
     {#if sceneMode && selectedId}
       <div class="scroll">
         {#key selectedId}
-          <TaleSceneEditor taleId={selectedId} {slug} {bodyEn} {bodyRu} {bodyUk} lang={editLang} />
+          <TaleSceneEditor taleId={selectedId} {slug} {bodyEn} {bodyRu} {bodyUk} {bodyEs} {bodyDe} {bodyIt} lang={editLang} />
         {/key}
       </div>
     {:else}

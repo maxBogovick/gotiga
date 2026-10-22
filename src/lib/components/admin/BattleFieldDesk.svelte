@@ -43,6 +43,9 @@
     titleRu = $bindable(),
     titleEn = $bindable(),
     titleUk = $bindable(''),
+    titleEs = $bindable(''),
+    titleDe = $bindable(''),
+    titleIt = $bindable(''),
     board = $bindable(),
     terrain = $bindable(),
     background = $bindable(),
@@ -64,6 +67,11 @@
     titleRu: string;
     titleEn: string;
     titleUk?: string;
+    /** Испанское, немецкое, итальянское название правятся под доской, вместе
+     *  с запиской; здесь — только для признака «не сохранено». */
+    titleEs?: string;
+    titleDe?: string;
+    titleIt?: string;
     /** Тела расстановки по клетке, слагами. */
     board: Record<string, string>;
     terrain: Record<string, BattleGround>;
@@ -126,7 +134,7 @@
           !q ||
           c.titleRu.toLowerCase().includes(q) ||
           c.titleEn.toLowerCase().includes(q) ||
-          (c.titleUk ?? '').toLowerCase().includes(q)
+          [c.titleUk, c.titleEs, c.titleDe, c.titleIt].some((x) => (x ?? '').toLowerCase().includes(q))
         );
       })
       .sort((a, b) => Number(b.status === 'etude') - Number(a.status === 'etude')),
@@ -185,6 +193,9 @@
       titleRu !== kept.titleRu ||
       titleEn !== kept.titleEn ||
       titleUk !== (kept.titleUk ?? '') ||
+      titleEs !== (kept.titleEs ?? '') ||
+      titleDe !== (kept.titleDe ?? '') ||
+      titleIt !== (kept.titleIt ?? '') ||
       side !== kept.playerSide ||
       field.width !== keptField.width ||
       field.depth !== keptField.depth ||

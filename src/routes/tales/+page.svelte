@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
@@ -203,7 +204,7 @@
                        while telling image search nothing about what is pictured. -->
                   <AppImage
                     src={cover}
-                    alt={tale.figurineName ?? ''}
+                    alt={figurineNameIn(tale, $lang)}
                     class="arch-img"
                     sizes="(max-width: 480px) 88vw, (max-width: 860px) 44vw, 320px"
                   />

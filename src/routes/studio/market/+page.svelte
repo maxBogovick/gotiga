@@ -8,7 +8,7 @@
   // Лицензия показана НАСТОЯЩЕЙ картой в её раме, тем же отрисовщиком, каким
   // она встанет в игру: второй облик однажды соврёт.
   import { onMount } from 'svelte';
-  import { t, lang, localized } from '$lib/i18n';
+  import { t, lang, localized, firstText, type Lang } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { emptyBattleCard } from '$lib/battles';
@@ -71,7 +71,13 @@
     titleEn: 'The Keeper of the Key',
     titleRu: 'Хранительница Ключа',
     titleUk: 'Охоронниця Ключа',
+    titleEs: 'La Guardiana de la Llave',
+    titleDe: 'Die Hüterin des Schlüssels',
+    titleIt: 'La Custode della Chiave',
     effectUk: 'Вир Душі: кожне третє закляття створює копію ефекту.',
+    effectEs: 'Torbellino del Alma: cada tercer hechizo crea una copia de su efecto.',
+    effectDe: 'Seelenwirbel: Jeder dritte Zauber erzeugt eine Kopie seiner Wirkung.',
+    effectIt: 'Vortice dell’Anima: ogni terzo incantesimo crea una copia del suo effetto.',
     effectRu: 'Вихрь Души: каждое третье заклинание создаёт копию эффекта.',
     effectEn: 'Wind of Soul: every third spell makes a copy of its effect.',
     cost: 5,
@@ -213,6 +219,10 @@
 
   /** Сколько дать, чтобы перебить: домашний шаг назван вслух, иначе отказ
    *  «мало» приходит без числа. */
+  // Названия лотов и мены на языке читателя; нет — прежнее поле.
+  const titleIn = (base: string, titles: Record<string, string> | null | undefined) =>
+    firstText($lang, { en: base, ...(titles ?? {}) } as Partial<Record<Lang, string>>) || base;
+
   const leastBid = (lot: Auction) => (lot.topBid ? lot.topBid + 10 : lot.startPrice);
 
   async function bid(lot: Auction, asked: string) {
@@ -502,7 +512,7 @@
             {#if lot.cardId && cardOf(lot.cardId)}
               <BattleCard card={cardOf(lot.cardId)!} {frames} owned={true} />
             {/if}
-            <p class="name">{lot.name}</p>
+            <p class="name">{titleIn(lot.name, lot.cardTitles)}</p>
             <p class="by">
               {#if lot.estate}
                 <!-- Вещь ушедшего названа словом: у неё нет продавца, и
@@ -670,15 +680,15 @@
             <div class="border border-[#d8c6b1] bg-[#fdf9f3] p-3">
               <p class="text-sm text-[#34251c]">
                 {#if trade.mine}
-                  {$t('studioTradeMine').replace('{want}', trade.want)}
+                  {$t('studioTradeMine').replace('{want}', titleIn(trade.want, trade.wantTitles))}
                 {:else}
                   {$t('studioTradeTheirs')
                     .replace('{who}', trade.from)
-                    .replace('{want}', trade.want)}
+                    .replace('{want}', titleIn(trade.want, trade.wantTitles))}
                 {/if}
               </p>
               <p class="mt-1 text-[11px] text-[#6f3b24]">
-                {$t('studioTradeGives').replace('{what}', trade.gives.join(', '))}
+                {$t('studioTradeGives').replace('{what}', trade.gives.map((g, i) => titleIn(g, trade.givesTitles?.[i])).join(', '))}
               </p>
               <div class="mt-2 flex gap-3">
                 {#if !trade.mine}

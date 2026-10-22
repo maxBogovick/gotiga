@@ -1,0 +1,54 @@
+{
+  "kind": "frames",
+  "table": "settings",
+  "key": "key = 'battle_frames' → frames[] по tier",
+  "fields": {
+    "name": "nameEn/nameRu/nameUk"
+  },
+  "notes": "Имя ранга рамки, видно игроку на листе карты.",
+  "original": "ru",
+  "count": 5,
+  "chars": 38,
+  "items": [
+    {
+      "key": 1,
+      "name": {
+        "en": "Humble",
+        "ru": "Скромная",
+        "uk": "Скромна"
+      }
+    },
+    {
+      "key": 2,
+      "name": {
+        "en": "Sturdy",
+        "ru": "Крепкая",
+        "uk": "Міцна"
+      }
+    },
+    {
+      "key": 3,
+      "name": {
+        "en": "Remembered",
+        "ru": "Памятная",
+        "uk": "Пам’ятна"
+      }
+    },
+    {
+      "key": 4,
+      "name": {
+        "en": "Rare",
+        "ru": "Редкая",
+        "uk": "Рідкісна"
+      }
+    },
+    {
+      "key": 5,
+      "name": {
+        "en": "Epic",
+        "ru": "Эпическая",
+        "uk": "Епічна"
+      }
+    }
+  ]
+}

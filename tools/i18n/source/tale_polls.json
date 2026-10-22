@@ -1,0 +1,11 @@
+{
+  "kind": "tale_polls",
+  "table": "tale_polls / tale_poll_candidates",
+  "key": "id",
+  "fields": {},
+  "notes": "Своего текста у голосования нет: кандидаты — работы (их названия в figurines.json).",
+  "original": "en",
+  "count": 0,
+  "chars": 0,
+  "items": []
+}

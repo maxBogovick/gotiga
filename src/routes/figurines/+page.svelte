@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
-  import { t, lang, brandName, LANG_META } from '$lib/i18n';
+  import { t, lang, brandName, LANG_META, quote } from '$lib/i18n';
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
   import { interact, observeWork } from '$lib/analytics';
@@ -18,6 +18,7 @@
   import { isGated, isShowingOpen, resolveWindow, openingHeadline } from '$lib/showing-window';
   import type { FigurineListItem, SemanticHit } from '$lib/types/api';
   import { page } from '$app/state';
+  import { localizeList, workBase } from '$lib/workText';
   import { assembleResults, ARCHIVE_KEEPER_INPUT_ID, isInHouseQuery, KEEPER_ARCHIVE_MAX, localMatch } from '$lib/keeper-search';
 
   // "The house wakes": a gated work is sealed behind a carved door while the
@@ -40,7 +41,8 @@
   type SortMode = 'curated' | 'available' | 'newest' | 'oldest' | 'name';
 
   let { data } = $props();
-  let figurines = $derived(data.figurines);
+  // Тексты работ на языке читателя: название, техника, серия, материал.
+  let figurines = $derived(localizeList(data.figurines ?? [], $lang));
 
   let searchQuery = $state('');
   let mainFilter = $state<MainFilter>('all');
@@ -270,6 +272,17 @@
   // Keep refinements visible whenever one is active (e.g. restored on back-nav).
   $effect(() => { if (secondaryActive) refineOpen = true; });
 
+  // Значения техники, серии и материала — слова на языке читателя; после смены
+  // языка прежнее слово ничего не нашло бы, поэтому эти три отбора снимаются.
+  let filterLang: string | null = null;
+  $effect(() => {
+    const l = $lang;
+    if (filterLang !== null && filterLang !== l) {
+      techniqueFilter = 'all'; seriesFilter = 'all'; materialFilter = 'all';
+    }
+    filterLang = l;
+  });
+
   $effect(() => {
     void mainFilter; void searchQuery; void sortMode; void yearFilter; void techniqueFilter;
     void seriesFilter; void materialFilter;
@@ -436,17 +449,17 @@
 </script>
 
 <svelte:head>
-  <title>Archive — Gothic Miniatures Collection — {$brandName}</title>
+  <title>{$t('archiveMetaTitle')} — {$brandName}</title>
   <meta name="description" content={$t('archiveMetaDescription')} />
   <meta property="og:site_name" content={$brandName} />
-  <meta property="og:locale" content="en_US" />
+  <meta property="og:locale" content={LANG_META[$lang].og} />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Archive — Gothic Miniatures Collection — {$brandName}" />
+  <meta property="og:title" content="{$t('archiveMetaTitle')} — {$brandName}" />
   <meta property="og:description" content={$t('archiveMetaDescription')} />
   <meta property="og:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
   <meta property="og:url" content="{SITE_URL}/figurines" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Archive — Gothic Miniatures Collection — {$brandName}" />
+  <meta name="twitter:title" content="{$t('archiveMetaTitle')} — {$brandName}" />
   <meta name="twitter:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
   {@html `<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [ { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL }, { '@type': 'ListItem', position: 2, name: 'Archive', item: `${SITE_URL}/figurines` } ] })}<\/script>`}
   <!-- Fonts loaded once globally in app.html -->
@@ -1012,7 +1025,7 @@
       {:else if searchQuery}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#34251c]/10 rounded-lg" in:fade>
           <p class="font-['Fraunces'] text-3xl text-[#5f4636] mb-2 opacity-75">{$t('archiveNotFound')}</p>
-          <p class="text-xs tracking-wide text-[#7c6554] uppercase">{$t('archiveNoEntry')} «{searchQuery}»</p>
+          <p class="text-xs tracking-wide text-[#7c6554] uppercase">{$t('archiveNoEntry')} {quote($lang, searchQuery)}</p>
         </div>
       {:else}
         <div class="flex flex-col items-center justify-center py-32 border border-dashed border-[#34251c]/10 rounded-lg">
@@ -1035,7 +1048,8 @@
 {#if orderFig}
   <OrderModal
     isOpen={!!orderFig}
-    figurineName={orderFig.name}
+    figurineName={workBase(orderFig, 'name')}
+    displayName={orderFig.name}
     figurineId={orderFig.id}
     mode="request"
     onClose={() => { orderFig = null; }}

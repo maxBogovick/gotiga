@@ -1,0 +1,18 @@
+{
+  "kind": "errands",
+  "table": "battle_errands",
+  "key": "slug",
+  "fields": {
+    "title": "title_{lang}",
+    "note": "note_{lang}"
+  },
+  "limits": {
+    "title": 120,
+    "note": 400
+  },
+  "missing": "нет --token: ручка /battles/errands отвечает только вошедшему игроку",
+  "original": "ru",
+  "count": 0,
+  "chars": 0,
+  "items": []
+}

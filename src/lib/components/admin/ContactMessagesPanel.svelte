@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, currentLocale } from '$lib/i18n';
   import type { ContactMessageDto } from '$lib/types/api';
 
   let items = $state<ContactMessageDto[]>([]);
@@ -36,7 +36,7 @@
   onMount(load);
 
   function formatTs(iso: string) {
-    return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString(currentLocale(), { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   }
 
   let unreadCount = $derived(items.filter(m => !m.isRead).length);

@@ -11,7 +11,7 @@
    * на столе рамок, свой наряд карты на листе карты. Текст и числа пишутся в
    * саму карту, то есть в те же поля, что и форма листа рядом.
    */
-  import { t, LANG_META, type Lang } from '$lib/i18n';
+  import { t, LANG_META, LANGS, type Lang } from '$lib/i18n';
   import { SITE_FONTS } from '$lib/fonts';
   import BattleGlyphControl from '$lib/components/BattleGlyphControl.svelte';
   import { selectOnFocus, blurOnWheel } from '$lib/utils/fields';
@@ -77,15 +77,21 @@
 
   /** Оба языка сразу, а не тот, что выбран на листе: имя и эффект
    *  обязательны на обоих, и панель, предлагавшая один, оставляла второй
-   *  пустым — на полке другой локали карта стояла без имени. */
-  const SIDES = ['ru', 'en', 'uk'] as const;
-  type Side = (typeof SIDES)[number];
+   *  пустым — на полке другой локали карта стояла без имени. Испанский,
+   *  немецкий и итальянский показываются, только когда лист открыт на них:
+   *  шесть полей разом не поместились бы в панель у карты. */
+  type Side = Lang;
+  let SIDES = $derived<Side[]>(
+    lang === 'es' || lang === 'de' || lang === 'it' ? ['ru', 'en', 'uk', lang] : ['ru', 'en', 'uk'],
+  );
 
+  const field = (stem: string) =>
+    Object.fromEntries(LANGS.map((l) => [l, stem + l[0].toUpperCase() + l.slice(1)])) as Record<Side, string>;
   const FIELDS = {
-    title: { ru: 'titleRu', en: 'titleEn', uk: 'titleUk' },
-    kind: { ru: 'typeRu', en: 'typeEn', uk: 'typeUk' },
-    effect: { ru: 'effectRu', en: 'effectEn', uk: 'effectUk' },
-    lore: { ru: 'loreRu', en: 'loreEn', uk: 'loreUk' },
+    title: field('title'),
+    kind: field('type'),
+    effect: field('effect'),
+    lore: field('lore'),
   } as const;
 
   type TextSlot = keyof typeof FIELDS;
@@ -176,7 +182,7 @@
           {/if}
           {#if side === 'en' && value.trim() && mostlyCyrillic(value)}
             <p class="mi-warn">{$t('adminBattlesReadyCyrillicHint')}</p>
-          {:else if !value.trim() && side !== 'uk' && (textSlot === 'title' || textSlot === 'effect')}
+          {:else if !value.trim() && (side === 'ru' || side === 'en') && (textSlot === 'title' || textSlot === 'effect')}
             <p class="mi-warn">{$t('adminBattlesReadyLangRequired')}</p>
           {/if}
         </section>
@@ -206,7 +212,7 @@
         aria-pressed={look.bold}
         title={$t('adminBattlesReadyBold')}
         onclick={() => set({ bold: !look.bold })}
-      ><b>Ж</b></button>
+      ><b>{$t('adminBattlesReadyBoldLetter')}</b></button>
       <button
         type="button"
         class="mi-toggle"
@@ -214,7 +220,7 @@
         aria-pressed={look.italic}
         title={$t('adminBattlesReadyItalic')}
         onclick={() => set({ italic: !look.italic })}
-      ><i>К</i></button>
+      ><i>{$t('adminBattlesReadyItalicLetter')}</i></button>
     </div>
   </section>
 

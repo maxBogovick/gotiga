@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { resolveWebpUrl, resolveSrcset } from '$lib/api';
@@ -241,7 +242,7 @@
              text-[rgba(255,249,240,0.75)] bg-[rgba(44,23,16,0.45)] backdrop-blur-sm
              px-2 py-1 rounded-full border border-[rgba(255,249,240,0.2)]"
       onclick={() => resetZoom()}
-      aria-label="Reset zoom"
+      aria-label={$t('lightboxResetZoom')}
       transition:fade={{ duration: 150 }}
     >
       ×{scale.toFixed(1)}  Reset

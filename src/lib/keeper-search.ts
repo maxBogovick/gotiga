@@ -11,7 +11,7 @@ export const ARCHIVE_KEEPER_INPUT_ID = 'archive-keeper-q';
 export type KeeperListFields = Pick<
     FigurineListItem,
     'id' | 'name' | 'shortText' | 'dimensions' | 'material' | 'technique' | 'series' | 'year' | 'status'
->;
+> & Pick<Partial<FigurineListItem>, 'translations'>;
 
 /** Light fold for instant substring match. Typos and script mixing are the server's job. */
 export function normalizeQuery(s: string): string {
@@ -72,6 +72,10 @@ function haystacks(f: KeeperListFields): string[] {
         f.technique ?? '',
         f.series ?? '',
         f.year != null ? String(f.year) : '',
+        // Переводы тоже: работу находят по названию на любом языке сайта.
+        ...Object.values(f.translations ?? {}).flatMap((tr) => [
+            tr?.name ?? '', tr?.shortText ?? '', tr?.material ?? '', tr?.technique ?? '', tr?.series ?? '',
+        ]),
     ].map((v) => normalizeQuery(v));
 }
 
@@ -132,6 +136,9 @@ export function whisperSeeds(figurines: FigurineListItem[], lang: Lang): string[
         en: ['for a dark library', 'a veiled face', 'still in the house', 'holding a candle'],
         ru: ['для тёмной библиотеки', 'закрытое лицо', 'ещё в доме', 'со свечой'],
         uk: ['для темної бібліотеки', 'закрите обличчя', 'ще в домі', 'зі свічкою'],
+        es: ['para una biblioteca oscura', 'un rostro velado', 'todavía en casa', 'con una vela'],
+        de: ['für eine dunkle Bibliothek', 'ein verhülltes Gesicht', 'noch im Haus', 'mit einer Kerze'],
+        it: ['per una biblioteca buia', 'un volto velato', 'ancora in casa', 'con una candela'],
     });
     return [...series, ...fixed];
 }

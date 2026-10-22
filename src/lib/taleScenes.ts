@@ -14,6 +14,8 @@
  * Движение плиты на полях (`TaleScenePlate.svelte`): у каждой байки своё и про
  * её смысл, а не про её сюжет.
  */
+import type { Lang } from '$lib/i18n';
+import { firstTextLang } from '$lib/i18n';
 import type { SceneTransitionType, TaleSceneData } from '$lib/types/api';
 
 export type PlateEffect =
@@ -51,9 +53,9 @@ export interface TaleScene {
    * абзац в абзац, и номер одной уронил бы сцену в середину другой.
    * `uk` необязателен: пока украинского перевода нет или он идёт абзац в абзац
    * за русским, берётся русский номер. Переведённой иначе байке номер
-   * называют здесь.
+   * называют здесь. То же у `es`, `de`, `it`: их переводят с русского.
    */
-  after?: { ru: number; en: number; uk?: number };
+  after?: { ru: number; en: number; uk?: number; es?: number; de?: number; it?: number };
   figure: string;
   /** Слой жара или жил; плитам не нужен. */
   glow?: string;
@@ -179,12 +181,17 @@ export function sceneFromData(d: TaleSceneData): TaleScene {
 }
 
 
-/** Номер блока, после которого стоит встроенная сцена, на языке читателя. */
+/** Номер блока, после которого стоит встроенная сцена. Считается по тому
+ *  тексту, который читатель действительно видит: пустое тело на его языке
+ *  заменяется по той же цепочке, что и у текста (`firstText`: для uk, es, de,
+ *  it английский раньше русского). `bodies` — тела небылицы по языкам. */
 export function sceneAfter(
   after: NonNullable<TaleScene['after']>,
-  lang: 'en' | 'ru' | 'uk',
+  lang: Lang,
+  bodies?: Partial<Record<Lang, string | null | undefined>>,
 ): number {
-  if (lang === 'en') return after.en;
-  if (lang === 'uk') return after.uk ?? after.ru;
-  return after.ru;
+  const shown = (bodies && firstTextLang(lang, bodies)) || lang;
+  if (shown === 'en') return after.en;
+  if (shown === 'ru') return after.ru;
+  return after[shown] ?? after.en ?? after.ru;
 }

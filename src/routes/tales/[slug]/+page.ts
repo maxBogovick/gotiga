@@ -48,11 +48,13 @@ export const load = async ({
   // rather than dressing an announcement up as a tale.
   if (leaf && !isTale(leaf)) redirect(308, `/gazette/${leaf.slug}`);
 
-  // Names for the links to this house written into the prose — both languages
+  // Names for the links to this house written into the prose — every language
   // at once, because the reader switches language without a new load.
   let links: Record<string, SiteRefInfo> = {};
   if (leaf) {
-    const refs = siteRefsIn(`${leaf.bodyEn ?? ''}\n${leaf.bodyRu ?? ''}`);
+    const refs = siteRefsIn(
+      [leaf.bodyEn, leaf.bodyRu, leaf.bodyUk, leaf.bodyEs, leaf.bodyDe, leaf.bodyIt].map((b) => b ?? '').join('\n'),
+    );
     if (refs.length) {
       links = await resolveSiteRefs(refs, {
         getFigurine: (handle) => api.getFigurine(handle, fetch),

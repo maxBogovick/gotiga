@@ -1,7 +1,7 @@
 <script lang="ts">
     import { fade, fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
-    import { t, brandName } from '$lib/i18n';
+    import { t, brandName, lang, LANG_META } from '$lib/i18n';
     import { SITE_URL } from '$lib/site';
     import ImpressionsForm from '$lib/components/ImpressionsForm.svelte';
 </script>
@@ -10,7 +10,7 @@
     <title>{$t('impressionsPageTitle')} — {$brandName}</title>
     <meta name="description" content="Leave a quiet reaction to the exhibition — the Book of Impressions." />
     <meta property="og:site_name" content={$brandName} />
-    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale" content={LANG_META[$lang].og} />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="{$t('impressionsPageTitle')} — {$brandName}" />
     <meta property="og:description" content="Leave a quiet reaction to the exhibition — the Book of Impressions." />

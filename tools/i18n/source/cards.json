@@ -1,0 +1,912 @@
+{
+  "kind": "cards",
+  "table": "battle_cards",
+  "key": "slug",
+  "fields": {
+    "title": "title_{lang}",
+    "type": "type_{lang}",
+    "effect": "effect_{lang}",
+    "lore": "lore_{lang}"
+  },
+  "limits": {
+    "title": 80,
+    "type": 40,
+    "effect": 400,
+    "lore": 400
+  },
+  "json_fields": {
+    "traits": "battle_cards.traits (TEXT, JSON-массив CardTrait): nameEn/nameRu/nameUk, textEn/textRu/textUk; по порядку (index)",
+    "abilities": "battle_cards.abilities (TEXT, JSON-массив CardAbility): nameEn/nameRu/nameUk; искать по id умения"
+  },
+  "notes": "Опубликованные (/battles/cards) и карты только для этюдов (/battles/etude-cards).",
+  "original": "ru",
+  "count": 25,
+  "chars": 1528,
+  "items": [
+    {
+      "key": "wizard-with-a-raven",
+      "id": "f3826a1c-58ba-43f6-a65b-0f73fc93a39e",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "tiny-ooak-wizard-art-doll-with-birds",
+      "title": {
+        "en": "Storm Mage",
+        "ru": "Грозовой маг",
+        "uk": "Грозовий маг"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Lightning jumps between enemies: 3 damage to the first, then along 2 more.",
+        "ru": "Молния прыгает между врагами: 3 урона первому и ещё двум по цепочке.",
+        "uk": "Блискавка стрибає між ворогами: 3 шкоди першому і ще двом за ланцюжком."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "storm",
+          "name": {
+            "en": "Chain Lightning",
+            "ru": "Цепная молния",
+            "uk": "Ланцюгова блискавка"
+          }
+        }
+      ]
+    },
+    {
+      "key": "the-creature",
+      "id": "b8fd1f43-5ca2-409c-8f69-7a03f3951a9b",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-frankenstein-s-creature",
+      "title": {
+        "en": "The Stitched",
+        "ru": "Сшитый",
+        "uk": "Зшитий"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Made of parts of other bodies: blows against him weigh 1 less.",
+        "ru": "Собрано из частей других тел: удары по нему слабее на 1.",
+        "uk": "Зібране з частин інших тіл: удари по ньому слабші на 1."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    },
+    {
+      "key": "red-vampire",
+      "id": "329544e9-0088-4dee-b7aa-b7fc2cd21fa6",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-doll-little-vampire",
+      "title": {
+        "en": "Crimson Vampire",
+        "ru": "Багровый вампир",
+        "uk": "Багряний вампір"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Every blow that lands heals him for 2. Armor 1.",
+        "ru": "Каждый удар, достигший цели, лечит его на 2. Броня 1.",
+        "uk": "Кожен удар, що влучив, лікує його на 2. Броня 1."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "sip",
+          "name": {
+            "en": "A Sip",
+            "ru": "Глоток",
+            "uk": "Ковток"
+          }
+        }
+      ]
+    },
+    {
+      "key": "dark-vampire",
+      "id": "c818cb1d-0fda-45ea-9980-77ce01b2b14b",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-authors-doll-tiny-vapmire",
+      "title": {
+        "en": "Dark Vampire",
+        "ru": "Тёмный вампир",
+        "uk": "Темний вампір"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Bleeding: an enemy loses 2 health each turn for 2 turns.",
+        "ru": "Кровотечение: враг теряет по 2 здоровья каждый ход, 2 хода.",
+        "uk": "Кровотеча: ворог втрачає по 2 здоров'я щоходу, 2 ходи."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "bite",
+          "name": {
+            "en": "Bite",
+            "ru": "Укус",
+            "uk": "Укус"
+          }
+        }
+      ]
+    },
+    {
+      "key": "old-mermaid",
+      "id": "0e281f79-0b86-42de-9c48-75d0319aa3ee",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "ooak-old-mermaid-art-doll",
+      "title": {
+        "en": "Silent Mermaid",
+        "ru": "Безмолвная русалка",
+        "uk": "Безмовна русалка"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Silences one enemy for 2 turns: it cannot use abilities.",
+        "ru": "Лишает одного врага способностей на 2 хода.",
+        "uk": "Позбавляє одного ворога здібностей на 2 ходи."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "hush",
+          "name": {
+            "en": "Hush",
+            "ru": "Немота",
+            "uk": "Німота"
+          }
+        }
+      ]
+    },
+    {
+      "key": "shaman",
+      "id": "54b407d5-49bf-492a-82dc-216817900c54",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-shaman",
+      "title": {
+        "en": "Shaman",
+        "ru": "Шаман",
+        "uk": "Шаман"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Heals an ally in range for 3.",
+        "ru": "Лечит союзника в дальности на 3.",
+        "uk": "Лікує союзника у дальності на 3."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "mend",
+          "name": {
+            "en": "Mend",
+            "ru": "Исцеление",
+            "uk": "Зцілення"
+          }
+        }
+      ]
+    },
+    {
+      "key": "old-wizard",
+      "id": "11a53efa-1020-4697-9ef9-73206de0245f",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-wizard",
+      "title": {
+        "en": "Old Wizard",
+        "ru": "Старый маг",
+        "uk": "Старий маг"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Strengthens an ally: it deals 2 more for 2 turns.",
+        "ru": "Усиливает союзника: 2 хода тот бьёт на 2 сильнее.",
+        "uk": "Підсилює союзника: 2 ходи той б'є на 2 сильніше."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "boon",
+          "name": {
+            "en": "Blessing",
+            "ru": "Благословение",
+            "uk": "Благословення"
+          }
+        }
+      ]
+    },
+    {
+      "key": "yaga-with-a-bird",
+      "id": "343ce54f-0e79-484e-8243-a15796c4ad32",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-baba-yaga-with-bird",
+      "title": {
+        "en": "Little Yaga",
+        "ru": "Крошка Яга",
+        "uk": "Крихітка Яга"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Hides herself: for 2 turns she cannot be chosen as a target.",
+        "ru": "Прячется: на 2 хода её нельзя выбрать целью.",
+        "uk": "Ховається: на 2 ходи її не можна обрати ціллю."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "hide",
+          "name": {
+            "en": "Hide",
+            "ru": "Невидимость",
+            "uk": "Невидимість"
+          }
+        }
+      ]
+    },
+    {
+      "key": "witch-with-a-key",
+      "id": "18a140d5-ff79-4212-a12b-fdd7d893e3ab",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-doll-witch-in-black",
+      "title": {
+        "en": "Keyholder Witch",
+        "ru": "Ведьма-ключница",
+        "uk": "Відьма-ключниця"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Poison: an enemy loses 2 health each turn for 3 turns.",
+        "ru": "Яд: враг теряет по 2 здоровья каждый ход, 3 хода.",
+        "uk": "Отрута: ворог втрачає по 2 здоров'я щоходу, 3 ходи."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "poison",
+          "name": {
+            "en": "Poison",
+            "ru": "Яд",
+            "uk": "Отрута"
+          }
+        }
+      ]
+    },
+    {
+      "key": "gnome-axeman",
+      "id": "55946a68-01f3-4d6f-aa58-9a84551b1d22",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-gnome-with-axe",
+      "title": {
+        "en": "Axebearer",
+        "ru": "Секироносец",
+        "uk": "Сокироносець"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "A heavy axe: strong blows, thick armor.",
+        "ru": "Тяжёлая секира: сильный удар и плотная броня.",
+        "uk": "Важка сокира: сильний удар і щільна броня."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    },
+    {
+      "key": "captain-salazar",
+      "id": "91c385bc-c500-424f-a3e8-959069f35e7f",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "art-doll-captainsalazar",
+      "title": {
+        "en": "Captain Salazar",
+        "ru": "Капитан Салазар",
+        "uk": "Капітан Салазар"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Marks an enemy: for 2 turns it takes 2 more damage.",
+        "ru": "Метит врага: 2 хода тот получает на 2 урона больше.",
+        "uk": "Позначає ворога: 2 ходи той отримує на 2 шкоди більше."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "mark",
+          "name": {
+            "en": "Hunter's Mark",
+            "ru": "Метка охотника",
+            "uk": "Мітка мисливця"
+          }
+        }
+      ]
+    },
+    {
+      "key": "old-vampire",
+      "id": "a431489a-d5e7-4f6d-b435-b19b9672e3f8",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-doll-vampire",
+      "title": {
+        "en": "Old Vampire",
+        "ru": "Старый вампир",
+        "uk": "Старий вампір"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Every blow that lands heals him for 2.",
+        "ru": "Каждый удар, достигший цели, лечит его на 2.",
+        "uk": "Кожен удар, що влучив, лікує його на 2."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "sip",
+          "name": {
+            "en": "A Sip",
+            "ru": "Глоток",
+            "uk": "Ковток"
+          }
+        }
+      ]
+    },
+    {
+      "key": "steam-mermaid",
+      "id": "b47a0d58-8d02-40be-b85c-94ac1fdfd3cb",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "ooak-steampunk-mermaid-art-doll",
+      "title": {
+        "en": "Sea Maiden",
+        "ru": "Морская дева",
+        "uk": "Морська діва"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Holds one enemy still for 1 turn.",
+        "ru": "Удерживает одного врага на месте 1 ход.",
+        "uk": "Утримує одного ворога на місці 1 хід."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "hold",
+          "name": {
+            "en": "Hold",
+            "ru": "Захват",
+            "uk": "Захват"
+          }
+        }
+      ]
+    },
+    {
+      "key": "old-witch",
+      "id": "01411d5c-ee46-4605-acb4-be866c28d6bb",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-doll-witch",
+      "title": {
+        "en": "Grey Witch",
+        "ru": "Седая ведьма",
+        "uk": "Сива відьма"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Weakens an enemy: it deals 2 less for 2 turns.",
+        "ru": "Ослабляет врага: 2 хода тот бьёт на 2 слабее.",
+        "uk": "Послаблює ворога: 2 ходи той б'є на 2 слабше."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "hex",
+          "name": {
+            "en": "Hex",
+            "ru": "Порча",
+            "uk": "Псування"
+          }
+        }
+      ]
+    },
+    {
+      "key": "miner",
+      "id": "4aa93f09-415d-4488-9a2c-ba6feacd8080",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-gnome-2",
+      "title": {
+        "en": "Delver",
+        "ru": "Рудокоп",
+        "uk": "Рудокоп"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Hits hard with a pick.",
+        "ru": "Бьёт киркой тяжело.",
+        "uk": "Б'є кіркою важко."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    },
+    {
+      "key": "forest-gnome",
+      "id": "81c6d411-8d00-4273-91ca-a8f421987a7a",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-doll-gnome",
+      "title": {
+        "en": "Woodsman",
+        "ru": "Лесовик",
+        "uk": "Лісовик"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Sturdy: blows against him weigh 1 less.",
+        "ru": "Крепкий: удары по нему слабее на 1.",
+        "uk": "Міцний: удари по ньому слабші на 1."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    },
+    {
+      "key": "falconer",
+      "id": "c66e6faa-46d9-4568-8eb3-fdaabccd0fdf",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-falconer",
+      "title": {
+        "en": "Falconer",
+        "ru": "Сокольничий",
+        "uk": "Сокільничий"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Shoots from a distance: hits up to 3 cells away.",
+        "ru": "Стреляет издалека: бьёт на 3 клетки.",
+        "uk": "Стріляє здалеку: б'є на 3 клітинки."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    },
+    {
+      "key": "hunchback",
+      "id": "627b5364-f4e1-416e-b03d-e9512ae98206",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-quazimodo",
+      "title": {
+        "en": "Hunchback",
+        "ru": "Горбун",
+        "uk": "Горбань"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Stands firm: blows against him weigh 1 less.",
+        "ru": "Стоит крепко: удары по нему слабее на 1.",
+        "uk": "Стоїть міцно: удари по ньому слабші на 1."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    },
+    {
+      "key": "gnome-with-a-pot",
+      "id": "c04a22d8-f130-44f7-9659-375a25328248",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-gnome-with-gold",
+      "title": {
+        "en": "The Cook",
+        "ru": "Кашевар",
+        "uk": "Куховар"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Warm food: heals an ally nearby for 1 each turn, for 3 turns.",
+        "ru": "Горячая еда: лечит союзника рядом на 1 каждый ход, 3 хода.",
+        "uk": "Гаряча їжа: лікує союзника поруч на 1 щоходу, 3 ходи."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "stew",
+          "name": {
+            "en": "Stew",
+            "ru": "Похлёбка",
+            "uk": "Юшка"
+          }
+        }
+      ]
+    },
+    {
+      "key": "granny-with-a-sheep",
+      "id": "cfeb1a3e-9417-46ec-95f1-e8317e58ce5c",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-doll-granny-with-her-sheep",
+      "title": {
+        "en": "Old Shepherdess",
+        "ru": "Старая пастушка",
+        "uk": "Стара пастушка"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Heals an ally nearby for 2.",
+        "ru": "Лечит союзника рядом на 2.",
+        "uk": "Лікує союзника поруч на 2."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "heal",
+          "name": {
+            "en": "Heal",
+            "ru": "Лечение",
+            "uk": "Лікування"
+          }
+        }
+      ]
+    },
+    {
+      "key": "bagpiper",
+      "id": "fc76b1f6-b0c5-4fd7-bd5c-227bd44382e6",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-piper",
+      "title": {
+        "en": "Highland Piper",
+        "ru": "Горный волынщик",
+        "uk": "Гірський волинщик"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "A loud drone: an enemy in range deals 1 less for 2 turns.",
+        "ru": "Громкий гул: враг в дальности 2 хода бьёт на 1 слабее.",
+        "uk": "Гучний гул: ворог у дальності 2 ходи б'є на 1 слабше."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "drone",
+          "name": {
+            "en": "Drone",
+            "ru": "Гул",
+            "uk": "Гул"
+          }
+        }
+      ]
+    },
+    {
+      "key": "piper",
+      "id": "77b312a4-0db6-44ad-aad5-0a48f33fc1dd",
+      "status": "published",
+      "kind": "unit",
+      "figurineSlug": "small-art-doll-pied-piper",
+      "title": {
+        "en": "The Ratcatcher",
+        "ru": "Крысолов",
+        "uk": "Щуролов"
+      },
+      "type": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "effect": {
+        "en": "Plays a tune: an ally nearby deals 1 more for 2 turns.",
+        "ru": "Играет мелодию: союзник рядом 2 хода бьёт на 1 сильнее.",
+        "uk": "Грає мелодію: союзник поруч 2 ходи б'є на 1 сильніше."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": [
+        {
+          "index": 0,
+          "id": "tune",
+          "name": {
+            "en": "Tune",
+            "ru": "Мелодия",
+            "uk": "Мелодія"
+          }
+        }
+      ]
+    },
+    {
+      "key": "fortress-wall",
+      "id": "ba08e58c-d8a7-45c1-8575-ff11b403ba4c",
+      "status": "etude",
+      "kind": "structure",
+      "figurineSlug": null,
+      "title": {
+        "en": "Fortress wall",
+        "ru": "Крепостная стена",
+        "uk": ""
+      },
+      "type": {
+        "en": "Structure",
+        "ru": "Строение",
+        "uk": null
+      },
+      "effect": {
+        "en": "Does not move or strike. Holds the way while it stands.",
+        "ru": "Не ходит и не бьёт. Держит проход, пока цела.",
+        "uk": null
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    },
+    {
+      "key": "siege-ram",
+      "id": "87130d0c-63fd-44c2-b7dc-306c9fffd77c",
+      "status": "etude",
+      "kind": "unit",
+      "figurineSlug": null,
+      "title": {
+        "en": "Battering ram",
+        "ru": "Таран",
+        "uk": "Таран"
+      },
+      "type": {
+        "en": "Siege",
+        "ru": "Осада",
+        "uk": "Облога"
+      },
+      "effect": {
+        "en": "Strikes past armour.",
+        "ru": "Бьёт мимо брони.",
+        "uk": "Б’є повз броню."
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    },
+    {
+      "key": "watchtower",
+      "id": "0b46ec0b-632d-4bff-81f4-f26467450f5e",
+      "status": "etude",
+      "kind": "structure",
+      "figurineSlug": null,
+      "title": {
+        "en": "Watchtower",
+        "ru": "Сторожевая башня",
+        "uk": ""
+      },
+      "type": {
+        "en": "Structure",
+        "ru": "Строение",
+        "uk": null
+      },
+      "effect": {
+        "en": "Does not move. Shoots up to three cells away, over walls.",
+        "ru": "Не ходит. Стреляет на три клетки, через стены.",
+        "uk": null
+      },
+      "lore": {
+        "en": null,
+        "ru": null,
+        "uk": null
+      },
+      "traits": [],
+      "abilities": []
+    }
+  ]
+}

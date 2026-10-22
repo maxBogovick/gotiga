@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   // Открытка с картой: картинка карты на бумаге, имя под ней и адрес сайта.
   // Её сохраняют или отправляют, и по ссылке на ней приходят новые люди —
   // то же устройство, что у открытки из фразы байки (`TaleQuoteCard`).
@@ -27,7 +28,7 @@
 
   let frame = $derived(frameForCard(card, frames));
   let baked = $derived(isBaked(frame));
-  let title = $derived(cardCopy(card, $lang).title || card.figurineName || '');
+  let title = $derived(cardCopy(card, $lang).title || figurineNameIn(card, $lang));
   let rank = $derived(frameName(frame, $lang));
   let link = $derived(
     typeof location === 'undefined'

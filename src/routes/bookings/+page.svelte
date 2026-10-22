@@ -1,13 +1,14 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
   import { goto } from '$app/navigation';
-  import { t , brandName } from '$lib/i18n';
+  import { t, brandName, lang, locale } from '$lib/i18n';
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
 
   function fmtDate(iso: string) {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return new Date(iso).toLocaleDateString($locale, {
       day: '2-digit', month: 'long', year: 'numeric',
     });
   }
@@ -69,7 +70,7 @@
           <div class="claim-card-inner">
 
             <div class="claim-top">
-              <a href="/figurines/{c.figurineId}" class="claim-name">{c.figurineName}</a>
+              <a href="/figurines/{c.figurineId}" class="claim-name">{figurineNameIn(c, $lang)}</a>
               <span class="claim-status claim-status--{c.status ?? 'pending'}">
                 {statusLabel(c.status)}
               </span>

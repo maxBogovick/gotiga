@@ -12,7 +12,7 @@
 
 import { SITE_URL } from '$lib/site';
 import { isGazetteReservedSlug, isGazetteYearSlug, leafCoverUrl } from '$lib/gazette';
-import type { GazetteLeaf } from '$lib/types/api';
+import type { GazetteLeaf, FigurineTranslations } from '$lib/types/api';
 
 export type SiteRoom = 'work' | 'tale' | 'leaf' | 'page';
 
@@ -102,12 +102,12 @@ export function siteRefsIn(text: string | null | undefined): SiteRef[] {
  * engines read and a flicker for everyone else.
  */
 export type SiteRefInfo =
-  | { room: 'work'; id: string; name: string; dek: string; image: string }
+  | { room: 'work'; id: string; name: string; dek: string; image: string; translations?: FigurineTranslations }
   | {
       room: 'tale' | 'leaf';
       id: string;
       figurineId: string | null;
-      leaf: Pick<GazetteLeaf, 'titleEn' | 'titleRu' | 'titleUk' | 'dekEn' | 'dekRu' | 'dekUk' | 'bodyEn' | 'bodyRu' | 'bodyUk'>;
+      leaf: Pick<GazetteLeaf, 'titleEn' | 'titleRu' | 'titleUk' | 'titleEs' | 'titleDe' | 'titleIt' | 'dekEn' | 'dekRu' | 'dekUk' | 'dekEs' | 'dekDe' | 'dekIt' | 'bodyEn' | 'bodyRu' | 'bodyUk' | 'bodyEs' | 'bodyDe' | 'bodyIt'>;
       image: string;
     };
 
@@ -116,6 +116,7 @@ type Fetchers = {
     id: string;
     name: string;
     shortText: string | null;
+    translations?: FigurineTranslations;
     images: { imageType: string; url: string }[];
   } | null>;
   getGazetteLeaf: (slug: string) => Promise<GazetteLeaf>;
@@ -144,6 +145,8 @@ export async function resolveSiteRefs(
             name: f.name,
             dek: (f.shortText ?? '').trim(),
             image: face?.url ?? '',
+            // Название и вводка на других языках: ссылка печатает их по языку читателя.
+            ...(f.translations ? { translations: f.translations } : {}),
           };
         } else if (ref.room === 'tale' || ref.room === 'leaf') {
           const leaf = await api.getGazetteLeaf(ref.handle);
@@ -155,12 +158,21 @@ export async function resolveSiteRefs(
               titleEn: leaf.titleEn,
               titleRu: leaf.titleRu,
               titleUk: leaf.titleUk,
+              titleEs: leaf.titleEs,
+              titleDe: leaf.titleDe,
+              titleIt: leaf.titleIt,
               dekEn: leaf.dekEn,
               dekRu: leaf.dekRu,
               dekUk: leaf.dekUk,
+              dekEs: leaf.dekEs,
+              dekDe: leaf.dekDe,
+              dekIt: leaf.dekIt,
               bodyEn: null,
               bodyRu: null,
               bodyUk: null,
+              bodyEs: null,
+              bodyDe: null,
+              bodyIt: null,
             },
             image: leafCoverUrl(leaf),
           };

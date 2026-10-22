@@ -15,12 +15,16 @@
   import type { BookingRules, FigurineSchedule, FigurineStatus } from '$lib/types/api';
 
   type RequestIntent = 'request' | 'reserve' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
-  type ClaimData = { token: string; figurineName: string; startsAt: string; endsAt: string; submittedAt: string };
+  type ClaimData = { token: string; figurineName: string; figurineNameTranslations?: Partial<Record<string, string>>; startsAt: string; endsAt: string; submittedAt: string };
 
   let {
     isOpen = false,
     figurineId = '',
     figurineName = '',
+    /** Название на языке читателя для показа; на сервер уходит `figurineName`. */
+    displayName = '',
+    /** Название на других языках: сохраняется с бронью, чтобы список броней печатал его по языку. */
+    figurineNameTranslations = {} as Partial<Record<string, string>>,
     status = 'available' as FigurineStatus,
     schedule = { entries: [] } as FigurineSchedule,
     initialIntent = 'request' as RequestIntent,
@@ -221,7 +225,7 @@
           endsAt,
           ageConfirmed,
         }, authStore.token);
-        const claim = { token: res.cancelToken, figurineName, startsAt, endsAt, submittedAt: new Date().toISOString() };
+        const claim = { token: res.cancelToken, figurineName, figurineNameTranslations, startsAt, endsAt, submittedAt: new Date().toISOString() };
         // Backend already ties the booking to the account when the token is sent;
         // this stays as a harmless fallback (no-op once user_id is set).
         if (authStore.isLoggedIn && authStore.token) {
@@ -328,7 +332,7 @@
           <div class="unified-head">
             <span class="unified-kicker">{modalKicker}</span>
             <h3 id="unified-request-title">{modalTitle}</h3>
-            <p>{figurineName}</p>
+            <p>{displayName || figurineName}</p>
           </div>
 
           {#if intent === 'viewing'}

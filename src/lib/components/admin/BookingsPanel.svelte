@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { t, brandName } from '$lib/i18n';
+  import { t, brandName, currentLocale } from '$lib/i18n';
   import type { BookingDto, FigurineListItem } from '$lib/types/api';
 
   let { onPendingCount = (_n: number) => {} } = $props();
@@ -175,12 +175,12 @@
   }
 
   function formatDate(iso: string) {
-    return new Date(iso + 'T00:00:00').toLocaleDateString('ru-RU', {
+    return new Date(iso + 'T00:00:00').toLocaleDateString(currentLocale(), {
       day: '2-digit', month: 'short', year: 'numeric'
     });
   }
   function formatTs(iso: string) {
-    return new Date(iso).toLocaleString('ru-RU', {
+    return new Date(iso).toLocaleString(currentLocale(), {
       day: '2-digit', month: '2-digit', year: '2-digit',
       hour: '2-digit', minute: '2-digit',
     });
@@ -315,7 +315,7 @@
     <div class="flex-1 min-w-0">
       {#if calSelected && calSelectedBookings.length > 0}
         <p class="text-[10px] uppercase tracking-wide text-[#5f4636]/60 mb-3">
-          {new Date(calSelected + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
+          {new Date(calSelected + 'T00:00:00').toLocaleDateString(currentLocale(), { day: 'numeric', month: 'long', year: 'numeric' })}
         </p>
         <div class="space-y-2">
           {#each calSelectedBookings as b (b.id)}

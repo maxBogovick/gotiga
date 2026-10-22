@@ -18,6 +18,9 @@ sys.path.insert(0, str(HERE))
 from etudes import ETUDES as _STUDIES  # noqa: E402
 from meetings import MEETINGS  # noqa: E402
 
+sys.path.insert(0, str(HERE.parent / "i18n"))
+import texts as T  # noqa: E402  (es/de/it from tools/i18n/content)
+
 ETUDES = _STUDIES + MEETINGS  # training etudes, then campaign meetings
 
 
@@ -39,7 +42,8 @@ def body_of(e, status="published"):
     return {"slug": e["slug"], "titleEn": t[0], "titleRu": t[1], "titleUk": t[2],
             "noteEn": n[0], "noteRu": n[1], "noteUk": n[2], "setup": e["setup"], "botDepth": e["bot_depth"],
             "rewardDust": e["reward_dust"], "rewardFinishDust": e["reward_finish_dust"],
-            "playerSide": e.get("player_side", "scripted"), "status": status}
+            "playerSide": e.get("player_side", "scripted"), "status": status,
+            **T.challenge_fields(e["slug"])}
 
 
 def main():
@@ -55,6 +59,7 @@ def main():
     for e in sorted(ETUDES, key=lambda e: e["sort_order"]):
         body = body_of(e)
         if e["slug"] in by_slug:
+            T.carry(body, by_slug[e["slug"]], ("title", "note"))
             code, res = http("PUT", f"{base}/admin/battles/challenges/{by_slug[e['slug']]['id']}", key, body)
             verb = "updated"
         else:
@@ -69,6 +74,7 @@ def main():
             if c["slug"] not in mine and c["status"] != "draft":
                 b = {k: c[k] for k in ("slug", "titleEn", "titleRu", "titleUk", "noteEn", "noteRu", "noteUk", "setup",
                                        "botDepth", "rewardDust", "rewardFinishDust", "playerSide")}
+                T.carry(b, c, ("title", "note"))
                 b["status"] = "draft"
                 code, _ = http("PUT", f"{base}/admin/battles/challenges/{c['id']}", key, b)
                 print(f"{c['slug']:26} hidden (draft) {code}")

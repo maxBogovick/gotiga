@@ -9,7 +9,7 @@ import { goto } from '$app/navigation';
 import { api } from '$lib/api';
 import { lang, t, loadLang } from '$lib/i18n';
 import { interact } from '$lib/analytics';
-import { loadIndex } from '$lib/site-index';
+import { loadIndex, indexIn } from '$lib/site-index';
 import { answer, needsMeaning, parseAsk, type AskReply } from '$lib/site-ask';
 import type { AskAction } from '$lib/site-ask-kit';
 
@@ -81,7 +81,7 @@ class SiteAskStore {
     if (turn) turn.typed = true;
   }
 
-  async ask(raw: string, via: 'input' | 'chip') {
+  async ask(raw: string, via: 'input' | 'chip' | 'voice', quiz?: string[]) {
     const question = raw.trim().slice(0, QUESTION_MAX);
     if (!question) return;
 
@@ -94,13 +94,13 @@ class SiteAskStore {
     this.turns = [...this.turns, { id, question, reply: null, failed: false, typed: false }].slice(-TURNS_MAX);
 
     const parsed = parseAsk(question);
-    // В замер уходит род вопроса, а не его текст.
-    interact('site_ask', `${via}:${parsed.intent}`);
+    // В замер уходит род вопроса, а не его текст. Выбор в подборе — тоже подбор.
+    interact('site_ask', `${via}:${quiz ? 'match' : parsed.intent}`);
 
     const started = performance.now();
     const [index, meaning, gazetteTotal] = await Promise.all([
       loadIndex().catch(() => null),
-      needsMeaning(parsed)
+      !quiz && needsMeaning(parsed)
         ? withTimeout(
             api.semanticSearch(parsed.topic, 24).then((hits) => hits.map((h) => h.id)),
             MEANING_WAIT_MS,
@@ -125,11 +125,12 @@ class SiteAskStore {
     }
     try {
       const say = get(t);
-      turn.reply = answer(index, question, get(lang), {
+      turn.reply = answer(indexIn(index, get(lang)), question, get(lang), {
         meaning,
         gazetteTotal,
         text: (key) => say(key as Parameters<typeof say>[0]),
         page: { path: page.url.pathname, card: page.url.searchParams.get('card') },
+        quiz,
       });
       if (turn.reply.action) this.#schedule(turn.reply.action);
       if (turn.reply.missed) {

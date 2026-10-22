@@ -328,7 +328,7 @@
   style={overlayStyle}
   role="dialog"
   aria-modal="true"
-  aria-label="Image viewer"
+  aria-label={$t('lightboxViewer')}
   tabindex="-1"
   use:portal
   use:focusTrap
@@ -402,7 +402,7 @@
       onmousedown={handleMouseDown}
       role="button"
       tabindex="-1"
-      aria-label="Close"
+      aria-label={$t('lightboxClose')}
       onkeydown={(e) => { if (e.key === 'Enter') close(); }}
     >
       <!-- Prev / Next arrows inside stage -->
@@ -482,7 +482,7 @@
 
     <!-- ── THUMBNAIL SIDEBAR (desktop only) ── -->
     {#if hasMultiple}
-      <aside class="lb-sidebar" aria-label="Thumbnails">
+      <aside class="lb-sidebar" aria-label={$t('lightboxThumbnails')}>
         {#each images as img, i}
           <button
             class="lb-thumb"

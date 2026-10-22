@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
-  import { t, brandName } from '$lib/i18n';
+  import { t, brandName, lang, locale } from '$lib/i18n';
   import { fade, fly } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
   import LangSwitcher from '$lib/components/LangSwitcher.svelte';
@@ -271,7 +272,7 @@
   });
 
   function fmtDate(iso: string) {
-    return new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    return new Date(iso).toLocaleDateString($locale, { day: '2-digit', month: 'short' });
   }
 
   function handleOutside(e: MouseEvent) {
@@ -649,7 +650,7 @@
           <div class="contact-panel" transition:fade={{ duration: 150 }}>
             <div class="panel-head">
               <span class="panel-title">{$t('headerContactLabel')}</span>
-              <button class="panel-close" onclick={closeContactPanel} aria-label="Close">✕</button>
+              <button class="panel-close" onclick={closeContactPanel} aria-label={$t('uiClose')}>✕</button>
             </div>
             <p class="contact-panel-note">{$t('headerContactNote')}</p>
             {#await import('$lib/components/ContactMessageForm.svelte') then { default: ContactMessageForm }}
@@ -683,7 +684,7 @@
           <div class="bookings-panel" transition:fade={{ duration: 150 }}>
             <div class="panel-head">
               <span class="panel-title">{$t('bookingsHeaderTitle')}</span>
-              <button class="panel-close" onclick={closePanel} aria-label="Close">✕</button>
+              <button class="panel-close" onclick={closePanel} aria-label={$t('uiClose')}>✕</button>
             </div>
 
             {#if allClaims.claims.length === 0}
@@ -699,7 +700,7 @@
                         href="/figurines/{c.figurineId}"
                         class="panel-figurine-name"
                         onclick={closePanel}
-                      >{c.figurineName}</a>
+                      >{figurineNameIn(c, $lang)}</a>
                       <span class="panel-status panel-status--{c.status ?? 'pending'}">
                         {c.status === 'confirmed' ? $t('bookingsConfirmed')
                         : c.status === 'rejected'  ? $t('bookingsRejected')
@@ -956,7 +957,7 @@
     id="site-mobile-nav"
     class="mobile-nav"
     class:is-open={mobileNavOpen}
-    aria-label="Primary"
+    aria-label={$t('navPrimaryLabel')}
     aria-hidden={!mobileNavOpen}
     inert={!mobileNavOpen}
   >
@@ -994,7 +995,7 @@
     >
       <div class="panel-head">
         <span class="panel-title">{$t('headerContactLabel')}</span>
-        <button class="panel-close" onclick={closeMobileContact} aria-label="Close">✕</button>
+        <button class="panel-close" onclick={closeMobileContact} aria-label={$t('uiClose')}>✕</button>
       </div>
       <p class="contact-panel-note">{$t('headerContactNote')}</p>
       {#await import('$lib/components/ContactMessageForm.svelte') then { default: ContactMessageForm }}
@@ -1014,7 +1015,7 @@
       out:fly={{ x: 60, duration: 250 }}
     >
       <div class="notif-body">
-        <span class="notif-name">{notif.figurineName}</span>
+        <span class="notif-name">{figurineNameIn(notif, $lang)}</span>
         <span class="notif-text">
           {notif.newStatus === 'confirmed' ? $t('notifConfirmed')
           : notif.newStatus === 'rejected'  ? $t('notifRejected')
@@ -1028,7 +1029,7 @@
         {:else if notif.newStatus === 'completed'}
           <a href="/figurines/{notif.figurineId}" class="notif-link">{$t('notifViewFigurine')}</a>
         {/if}
-        <button class="notif-dismiss" onclick={() => allClaims.dismissNotification(notif.id)} aria-label="Dismiss">✕</button>
+        <button class="notif-dismiss" onclick={() => allClaims.dismissNotification(notif.id)} aria-label={$t('uiDismiss')}>✕</button>
       </div>
     </div>
   {/each}

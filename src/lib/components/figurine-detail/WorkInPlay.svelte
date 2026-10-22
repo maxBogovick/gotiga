@@ -9,7 +9,7 @@
   // Полка читается в браузере, а не загрузчиком страницы: страница работы
   // пререндерится, и карта, назначенная после сборки, иначе не появилась бы.
   import { onMount } from 'svelte';
-  import { t, lang, localized } from '$lib/i18n';
+  import { t, lang, localized, quote } from '$lib/i18n';
   import { interact } from '$lib/analytics';
   import BattleCard from '$lib/components/BattleCard.svelte';
   import CardPostcard from '$lib/components/CardPostcard.svelte';
@@ -52,7 +52,7 @@
           {#each etudes.slice(0, 3) as etude, i (etude.id)}
             {#if i > 0}<span aria-hidden="true">, </span>{/if}
             <a href={etudeHref(etude)} onclick={() => interact('world_link', toEtude)}
-              >«{localized(etude, 'title', $lang)}»</a
+              >{quote($lang, localized(etude, 'title', $lang))}</a
             >
           {/each}
         </p>

@@ -1,0 +1,17 @@
+{
+  "kind": "keywords",
+  "table": "battle_keywords",
+  "key": "slug",
+  "fields": {
+    "name": "name_{lang}",
+    "rules": "rules_{lang}"
+  },
+  "limits": {
+    "name": 60,
+    "rules": 300
+  },
+  "original": "ru",
+  "count": 0,
+  "chars": 0,
+  "items": []
+}

@@ -14,6 +14,7 @@
   import type { ShowingRoom } from '$lib/types/api';
   import { fade } from 'svelte/transition';
   import { t, lang, LANG_META } from '$lib/i18n';
+  import TextLangSwitch, { fieldIn, type TextLang } from '$lib/components/admin/TextLangSwitch.svelte';
   import { isShowingOpen, roomToWindow, minutesToClock, clockToMinutes } from '$lib/showing-window';
 
   let {
@@ -23,6 +24,13 @@
     rooms: ShowingRoom[];
     onReload: () => Promise<void>;
   } = $props();
+
+  // Язык названия зала: EN — `name`, остальные — `nameRu` … `nameIt`.
+  let nameLang = $state<TextLang>('en');
+  type RoomText = Record<string, unknown>;
+  const nameGet = (room: ShowingRoom) => ((room as unknown as RoomText)[fieldIn('name', nameLang)] as string | null | undefined) ?? '';
+  const nameSet = (room: ShowingRoom, v: string) => { (room as unknown as RoomText)[fieldIn('name', nameLang)] = v; };
+  const nameFilled = (l: TextLang) => rooms.some((r) => String((r as unknown as RoomText)[fieldIn('name', l)] ?? '').trim() !== '');
 
   // See a window "as a guest would" at any moment — nothing is saved.
   let previewAt = $state<Date>(new Date());
@@ -93,13 +101,15 @@
     <button type="button" class="text-[11px] uppercase tracking-wide text-[#6f3b24] pb-2" onclick={() => previewAt = new Date()}>{$t('adminPreviewNow')}</button>
   </div>
 
+  <div class="mb-3"><TextLangSwitch bind:value={nameLang} filled={nameFilled} /></div>
+
   <div class="space-y-3">
     {#each rooms as room (room.id)}
       <div class="border border-[#34251c]/12 rounded-md p-3 bg-[#fff9f0] space-y-3">
         <div class="flex flex-wrap gap-3 items-end">
           <label class="block flex-1 min-w-[160px]">
             <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminShowingRoomName')}</span>
-            <input bind:value={room.name} class="input-gothic" placeholder={$t('adminShowingRoomNamePlaceholder')} />
+            <input bind:value={() => nameGet(room), (v) => nameSet(room, v)} class="input-gothic" placeholder={nameLang === 'en' ? $t('adminShowingRoomNamePlaceholder') : room.name} />
           </label>
           <label class="block w-28">
             <span class="text-[10px] uppercase tracking-wide text-[#7c6554]">{$t('adminFieldShowingFrom')}</span>

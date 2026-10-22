@@ -64,6 +64,9 @@
         nameEn: '',
         nameRu: '',
         nameUk: '',
+        nameEs: '',
+        nameDe: '',
+        nameIt: '',
         verb: 'damage',
         channel: 'physical',
         amount: 1,
@@ -434,6 +437,30 @@
         >
           <input
             bind:value={abilities[i].nameUk}
+            maxlength="60"
+          />
+        </SheetField>
+        <SheetField
+          label={`${$t("cardAbilName")} · ES`}
+        >
+          <input
+            bind:value={abilities[i].nameEs}
+            maxlength="60"
+          />
+        </SheetField>
+        <SheetField
+          label={`${$t("cardAbilName")} · DE`}
+        >
+          <input
+            bind:value={abilities[i].nameDe}
+            maxlength="60"
+          />
+        </SheetField>
+        <SheetField
+          label={`${$t("cardAbilName")} · IT`}
+        >
+          <input
+            bind:value={abilities[i].nameIt}
             maxlength="60"
           />
         </SheetField>

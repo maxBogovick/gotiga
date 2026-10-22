@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { figurineNameIn } from '$lib/workText';
+  import { allClaims } from '$lib/stores/all-claims.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
   import { fade } from 'svelte/transition';
-  import { t , brandName } from '$lib/i18n';
+  import { t, brandName, lang, locale } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import DateRangePicker from '$lib/components/DateRangePicker.svelte';
@@ -36,7 +38,7 @@
   });
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(undefined, {
+    return new Date(iso).toLocaleDateString($locale, {
       day: '2-digit', month: 'long', year: 'numeric',
     });
   }
@@ -165,7 +167,7 @@
         <dl class="info-list">
           <dt>{$t('cancelArtifact')}</dt>
           <dd>
-            <a href="/figurines/{info.figurineId}" class="figurine-link">{info.figurineName}</a>
+            <a href="/figurines/{info.figurineId}" class="figurine-link">{figurineNameIn({ figurineName: info.figurineName, figurineNameTranslations: allClaims.claims.find((c) => c.token === token)?.figurineNameTranslations }, $lang)}</a>
           </dd>
 
           <dt>{$t('cancelPeriod')}</dt>

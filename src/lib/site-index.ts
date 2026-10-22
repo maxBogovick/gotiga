@@ -9,6 +9,8 @@ import { api } from '$lib/api';
 import { loadWorld } from '$lib/world';
 import type { SiteIndex } from '$lib/site-search';
 import type { BattleChallenge, GazetteLeaf } from '$lib/types/api';
+import type { Lang } from '$lib/i18n';
+import { localizeList } from '$lib/workText';
 
 export interface AskIndex extends SiteIndex {
   etudes: BattleChallenge[];
@@ -38,4 +40,19 @@ export function loadIndex(): Promise<AskIndex> {
       throw e;
     });
   return pending;
+}
+
+/** Указатель, где тексты работ на языке читателя: поиск и «Спросить сайт»
+ *  печатают названия отсюда. Переводы остаются на записях, поэтому поиск по
+ *  словам находит работу на любом языке. Одна копия на указатель и язык. */
+const shown = new WeakMap<object, Map<Lang, unknown>>();
+export function indexIn<T extends SiteIndex>(index: T, l: Lang): T {
+  let byLang = shown.get(index);
+  if (!byLang) shown.set(index, (byLang = new Map()));
+  let out = byLang.get(l) as T | undefined;
+  if (!out) {
+    out = { ...index, works: localizeList(index.works, l) };
+    byLang.set(l, out);
+  }
+  return out;
 }

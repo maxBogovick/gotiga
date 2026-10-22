@@ -6,6 +6,8 @@ type ClaimStatus = 'pending' | 'confirmed' | 'rejected' | 'cancelled' | 'complet
 export type ClaimData = {
   token: string;
   figurineName: string;
+  /** Название работы на других языках; нет языка — `figurineName`. */
+  figurineNameTranslations?: Partial<Record<'ru' | 'uk' | 'es' | 'de' | 'it', string>>;
   startsAt: string;
   endsAt: string;
   submittedAt: string;

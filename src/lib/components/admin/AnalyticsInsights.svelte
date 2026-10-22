@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { locale } from '$lib/i18n';
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { isOwnerBrowser, setOwnerBrowser } from '$lib/analytics';
@@ -65,7 +66,7 @@
   }
 
   // ── Formatting ────────────────────────────────────────────────────────
-  const nf = new Intl.NumberFormat('en');
+  let nf = $derived(new Intl.NumberFormat($locale));
   const fmt = (n: number | null | undefined) => (n == null ? '—' : nf.format(Math.round(n)));
   const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : '—');
   const share = (part: number, whole: number) => (whole > 0 ? (part / whole) * 100 : 0);

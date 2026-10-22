@@ -2,7 +2,7 @@
   import { trackForm } from '$lib/analytics';
   import { onMount } from 'svelte';
   import { api, resolveMediaUrl } from '$lib/api';
-  import { t } from '$lib/i18n';
+  import { t, locale } from '$lib/i18n';
   import { authStore } from '$lib/stores/auth.svelte';
   import type { CommentDto } from '$lib/types/api';
 
@@ -40,7 +40,7 @@
   onMount(loadComments);
 
   function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+    return new Date(iso).toLocaleDateString($locale, { year: 'numeric', month: 'long', day: 'numeric' });
   }
 
   async function handleSubmit(e: SubmitEvent) {

@@ -14,6 +14,7 @@
   import { t, lang } from '$lib/i18n';
   import type { TranslationKey } from '$lib/i18n';
   import { leafCopy } from '$lib/gazette';
+  import { workText } from '$lib/workText';
   import { PAGE_LABELS, type SiteRef, type SiteRefInfo } from '$lib/siteLinks';
   import AppImage from '$lib/components/AppImage.svelte';
 
@@ -38,7 +39,10 @@
   };
 
   let named = $derived.by(() => {
-    if (info?.room === 'work') return { title: info.name, dek: info.dek };
+    if (info?.room === 'work') {
+      const w = { name: info.name, shortText: info.dek, translations: info.translations };
+      return { title: workText(w, 'name', $lang), dek: workText(w, 'shortText', $lang) };
+    }
     if (info) {
       const copy = leafCopy(info.leaf, $lang);
       return { title: copy.title, dek: copy.dek };

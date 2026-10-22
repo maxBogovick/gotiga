@@ -7,7 +7,8 @@
     import { observeWork, roomCta, trackWorkClicks } from '$lib/analytics';
     import AppImage from '$lib/components/AppImage.svelte';
     import type { AuthorProfile, FigurineListItem, GazetteHome, HomeContent } from '$lib/types/api';
-    import { t, lang, brandName } from '$lib/i18n';
+    import { t, lang, brandName, localizedBase, LANG_META } from '$lib/i18n';
+    import { localizeList, localizeListItem } from '$lib/workText';
     import { plateSlips } from '$lib/gazette';
     import ReelWorkCard from '$lib/components/ReelWorkCard.svelte';
     import WorkMarginIndex from '$lib/components/WorkMarginIndex.svelte';
@@ -89,12 +90,16 @@
     // $state.raw: these arrays are replaced wholesale (init() reassigns them, never
     // mutates in place), so the deep reactive proxy over every figurine object is pure
     // overhead — raw state tracks the reassignment and skips the proxying.
-    let collectionFigurines = $state.raw<FigurineListItem[]>(data.works);
+    let collectionRaw = $state.raw<FigurineListItem[]>(data.works);
+    // Тексты работ на языке читателя (`localizeList`); сами записи — выше.
+    let collectionFigurines = $derived(localizeList(collectionRaw, $lang));
     // Derived subset of the collection — single source of truth. Was a separate $state
     // that init() had to keep in sync by hand (a drift-bug waiting to happen).
     let availableFigurines = $derived(collectionFigurines.filter((f) => f.status === 'available'));
-    let inProgressFigurines = $state.raw<FigurineListItem[]>(data.inProgress);
-    let heroFigurine = $state<FigurineListItem | null>(data.heroFig ?? null);
+    let inProgressRaw = $state.raw<FigurineListItem[]>(data.inProgress);
+    let inProgressFigurines = $derived(localizeList(inProgressRaw, $lang));
+    let heroRaw = $state<FigurineListItem | null>(data.heroFig ?? null);
+    let heroFigurine = $derived(heroRaw ? localizeListItem(heroRaw, $lang) : null);
     // Author-led hero + story content, reused from the admin-editable profile.
     let authorProfile = $state<AuthorProfile | null>(data.author ?? null);
     // First-time vs returning visitor. The retention hooks (today's exhibit,
@@ -170,19 +175,28 @@
     // enchant with the work itself, first thing.
     let authorName = $derived(authorProfile?.name?.trim() || $brandName);
     let titleText = $derived(authorName);
-    let leadText = $derived(authorProfile?.tagline?.trim() || homeContent.lead?.trim() || $t('homeAuthorManifesto'));
+    // Тексты главной на языке читателя: английское — поле без суффикса.
+    let homeText = $derived({
+        title: localizedBase(homeContent, 'title', $lang),
+        kicker: localizedBase(homeContent, 'kicker', $lang),
+        lead: localizedBase(homeContent, 'lead', $lang),
+        captionTitle: localizedBase(homeContent, 'heroCaptionTitle', $lang),
+        captionMeta: localizedBase(homeContent, 'heroCaptionMeta', $lang),
+    });
+    let authorTagline = $derived(localizedBase(authorProfile, 'tagline', $lang));
+    let leadText = $derived(authorTagline || homeText.lead || $t('homeAuthorManifesto'));
 
     // SEO title/description: derive from the admin-editable home content (with a stable
     // brand-bearing fallback) instead of a hardcoded string, so the page's two most
     // important on-page signals actually reflect — and can be tuned to — the real content.
     let metaTitle = $derived(
-        homeContent.title?.trim()
-            ? `${homeContent.title.trim()} · ${$brandName}`
-            : `${$brandName} — Cabinet of Gothic Miniatures`
+        homeText.title
+            ? `${homeText.title} · ${$brandName}`
+            : `${$brandName} — ${$t('brandTagline')}`
     );
     let metaDescription = $derived(
-        (homeContent.lead?.trim()
-            || authorProfile?.tagline?.trim()
+        (homeText.lead
+            || authorTagline
             || "An author's cabinet of gothic figures and handmade miniatures."
         ).slice(0, 200)
     );
@@ -194,18 +208,20 @@
     // The book-holders' "first look" shelf: works genuinely inside their timed
     // early-release window (held out of the public archive by the server until
     // their hour). Rendered only when signed (see template guard).
-    let firstLookFigurines = $state.raw<FigurineListItem[]>([]);
+    let firstLookRaw = $state.raw<FigurineListItem[]>([]);
+    let firstLookFigurines = $derived(localizeList(firstLookRaw, $lang));
     // Hybrid editorial+algorithmic shelf resolved entirely server-side (admin
     // pins + top of the private mark ranking) — see /figurines/noticed.
-    let noticedByGuestsFigurines = $state.raw<FigurineListItem[]>([]);
+    let noticedByGuestsRaw = $state.raw<FigurineListItem[]>([]);
+    let noticedByGuestsFigurines = $derived(localizeList(noticedByGuestsRaw, $lang));
     // The work ACTUALLY IN the hero photograph — which is nobody when an admin-uploaded
     // background has overridden it. The caption ("Selected work: <name> → Open work") and
     // the alt text hang off this, not off heroFigurine: the latter is only the pick for the
     // photo, and when the background wins, naming a piece the visitor cannot see in the
     // frame — and linking to it — is a caption that lies.
     let heroPhotoFigurine = $derived(backgroundUrl ? null : heroFigurine);
-    let heroObjectName = $derived(homeContent.heroCaptionTitle?.trim() || heroPhotoFigurine?.name || homeContent.title?.trim() || '');
-    let heroObjectMeta = $derived(homeContent.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta'));
+    let heroObjectName = $derived(homeText.captionTitle || heroPhotoFigurine?.name || homeText.title || '');
+    let heroObjectMeta = $derived(homeText.captionMeta || $t('homeHeroObjectMeta'));
     let heroObjectCta = $derived(heroObjectName ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta'));
     let titleWords = $derived(titleText.split(/\s+/).filter(Boolean));
     let titleLines = $derived((() => {
@@ -383,15 +399,15 @@
 
             if (page) {
                 const works = sortWorks(visibleWorks(page.items));
-                collectionFigurines = works;
+                collectionRaw = works;
                 // availableFigurines is $derived from collectionFigurines — no manual sync.
-                inProgressFigurines = sortWorks(page.items.filter((f) => f.status === 'in_progress'));
+                inProgressRaw = sortWorks(page.items.filter((f) => f.status === 'in_progress'));
                 // The same deterministic pick load() made at build time — normally the same
                 // work, and therefore the same <img src>, so the hero is not re-downloaded.
-                heroFigurine = pickHeroFigurine(works, content ?? homeContent);
+                heroRaw = pickHeroFigurine(works, content ?? homeContent);
             }
-            firstLookFigurines = firstLook;
-            noticedByGuestsFigurines = noticedByGuests;
+            firstLookRaw = firstLook;
+            noticedByGuestsRaw = noticedByGuests;
             gazetteHome = gazette;
             isLoaded = true;
         } catch (e) {
@@ -567,7 +583,7 @@
     <title>{metaTitle}</title>
     <meta name="description" content={metaDescription} />
     <meta property="og:site_name" content={$brandName} />
-    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale" content={LANG_META[$lang].og} />
     <meta property="og:title" content={metaTitle} />
     <meta property="og:description" content={metaDescription} />
     <meta property="og:image" content={data.ogImage} />
@@ -681,7 +697,7 @@
 
             <!-- Copy, right column -->
             <div class="hero-text" in:fly={{ y: 20, duration: 900, delay: 350, easing: cubicOut }}>
-                <p class="hero-kicker">{homeContent.kicker?.trim() || $t('homeKicker')}</p>
+                <p class="hero-kicker">{homeText.kicker || $t('homeKicker')}</p>
                 <h1 id="home-title" class="hero-title" aria-label={titleText}>
                     {#each titleLines as line}
                         <span class="title-line" aria-hidden="true">
@@ -825,7 +841,7 @@
                             {#await import('$lib/components/VisitLedger.svelte') then { default: VisitLedger }}
                             <VisitLedger
                                 figurines={collectionFigurines}
-                                rooms={showingRooms.list.map((r) => ({ id: r.id, name: r.name }))}
+                                rooms={showingRooms.list.map((r) => ({ id: r.id, name: localizedBase(r, 'name', $lang) }))}
                                 inProgressCount={inProgressFigurines.length}
                             />
                             {/await}
@@ -991,7 +1007,7 @@
              means in the prerendered HTML. It used to wait for isLoaded, i.e. for a client
              fetch, so this section simply did not exist for anything that doesn't run JS. -->
         {#if authorProfile || isLoaded}
-            <AuthorStory name={authorName} bio={authorProfile?.bio ?? null} photoUrl={authorProfile?.photoUrl ?? null} />
+            <AuthorStory name={authorName} bio={localizedBase(authorProfile, 'bio', $lang) || null} photoUrl={authorProfile?.photoUrl ?? null} />
         {/if}
         </div>
         {/if}

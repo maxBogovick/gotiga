@@ -51,6 +51,8 @@
     });
   });
 
+  const choices = $derived((turn.reply?.links ?? []).filter((l) => l.kind === 'choice'));
+  const others = $derived((turn.reply?.links ?? []).filter((l) => l.kind !== 'choice'));
   const writing = $derived(!turn.typed && !!turn.reply);
   /** Абзац, в конце которого стоит черта печатающего пера. */
   const lastShown = $derived(visible.reduce((at, p, i) => (p ? i : at), -1));
@@ -79,9 +81,16 @@
       {/if}
     {/each}
   </div>
-  {#if turn.typed && turn.reply.links.length}
+  {#if turn.typed && choices.length}
+    <div class="choices">
+      {#each choices as c, i (c.label)}
+        <button type="button" class="choice" style:--i={i} onclick={() => siteAsk.ask(c.label, 'chip', c.quiz)}>{c.label}</button>
+      {/each}
+    </div>
+  {/if}
+  {#if turn.typed && others.length}
     <ul class="links">
-      {#each turn.reply.links as link, i (link.href + i)}
+      {#each others as link, i (link.href + link.label + i)}
         <li style:--i={i}>
           {#if link.kind === 'question'}
             <button type="button" class="ask-again" onclick={() => siteAsk.ask(link.label, 'chip')}>
@@ -173,6 +182,36 @@
     }
   }
 
+  .choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .choice {
+    padding: 8px 16px;
+    border: 1px solid var(--ak-rule);
+    border-radius: 18px;
+    background: none;
+    color: var(--ak-ink);
+    font-family: var(--font-display, Fraunces, Georgia, serif);
+    font-size: 15px;
+    cursor: pointer;
+    animation: rise 0.35s ease both;
+    animation-delay: calc(var(--i) * 45ms);
+    transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  }
+  .choice:hover,
+  .choice:focus-visible {
+    color: var(--ak-ember-deep);
+    border-color: var(--ak-ember);
+    background: color-mix(in srgb, var(--ak-ember) 8%, transparent);
+  }
+  .choice:focus-visible {
+    outline: 2px solid rgba(180, 78, 36, 0.6);
+    outline-offset: 2px;
+  }
+
   .links {
     list-style: none;
     margin: 14px 0 0;
@@ -259,7 +298,8 @@
   @media (prefers-reduced-motion: reduce) {
     .caret,
     .dots i,
-    .links li {
+    .links li,
+    .choice {
       animation: none;
     }
     .dots i {

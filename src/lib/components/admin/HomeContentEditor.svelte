@@ -3,6 +3,26 @@
   import { api } from '$lib/api';
   import type { FigurineListItem, HomeContent } from '$lib/types/api';
   import { t } from '$lib/i18n';
+  import TextLangSwitch, { fieldIn, type TextLang } from '$lib/components/admin/TextLangSwitch.svelte';
+
+  // Тексты главной на других языках лежат рядом с английскими: `kickerRu` … `heroCaptionCtaIt`.
+  const STEMS = ['kicker', 'lead', 'heroCaptionTitle', 'heroCaptionMeta', 'heroCaptionCta'] as const;
+  type Stem = (typeof STEMS)[number];
+  const OTHER_LANGS: TextLang[] = ['ru', 'uk', 'es', 'de', 'it'];
+  type Loose = Record<string, string | null | undefined>;
+  /** Все переводы записи, пустые — пустой строкой (на сервере это «снять»). */
+  function translationsOf(src: HomeContent): Record<string, string> {
+    const r = src as unknown as Loose;
+    const out: Record<string, string> = {};
+    for (const stem of STEMS) for (const l of OTHER_LANGS) {
+      const key = fieldIn(stem, l);
+      // Подпись к фото раньше лежала в `title`: прежний перевод заголовка — её перевод.
+      const legacy = stem === 'heroCaptionTitle' ? r[fieldIn('title', l)] : null;
+      out[key] = (r[key] ?? legacy ?? '').trim();
+    }
+    return out;
+  }
+  let textLang = $state<TextLang>('en');
 
   let content = $state<HomeContent>({
     title: null,
@@ -54,8 +74,25 @@
       heroCaptionCta: loaded.heroCaptionCta ?? '',
       heroMode: loaded.heroMode ?? 'auto',
       vitrineFigurineId: loaded.vitrineFigurineId ?? null,
+      ...translationsOf(loaded),
     };
   }
+
+  function textGet(stem: Stem): string {
+    return ((content as unknown as Loose)[fieldIn(stem, textLang)] ?? '') as string;
+  }
+  function textSet(stem: Stem, v: string) {
+    (content as unknown as Loose)[fieldIn(stem, textLang)] = v;
+  }
+  /** Текст для предпросмотра: выбранный язык, иначе английский. */
+  function textShown(stem: Stem): string {
+    return textGet(stem).trim() || ((content as unknown as Loose)[stem] ?? '').trim();
+  }
+  function hintFor(stem: Stem, fallback: string): string {
+    return textLang === 'en' ? fallback : ((content as unknown as Loose)[stem] ?? '').trim() || fallback;
+  }
+  const langFilled = (l: TextLang) =>
+    STEMS.some((stem) => ((content as unknown as Loose)[fieldIn(stem, l)] ?? '').trim() !== '');
 
   onMount(async () => {
     try {
@@ -136,6 +173,7 @@
         heroCaptionCta: content.heroCaptionCta?.trim() || null,
         heroMode: content.heroMode ?? 'auto',
         vitrineFigurineId: content.vitrineFigurineId || null,
+        ...translationsOf(content),
       };
       await api.saveHomeContent(payload);
       content = {
@@ -148,6 +186,7 @@
         heroCaptionCta: payload.heroCaptionCta ?? '',
         heroMode: payload.heroMode,
         vitrineFigurineId: payload.vitrineFigurineId,
+        ...translationsOf(payload),
       };
       savedSnapshot = JSON.stringify(content);
       message = 'Home page updated';
@@ -170,6 +209,7 @@
       heroCaptionCta: '',
       heroMode: 'auto',
       vitrineFigurineId: null,
+      ...Object.fromEntries(STEMS.flatMap((stem) => OTHER_LANGS.map((l) => [fieldIn(stem, l), '']))),
     };
   }
 </script>
@@ -196,6 +236,7 @@
       <p class="text-xs uppercase tracking-[0.12em] text-[#5f4636] animate-pulse">Loading…</p>
     {:else}
       <div class="space-y-6">
+        <TextLangSwitch bind:value={textLang} filled={langFilled} />
         <div class="border border-[#34251c]/10 bg-[#f8f1e7]/70 p-6 space-y-4">
           <div>
             <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-2">Hero mode</p>
@@ -227,18 +268,18 @@
         <label class="block">
           <span class="label">Kicker</span>
           <input
-            bind:value={content.kicker}
+            bind:value={() => textGet('kicker'), (v) => textSet('kicker', v)}
             class="input-gothic"
-            placeholder={$t('homeKicker')}
+            placeholder={hintFor('kicker', $t('homeKicker'))}
           />
         </label>
 
         <label class="block">
           <span class="label">Lead</span>
           <textarea
-            bind:value={content.lead}
+            bind:value={() => textGet('lead'), (v) => textSet('lead', v)}
             class="input-gothic h-32"
-            placeholder={$t('homeLead')}
+            placeholder={hintFor('lead', $t('homeLead'))}
           ></textarea>
         </label>
 
@@ -425,27 +466,27 @@
           <label class="block">
             <span class="label">Caption title</span>
             <input
-              bind:value={content.heroCaptionTitle}
+              bind:value={() => textGet('heroCaptionTitle'), (v) => textSet('heroCaptionTitle', v)}
               class="input-gothic"
-              placeholder={selectedHeroFigurine?.name || 'The Fool'}
+              placeholder={hintFor('heroCaptionTitle', selectedHeroFigurine?.name || 'The Fool')}
             />
           </label>
 
           <label class="block">
             <span class="label">Meta line</span>
             <input
-              bind:value={content.heroCaptionMeta}
+              bind:value={() => textGet('heroCaptionMeta'), (v) => textSet('heroCaptionMeta', v)}
               class="input-gothic"
-              placeholder={$t('homeHeroObjectMeta')}
+              placeholder={hintFor('heroCaptionMeta', $t('homeHeroObjectMeta'))}
             />
           </label>
 
           <label class="block">
             <span class="label">Link text</span>
             <input
-              bind:value={content.heroCaptionCta}
+              bind:value={() => textGet('heroCaptionCta'), (v) => textSet('heroCaptionCta', v)}
               class="input-gothic"
-              placeholder={$t('homeHeroObjectOpen')}
+              placeholder={hintFor('heroCaptionCta', $t('homeHeroObjectOpen'))}
             />
           </label>
         </div>
@@ -453,24 +494,24 @@
         <div class="border border-[#34251c]/10 bg-[#f8f1e7]/70 p-6">
           <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636] mb-3">Preview</p>
           <p class="text-xs uppercase tracking-[0.18em] text-[#6f3b24] mb-3">
-            {content.kicker?.trim() || $t('homeKicker')}
+            {textShown('kicker') || $t('homeKicker')}
           </p>
           <h3 class="font-gothic text-5xl text-[#2c1710] leading-none mb-4">
             {$t('homeTitle')}
           </h3>
           <p class="font-serif text-xl leading-8 text-[#5f4636] max-w-2xl">
-            {content.lead?.trim() || $t('homeLead')}
+            {textShown('lead') || $t('homeLead')}
           </p>
           <div class="mt-6 border-l border-[#c65f3c]/50 pl-4">
             <p class="text-[10px] uppercase tracking-[0.14em] text-[#5f4636]">Photo caption</p>
             <p class="font-gothic text-3xl italic text-[#2c1710]">
-              {content.heroCaptionTitle?.trim() || selectedHeroFigurine?.name || '—'}
+              {textShown('heroCaptionTitle') || selectedHeroFigurine?.name || '—'}
             </p>
             <p class="text-[10px] uppercase tracking-[0.12em] text-[#5f4636]">
-              {content.heroCaptionMeta?.trim() || $t('homeHeroObjectMeta')}
+              {textShown('heroCaptionMeta') || $t('homeHeroObjectMeta')}
             </p>
             <p class="mt-2 text-[10px] uppercase tracking-[0.12em] text-[#6f3b24]">
-              {content.heroCaptionCta?.trim() || (selectedHeroFigurine ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta'))} →
+              {textShown('heroCaptionCta') || (selectedHeroFigurine ? $t('homeHeroObjectOpen') : $t('homeSecondaryCta'))} →
             </p>
           </div>
         </div>

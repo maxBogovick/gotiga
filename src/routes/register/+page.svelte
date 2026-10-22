@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { t , brandName } from '$lib/i18n';
+  import { t, brandName } from '$lib/i18n';
   import { api } from '$lib/api';
   import { authStore } from '$lib/stores/auth.svelte';
   import { isValidEmail } from '$lib/validation';
@@ -226,8 +226,8 @@
           class="auth-icon-btn"
           class:selected={selections[categoryStepIndex()] === icon.id}
           onclick={() => { selections[categoryStepIndex()] = icon.id; }}
-          title={icon.labelRu}
-          aria-label={icon.labelRu}
+          title={iconLabel(icon, $lang)}
+          aria-label={iconLabel(icon, $lang)}
         >
           {@html icon.svg}
           <span class="auth-icon-label">{iconLabel(icon, $lang)}</span>

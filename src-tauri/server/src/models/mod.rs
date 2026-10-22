@@ -190,6 +190,16 @@ pub struct Figurine {
 pub struct ShowingRoom {
     pub id: Uuid,
     pub name: String,
+    #[sqlx(default)]
+    pub name_ru: Option<String>,
+    #[sqlx(default)]
+    pub name_uk: Option<String>,
+    #[sqlx(default)]
+    pub name_es: Option<String>,
+    #[sqlx(default)]
+    pub name_de: Option<String>,
+    #[sqlx(default)]
+    pub name_it: Option<String>,
     pub open_from_min: i32,
     pub open_until_min: i32,
     /// Allowed weekdays bitmask (bit0=Mon … bit6=Sun). NULL → every day.
@@ -338,6 +348,11 @@ pub struct FigurineListItemDto {
     /// слежения) пустые. В публичном ответе — только работы, видимые на сайте.
     #[serde(default)]
     pub similar_ids: Vec<String>,
+    /// Тексты работы на других языках (`ru`, `uk`, `es`, `de`, `it`) — только те
+    /// поля, что видны в списке. Пустые поля и языки без текста не печатаются;
+    /// клиент берёт английское поле работы, когда своего нет.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub translations: std::collections::HashMap<String, FigurineTextDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -345,6 +360,17 @@ pub struct FigurineListItemDto {
 pub struct ShowingRoomDto {
     pub id: String,
     pub name: String,
+    /// Название на других языках; нет — клиент берёт `name` (английское).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_it: Option<String>,
     pub open_from_min: i32,
     pub open_until_min: i32,
     pub open_days_mask: Option<i32>,
@@ -358,6 +384,18 @@ pub struct ShowingRoomDto {
 pub struct SaveShowingRoomRequest {
     pub id: String,
     pub name: String,
+    /// Названия на других языках. Нет поля — прежнее не трогается; пустая
+    /// строка — снять.
+    #[serde(default)]
+    pub name_ru: Option<String>,
+    #[serde(default)]
+    pub name_uk: Option<String>,
+    #[serde(default)]
+    pub name_es: Option<String>,
+    #[serde(default)]
+    pub name_de: Option<String>,
+    #[serde(default)]
+    pub name_it: Option<String>,
     pub open_from_min: i32,
     pub open_until_min: i32,
     #[serde(default)]
@@ -385,6 +423,10 @@ pub struct ImageDto {
     pub reveal_radius: Option<f32>,
     pub darkness: Option<f32>,
     pub alt_text: Option<String>,
+    /// Описание фотографии на других языках (`ru`, `uk`, `es`, `de`, `it`):
+    /// язык → текст. Нет языка — клиент берёт `altText`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub alt_translations: std::collections::HashMap<String, String>,
 }
 
 /// Result of an on-demand depth-map generation run for one figurine.
@@ -571,6 +613,112 @@ pub struct FigurineDto {
     /// работы в админке читает их отсюда и присылает назад в `SaveFigurineRequest`.
     #[serde(default)]
     pub similar_ids: Vec<String>,
+    /// Тексты работы на других языках, все поля (см. `FigurineTextDto`).
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub translations: std::collections::HashMap<String, FigurineTextDto>,
+}
+
+/// Тексты одной работы на одном языке (`figurine_translations`). Нет поля —
+/// клиент печатает английское поле самой работы.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct FigurineTextDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub technique: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edition: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_period: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub care_instructions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authenticity_note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub included_items: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_text: Option<String>,
+}
+
+/// `{"es": "Bruja", …}` из JSON-текста запроса; пусто или нечитаемо — пусто.
+pub fn parse_name_translations(raw: Option<&str>) -> std::collections::HashMap<String, String> {
+    raw.and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default()
+}
+
+impl FigurineTextDto {
+    /// Языки, на которых у работы может быть перевод. Английский — в самой работе.
+    pub const LANGS: [&'static str; 5] = ["ru", "uk", "es", "de", "it"];
+
+    /// Пробелы по краям сняты, пустая строка — `None`.
+    pub fn cleaned(self) -> Self {
+        let c = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        Self {
+            name: c(self.name),
+            short_text: c(self.short_text),
+            full_description: c(self.full_description),
+            material: c(self.material),
+            technique: c(self.technique),
+            dimensions: c(self.dimensions),
+            series: c(self.series),
+            edition: c(self.edition),
+            created_period: c(self.created_period),
+            care_instructions: c(self.care_instructions),
+            provenance_note: c(self.provenance_note),
+            authenticity_note: c(self.authenticity_note),
+            included_items: c(self.included_items),
+            secret_text: c(self.secret_text),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Только поля, которые видны в списке работ.
+    pub fn for_list(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            short_text: self.short_text.clone(),
+            material: self.material.clone(),
+            technique: self.technique.clone(),
+            dimensions: self.dimensions.clone(),
+            series: self.series.clone(),
+            ..Self::default()
+        }
+    }
+
+    /// Поле и его предел длины — те же числа, что в CHECK таблицы.
+    pub fn limits(&self) -> [(&'static str, &Option<String>, usize); 14] {
+        [
+            ("name", &self.name, 200),
+            ("shortText", &self.short_text, 2000),
+            ("fullDescription", &self.full_description, 20000),
+            ("material", &self.material, 500),
+            ("technique", &self.technique, 500),
+            ("dimensions", &self.dimensions, 200),
+            ("series", &self.series, 200),
+            ("edition", &self.edition, 500),
+            ("createdPeriod", &self.created_period, 500),
+            ("careInstructions", &self.care_instructions, 5000),
+            ("provenanceNote", &self.provenance_note, 5000),
+            ("authenticityNote", &self.authenticity_note, 5000),
+            ("includedItems", &self.included_items, 5000),
+            ("secretText", &self.secret_text, 5000),
+        ]
+    }
 }
 
 // ============================================================
@@ -1222,6 +1370,11 @@ pub struct SaveFigurineRequest {
     /// иначе стирала бы его при каждом сохранении. `Some(vec![])` — очистить.
     #[serde(default)]
     pub similar_ids: Option<Vec<String>>,
+    /// Тексты на других языках. `None` — поле не прислано, строки не трогаются.
+    /// `Some` — названные языки переписываются целиком: пустые строки становятся
+    /// NULL, язык без единого текста удаляется. Не названные языки остаются.
+    #[serde(default)]
+    pub translations: Option<std::collections::HashMap<String, FigurineTextDto>>,
     #[serde(default)]
     pub images: Vec<SaveImageRequest>,
     #[serde(default)]
@@ -1243,6 +1396,10 @@ pub struct SaveImageRequest {
     pub reveal_radius: Option<f32>,
     pub darkness: Option<f32>,
     pub alt_text: Option<String>,
+    /// Описание фотографии на других языках. `None` — не трогать; `Some` —
+    /// названные языки переписываются, пустая строка удаляет язык.
+    #[serde(default)]
+    pub alt_translations: Option<std::collections::HashMap<String, String>>,
     pub sort_order: Option<i32>,
 }
 
@@ -1282,6 +1439,113 @@ pub struct HomeContent {
     pub hero_mode: Option<String>,
     #[serde(default)]
     pub vitrine_figurine_id: Option<String>,
+    /// Тексты главной на других языках: `titleRu` … `heroCaptionCtaIt`. Нет
+    /// языка — клиент берёт поле без суффикса (английское).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_it: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kicker_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kicker_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kicker_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kicker_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kicker_it: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_it: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_title_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_title_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_title_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_title_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_title_it: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_meta_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_meta_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_meta_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_meta_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_meta_it: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_cta_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_cta_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_cta_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_cta_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_caption_cta_it: Option<String>,
+}
+
+impl HomeContent {
+    /// Переводы, которых не прислали (`None`), берутся из прежней записи:
+    /// старая вкладка админки, не знающая этих полей, иначе стирала бы их.
+    /// Пустая строка — снять перевод. Пробелы по краям снимаются.
+    pub fn keep_translations(mut self, before: &HomeContent) -> HomeContent {
+        fn tidy(v: &mut Option<String>, old: &Option<String>) {
+            if v.is_none() {
+                *v = old.clone();
+            }
+            *v = v.take().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        }
+        tidy(&mut self.title_ru, &before.title_ru);
+        tidy(&mut self.title_uk, &before.title_uk);
+        tidy(&mut self.title_es, &before.title_es);
+        tidy(&mut self.title_de, &before.title_de);
+        tidy(&mut self.title_it, &before.title_it);
+        tidy(&mut self.kicker_ru, &before.kicker_ru);
+        tidy(&mut self.kicker_uk, &before.kicker_uk);
+        tidy(&mut self.kicker_es, &before.kicker_es);
+        tidy(&mut self.kicker_de, &before.kicker_de);
+        tidy(&mut self.kicker_it, &before.kicker_it);
+        tidy(&mut self.lead_ru, &before.lead_ru);
+        tidy(&mut self.lead_uk, &before.lead_uk);
+        tidy(&mut self.lead_es, &before.lead_es);
+        tidy(&mut self.lead_de, &before.lead_de);
+        tidy(&mut self.lead_it, &before.lead_it);
+        tidy(&mut self.hero_caption_title_ru, &before.hero_caption_title_ru);
+        tidy(&mut self.hero_caption_title_uk, &before.hero_caption_title_uk);
+        tidy(&mut self.hero_caption_title_es, &before.hero_caption_title_es);
+        tidy(&mut self.hero_caption_title_de, &before.hero_caption_title_de);
+        tidy(&mut self.hero_caption_title_it, &before.hero_caption_title_it);
+        tidy(&mut self.hero_caption_meta_ru, &before.hero_caption_meta_ru);
+        tidy(&mut self.hero_caption_meta_uk, &before.hero_caption_meta_uk);
+        tidy(&mut self.hero_caption_meta_es, &before.hero_caption_meta_es);
+        tidy(&mut self.hero_caption_meta_de, &before.hero_caption_meta_de);
+        tidy(&mut self.hero_caption_meta_it, &before.hero_caption_meta_it);
+        tidy(&mut self.hero_caption_cta_ru, &before.hero_caption_cta_ru);
+        tidy(&mut self.hero_caption_cta_uk, &before.hero_caption_cta_uk);
+        tidy(&mut self.hero_caption_cta_es, &before.hero_caption_cta_es);
+        tidy(&mut self.hero_caption_cta_de, &before.hero_caption_cta_de);
+        tidy(&mut self.hero_caption_cta_it, &before.hero_caption_cta_it);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1319,6 +1583,52 @@ pub struct AuthorProfile {
     pub avatar_border_color: Option<String>,
     #[serde(default)]
     pub avatar_bg: Option<String>,
+    /// Подпись и рассказ об авторе на других языках: `taglineRu` … `bioIt`.
+    /// Имя не переводится. Нет языка — клиент берёт `tagline`/`bio`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tagline_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tagline_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tagline_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tagline_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tagline_it: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio_ru: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio_uk: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio_es: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio_de: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio_it: Option<String>,
+}
+
+impl AuthorProfile {
+    /// То же правило, что у текстов главной (`HomeContent::keep_translations`):
+    /// не присланный перевод берётся из прежней записи, пустой снимается.
+    pub fn keep_translations(mut self, before: &AuthorProfile) -> AuthorProfile {
+        fn tidy(v: &mut Option<String>, old: &Option<String>) {
+            if v.is_none() {
+                *v = old.clone();
+            }
+            *v = v.take().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        }
+        tidy(&mut self.tagline_ru, &before.tagline_ru);
+        tidy(&mut self.tagline_uk, &before.tagline_uk);
+        tidy(&mut self.tagline_es, &before.tagline_es);
+        tidy(&mut self.tagline_de, &before.tagline_de);
+        tidy(&mut self.tagline_it, &before.tagline_it);
+        tidy(&mut self.bio_ru, &before.bio_ru);
+        tidy(&mut self.bio_uk, &before.bio_uk);
+        tidy(&mut self.bio_es, &before.bio_es);
+        tidy(&mut self.bio_de, &before.bio_de);
+        tidy(&mut self.bio_it, &before.bio_it);
+        self
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1334,6 +1644,10 @@ pub struct OrderRequest {
     pub mode: OrderMode,
     /// Self-certified "I am 16 or older" checkbox — required on every public
     /// form that collects contact details (see privacy policy "Children" section).
+    /// Язык страницы, с которой отправлено (`en`/`ru`/`uk`/`es`/`de`/`it`): на
+    /// нём сервер и ответит. Нет — язык человека, затем английский.
+    #[serde(default)]
+    pub lang: Option<String>,
     pub age_confirmed: bool,
 }
 
@@ -1403,6 +1717,9 @@ pub struct PublicCertificateDto {
     pub certificate_number: String,
     pub figurine_id: String,
     pub figurine_name: String,
+    /// Название работы на других языках: язык → название. Нет языка — `figurineName`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub figurine_name_translations: std::collections::HashMap<String, String>,
     pub issued_at: String,
     pub revoked: bool,
 }
@@ -1724,6 +2041,10 @@ pub struct CreateBookingRequest {
     pub ends_at: String,
     /// Self-certified "I am 16 or older" checkbox — required on every public
     /// form that collects contact details (see privacy policy "Children" section).
+    /// Язык страницы, с которой отправлено (`en`/`ru`/`uk`/`es`/`de`/`it`): на
+    /// нём сервер и ответит. Нет — язык человека, затем английский.
+    #[serde(default)]
+    pub lang: Option<String>,
     pub age_confirmed: bool,
 }
 
@@ -2251,6 +2572,9 @@ pub struct UserBookingDto {
     pub id: String,
     pub figurine_id: String,
     pub figurine_name: String,
+    /// Название работы на других языках: язык → название. Нет языка — `figurineName`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub figurine_name_translations: std::collections::HashMap<String, String>,
     pub display_type: Option<String>,
     pub venue: Option<String>,
     pub starts_at: String,
@@ -2267,6 +2591,9 @@ pub struct UserOrderDto {
     pub id: String,
     pub figurine_id: String,
     pub figurine_name: String,
+    /// Название работы на других языках: язык → название. Нет языка — `figurineName`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub figurine_name_translations: std::collections::HashMap<String, String>,
     pub mode: OrderMode,
     pub status: OrderStatus,
     pub created_at: String,
@@ -2466,6 +2793,10 @@ pub struct SubmitCommentRequest {
     pub author_name: Option<String>,
     pub author_email: Option<String>,
     pub body: String,
+    /// Язык страницы, с которой отправлено (`en`/`ru`/`uk`/`es`/`de`/`it`): на
+    /// нём сервер и ответит. Нет — язык человека, затем английский.
+    #[serde(default)]
+    pub lang: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2573,10 +2904,22 @@ pub struct ProgrammeSettings {
     pub curator_note_ru: Option<String>,
     #[serde(default)]
     pub curator_note_uk: Option<String>,
+    #[serde(default)]
+    pub curator_note_es: Option<String>,
+    #[serde(default)]
+    pub curator_note_de: Option<String>,
+    #[serde(default)]
+    pub curator_note_it: Option<String>,
     pub curator_sign_en: Option<String>,
     pub curator_sign_ru: Option<String>,
     #[serde(default)]
     pub curator_sign_uk: Option<String>,
+    #[serde(default)]
+    pub curator_sign_es: Option<String>,
+    #[serde(default)]
+    pub curator_sign_de: Option<String>,
+    #[serde(default)]
+    pub curator_sign_it: Option<String>,
     /// Base bronze hex for the case's cast-metal molding (e.g. `#caa45f`).
     /// `None` falls back to the built-in bronze. Frontend derives the light→dark
     /// bevel gradient from this single colour.
@@ -2599,9 +2942,15 @@ impl Default for ProgrammeSettings {
             curator_note_en: None,
             curator_note_ru: None,
             curator_note_uk: None,
+            curator_note_es: None,
+            curator_note_de: None,
+            curator_note_it: None,
             curator_sign_en: None,
             curator_sign_ru: None,
             curator_sign_uk: None,
+            curator_sign_es: None,
+            curator_sign_de: None,
+            curator_sign_it: None,
             frame_tone: None,
             frame_thickness: None,
             frame_mode: None,
@@ -2779,9 +3128,15 @@ pub struct BookNoteRow {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
     pub dek_uk: Option<String>,
+    pub dek_es: Option<String>,
+    pub dek_de: Option<String>,
+    pub dek_it: Option<String>,
 }
 
 /// Looked up by unsubscribe token so a visitor can confirm leaving the book.
@@ -3166,6 +3521,10 @@ pub struct CreateWaitlistRequest {
     pub note: Option<String>,
     /// Self-certified "I am 16 or older" checkbox — required on every public
     /// form that collects contact details (see privacy policy "Children" section).
+    /// Язык страницы, с которой отправлено (`en`/`ru`/`uk`/`es`/`de`/`it`): на
+    /// нём сервер и ответит. Нет — язык человека, затем английский.
+    #[serde(default)]
+    pub lang: Option<String>,
     pub age_confirmed: bool,
 }
 
@@ -3674,6 +4033,12 @@ pub struct CopyOverrides {
     pub ru: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub uk: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub es: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub de: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub it: std::collections::HashMap<String, String>,
 }
 
 // ============================================================
@@ -3689,12 +4054,21 @@ pub struct GazetteLeaf {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
     pub dek_uk: Option<String>,
+    pub dek_es: Option<String>,
+    pub dek_de: Option<String>,
+    pub dek_it: Option<String>,
     pub body_en: Option<String>,
     pub body_ru: Option<String>,
     pub body_uk: Option<String>,
+    pub body_es: Option<String>,
+    pub body_de: Option<String>,
+    pub body_it: Option<String>,
     pub figurine_id: Option<Uuid>,
     pub href: Option<String>,
     pub source_name: Option<String>,
@@ -3720,12 +4094,21 @@ pub struct GazetteLeafListed {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
     pub dek_uk: Option<String>,
+    pub dek_es: Option<String>,
+    pub dek_de: Option<String>,
+    pub dek_it: Option<String>,
     pub body_en: Option<String>,
     pub body_ru: Option<String>,
     pub body_uk: Option<String>,
+    pub body_es: Option<String>,
+    pub body_de: Option<String>,
+    pub body_it: Option<String>,
     pub figurine_id: Option<Uuid>,
     pub href: Option<String>,
     pub source_name: Option<String>,
@@ -3741,6 +4124,9 @@ pub struct GazetteLeafListed {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub figurine_name: Option<String>,
+    /// Названия работы на других языках, JSON-текстом из запроса (`{"es": "…"}`).
+    #[sqlx(default)]
+    pub figurine_name_translations: Option<String>,
     pub figurine_slug: Option<String>,
     pub figurine_status: Option<String>,
     pub watch_count: i64,
@@ -3758,16 +4144,37 @@ pub struct GazetteLeafDto {
     pub title_ru: String,
     #[serde(default)]
     pub title_uk: String,
+    #[serde(default)]
+    pub title_es: String,
+    #[serde(default)]
+    pub title_de: String,
+    #[serde(default)]
+    pub title_it: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
     #[serde(default)]
     pub dek_uk: Option<String>,
+    #[serde(default)]
+    pub dek_es: Option<String>,
+    #[serde(default)]
+    pub dek_de: Option<String>,
+    #[serde(default)]
+    pub dek_it: Option<String>,
     pub body_en: Option<String>,
     pub body_ru: Option<String>,
     #[serde(default)]
     pub body_uk: Option<String>,
+    #[serde(default)]
+    pub body_es: Option<String>,
+    #[serde(default)]
+    pub body_de: Option<String>,
+    #[serde(default)]
+    pub body_it: Option<String>,
     pub figurine_id: Option<String>,
     pub figurine_name: Option<String>,
+    /// Название работы на других языках: язык → название. Нет языка — `figurineName`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub figurine_name_translations: std::collections::HashMap<String, String>,
     pub figurine_slug: Option<String>,
     pub href: Option<String>,
     pub source_name: Option<String>,
@@ -3803,6 +4210,12 @@ pub struct GazetteNeighborDto {
     pub title_ru: String,
     #[serde(default)]
     pub title_uk: String,
+    #[serde(default)]
+    pub title_es: String,
+    #[serde(default)]
+    pub title_de: String,
+    #[serde(default)]
+    pub title_it: String,
 }
 
 /// The shelf of tall tales, top to bottom. Position is the index in the list.
@@ -3822,14 +4235,32 @@ pub struct SaveGazetteLeafRequest {
     pub title_ru: String,
     #[serde(default)]
     pub title_uk: String,
+    #[serde(default)]
+    pub title_es: String,
+    #[serde(default)]
+    pub title_de: String,
+    #[serde(default)]
+    pub title_it: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
     #[serde(default)]
     pub dek_uk: Option<String>,
+    #[serde(default)]
+    pub dek_es: Option<String>,
+    #[serde(default)]
+    pub dek_de: Option<String>,
+    #[serde(default)]
+    pub dek_it: Option<String>,
     pub body_en: Option<String>,
     pub body_ru: Option<String>,
     #[serde(default)]
     pub body_uk: Option<String>,
+    #[serde(default)]
+    pub body_es: Option<String>,
+    #[serde(default)]
+    pub body_de: Option<String>,
+    #[serde(default)]
+    pub body_it: Option<String>,
     pub figurine_id: Option<String>,
     pub href: Option<String>,
     pub source_name: Option<String>,
@@ -3928,6 +4359,9 @@ pub struct GazetteWatchInfo {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub notified: bool,
     /// Адрес подтверждён; нет — слежение ждёт перехода по ссылке из письма.
     pub confirmed: bool,
@@ -3941,6 +4375,9 @@ pub struct GazetteWatchListed {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub cancel_token: String,
     pub notified_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -3955,6 +4392,9 @@ pub struct GazetteWatchDto {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub cancel_token: String,
     pub notified_at: Option<String>,
     pub created_at: String,
@@ -4120,6 +4560,9 @@ pub struct AdminTaleCommentRow {
     pub tale_title_en: String,
     pub tale_title_ru: String,
     pub tale_title_uk: String,
+    pub tale_title_es: String,
+    pub tale_title_de: String,
+    pub tale_title_it: String,
     pub tale_slug: String,
     pub author_name: String,
     pub author_email: Option<String>,
@@ -4139,6 +4582,12 @@ pub struct AdminTaleCommentDto {
     pub tale_title_ru: String,
     #[serde(default)]
     pub tale_title_uk: String,
+    #[serde(default)]
+    pub tale_title_es: String,
+    #[serde(default)]
+    pub tale_title_de: String,
+    #[serde(default)]
+    pub tale_title_it: String,
     pub tale_slug: String,
     pub author_name: String,
     pub author_email: Option<String>,
@@ -4392,9 +4841,15 @@ pub struct TaleNoteRow {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub original_title_en: Option<String>,
     pub original_title_ru: Option<String>,
     pub original_title_uk: Option<String>,
+    pub original_title_es: Option<String>,
+    pub original_title_de: Option<String>,
+    pub original_title_it: Option<String>,
 }
 
 /// Созревшее письмо о байке со всем, что нужно для его текста.
@@ -4409,12 +4864,21 @@ pub struct TaleLetterRow {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub dek_en: Option<String>,
     pub dek_ru: Option<String>,
     pub dek_uk: Option<String>,
+    pub dek_es: Option<String>,
+    pub dek_de: Option<String>,
+    pub dek_it: Option<String>,
     pub original_title_en: Option<String>,
     pub original_title_ru: Option<String>,
     pub original_title_uk: Option<String>,
+    pub original_title_es: Option<String>,
+    pub original_title_de: Option<String>,
+    pub original_title_it: Option<String>,
     pub figurine_name: Option<String>,
 }
 
@@ -4475,15 +4939,27 @@ pub struct BattleCard {
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
     pub type_uk: Option<String>,
+    pub type_es: Option<String>,
+    pub type_de: Option<String>,
+    pub type_it: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
     pub effect_uk: Option<String>,
+    pub effect_es: Option<String>,
+    pub effect_de: Option<String>,
+    pub effect_it: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
     pub lore_uk: Option<String>,
+    pub lore_es: Option<String>,
+    pub lore_de: Option<String>,
+    pub lore_it: Option<String>,
     pub cost: i16,
     pub power: i16,
     pub health: i16,
@@ -4550,15 +5026,27 @@ pub struct BattleCardListed {
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
     pub type_uk: Option<String>,
+    pub type_es: Option<String>,
+    pub type_de: Option<String>,
+    pub type_it: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
     pub effect_uk: Option<String>,
+    pub effect_es: Option<String>,
+    pub effect_de: Option<String>,
+    pub effect_it: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
     pub lore_uk: Option<String>,
+    pub lore_es: Option<String>,
+    pub lore_de: Option<String>,
+    pub lore_it: Option<String>,
     pub cost: i16,
     pub power: i16,
     pub health: i16,
@@ -4614,6 +5102,9 @@ pub struct BattleCardListed {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub figurine_name: Option<String>,
+    /// Названия работы на других языках, JSON-текстом из запроса (`{"es": "…"}`).
+    #[sqlx(default)]
+    pub figurine_name_translations: Option<String>,
     pub figurine_slug: Option<String>,
     /// Raw stored path of the work's face image; the service turns it into a URL.
     pub figurine_face_path: Option<String>,
@@ -4621,6 +5112,9 @@ pub struct BattleCardListed {
     pub race_name_en: Option<String>,
     pub race_name_ru: Option<String>,
     pub race_name_uk: Option<String>,
+    pub race_name_es: Option<String>,
+    pub race_name_de: Option<String>,
+    pub race_name_it: Option<String>,
     /// The race's shared icon — already a public URL, joined in from the
     /// dictionary so the shelf never has to fetch the race list just to draw it.
     pub race_icon_url: Option<String>,
@@ -4649,6 +5143,12 @@ pub struct BattleCardDto {
     pub race_name_ru: Option<String>,
     #[serde(default)]
     pub race_name_uk: Option<String>,
+    #[serde(default)]
+    pub race_name_es: Option<String>,
+    #[serde(default)]
+    pub race_name_de: Option<String>,
+    #[serde(default)]
+    pub race_name_it: Option<String>,
     pub race_icon_url: Option<String>,
     pub race_level_frames: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4660,18 +5160,42 @@ pub struct BattleCardDto {
     pub type_ru: Option<String>,
     #[serde(default)]
     pub type_uk: Option<String>,
+    #[serde(default)]
+    pub type_es: Option<String>,
+    #[serde(default)]
+    pub type_de: Option<String>,
+    #[serde(default)]
+    pub type_it: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     #[serde(default)]
     pub title_uk: String,
+    #[serde(default)]
+    pub title_es: String,
+    #[serde(default)]
+    pub title_de: String,
+    #[serde(default)]
+    pub title_it: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
     #[serde(default)]
     pub effect_uk: Option<String>,
+    #[serde(default)]
+    pub effect_es: Option<String>,
+    #[serde(default)]
+    pub effect_de: Option<String>,
+    #[serde(default)]
+    pub effect_it: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
     #[serde(default)]
     pub lore_uk: Option<String>,
+    #[serde(default)]
+    pub lore_es: Option<String>,
+    #[serde(default)]
+    pub lore_de: Option<String>,
+    #[serde(default)]
+    pub lore_it: Option<String>,
     pub cost: i16,
     /// Strength, in the properties band.
     pub power: i16,
@@ -4737,6 +5261,9 @@ pub struct BattleCardDto {
     pub minted: i32,
     pub figurine_id: Option<String>,
     pub figurine_name: Option<String>,
+    /// Название работы на других языках: язык → название. Нет языка — `figurineName`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub figurine_name_translations: std::collections::HashMap<String, String>,
     pub figurine_slug: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -4757,18 +5284,42 @@ pub struct SaveBattleCardRequest {
     pub type_ru: Option<String>,
     #[serde(default)]
     pub type_uk: Option<String>,
+    #[serde(default)]
+    pub type_es: Option<String>,
+    #[serde(default)]
+    pub type_de: Option<String>,
+    #[serde(default)]
+    pub type_it: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     #[serde(default)]
     pub title_uk: String,
+    #[serde(default)]
+    pub title_es: String,
+    #[serde(default)]
+    pub title_de: String,
+    #[serde(default)]
+    pub title_it: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
     #[serde(default)]
     pub effect_uk: Option<String>,
+    #[serde(default)]
+    pub effect_es: Option<String>,
+    #[serde(default)]
+    pub effect_de: Option<String>,
+    #[serde(default)]
+    pub effect_it: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
     #[serde(default)]
     pub lore_uk: Option<String>,
+    #[serde(default)]
+    pub lore_es: Option<String>,
+    #[serde(default)]
+    pub lore_de: Option<String>,
+    #[serde(default)]
+    pub lore_it: Option<String>,
     #[serde(default)]
     pub cost: i16,
     #[serde(default)]
@@ -4839,15 +5390,27 @@ pub struct BattleCardWrite {
     pub type_en: Option<String>,
     pub type_ru: Option<String>,
     pub type_uk: Option<String>,
+    pub type_es: Option<String>,
+    pub type_de: Option<String>,
+    pub type_it: Option<String>,
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub effect_en: Option<String>,
     pub effect_ru: Option<String>,
     pub effect_uk: Option<String>,
+    pub effect_es: Option<String>,
+    pub effect_de: Option<String>,
+    pub effect_it: Option<String>,
     pub lore_en: Option<String>,
     pub lore_ru: Option<String>,
     pub lore_uk: Option<String>,
+    pub lore_es: Option<String>,
+    pub lore_de: Option<String>,
+    pub lore_it: Option<String>,
     pub cost: i16,
     pub power: i16,
     pub health: i16,
@@ -5016,11 +5579,17 @@ pub struct BattleKeyword {
     pub name_en: String,
     pub name_ru: String,
     pub name_uk: String,
+    pub name_es: String,
+    pub name_de: String,
+    pub name_it: String,
     /// The canonical wording, one per game. A card says "Шипы 3"; what Шипы
     /// means is said here, once.
     pub rules_en: Option<String>,
     pub rules_ru: Option<String>,
     pub rules_uk: Option<String>,
+    pub rules_es: Option<String>,
+    pub rules_de: Option<String>,
+    pub rules_it: Option<String>,
     pub icon_url: Option<String>,
     /// Points per unit, from the exchange table. `None` — not priced yet.
     pub point_value: Option<f64>,
@@ -5038,10 +5607,22 @@ pub struct BattleKeywordDto {
     pub name_ru: String,
     #[serde(default)]
     pub name_uk: String,
+    #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
     pub rules_en: Option<String>,
     pub rules_ru: Option<String>,
     #[serde(default)]
     pub rules_uk: Option<String>,
+    #[serde(default)]
+    pub rules_es: Option<String>,
+    #[serde(default)]
+    pub rules_de: Option<String>,
+    #[serde(default)]
+    pub rules_it: Option<String>,
     pub icon_url: Option<String>,
     pub point_value: Option<f64>,
     pub sort_order: Option<i32>,
@@ -5055,10 +5636,22 @@ pub struct SaveBattleKeywordRequest {
     pub name_ru: String,
     #[serde(default)]
     pub name_uk: String,
+    #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
     pub rules_en: Option<String>,
     pub rules_ru: Option<String>,
     #[serde(default)]
     pub rules_uk: Option<String>,
+    #[serde(default)]
+    pub rules_es: Option<String>,
+    #[serde(default)]
+    pub rules_de: Option<String>,
+    #[serde(default)]
+    pub rules_it: Option<String>,
     pub icon_url: Option<String>,
     pub point_value: Option<f64>,
 }
@@ -5123,9 +5716,15 @@ pub struct BattleChallenge {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub note_uk: Option<String>,
+    pub note_es: Option<String>,
+    pub note_de: Option<String>,
+    pub note_it: Option<String>,
     /// JSON, see `ChallengeSetup`.
     pub setup: String,
     pub bot_depth: i16,
@@ -5150,10 +5749,22 @@ pub struct BattleChallengeDto {
     pub title_ru: String,
     #[serde(default)]
     pub title_uk: String,
+    #[serde(default)]
+    pub title_es: String,
+    #[serde(default)]
+    pub title_de: String,
+    #[serde(default)]
+    pub title_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     #[serde(default)]
     pub note_uk: Option<String>,
+    #[serde(default)]
+    pub note_es: Option<String>,
+    #[serde(default)]
+    pub note_de: Option<String>,
+    #[serde(default)]
+    pub note_it: Option<String>,
     pub setup: ChallengeSetup,
     pub bot_depth: i16,
     pub reward_dust: i32,
@@ -5225,10 +5836,22 @@ pub struct SaveBattleChallengeRequest {
     pub title_ru: String,
     #[serde(default)]
     pub title_uk: String,
+    #[serde(default)]
+    pub title_es: String,
+    #[serde(default)]
+    pub title_de: String,
+    #[serde(default)]
+    pub title_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     #[serde(default)]
     pub note_uk: Option<String>,
+    #[serde(default)]
+    pub note_es: Option<String>,
+    #[serde(default)]
+    pub note_de: Option<String>,
+    #[serde(default)]
+    pub note_it: Option<String>,
     pub setup: ChallengeSetup,
     #[serde(default = "one")]
     pub bot_depth: i16,
@@ -5261,7 +5884,13 @@ pub struct BattleChallengeWrite<'a> {
     pub note_en: Option<&'a str>,
     pub note_ru: Option<&'a str>,
     pub title_uk: &'a str,
+    pub title_es: &'a str,
+    pub title_de: &'a str,
+    pub title_it: &'a str,
     pub note_uk: Option<&'a str>,
+    pub note_es: Option<&'a str>,
+    pub note_de: Option<&'a str>,
+    pub note_it: Option<&'a str>,
     pub setup: &'a str,
     pub bot_depth: i16,
     pub reward_dust: i32,
@@ -5318,6 +5947,9 @@ pub struct BattleMatchRow {
     pub challenge_id: Option<Uuid>,
     pub title_ru: Option<String>,
     pub title_uk: Option<String>,
+    pub title_es: Option<String>,
+    pub title_de: Option<String>,
+    pub title_it: Option<String>,
     pub title_en: Option<String>,
     pub outcome: Option<String>,
     pub rounds: Option<i16>,
@@ -5335,6 +5967,9 @@ pub struct BattleMatchRowDto {
     pub challenge_id: Option<String>,
     pub title_ru: Option<String>,
     pub title_uk: Option<String>,
+    pub title_es: Option<String>,
+    pub title_de: Option<String>,
+    pub title_it: Option<String>,
     pub title_en: Option<String>,
     /// `player` — победил гость, `keeper` — дом, `draw` — ничья, пусто — партия
     /// не доиграна.
@@ -5353,6 +5988,9 @@ pub struct BattleChallengeTally {
     pub challenge_id: Option<String>,
     pub title_ru: Option<String>,
     pub title_uk: Option<String>,
+    pub title_es: Option<String>,
+    pub title_de: Option<String>,
+    pub title_it: Option<String>,
     pub title_en: Option<String>,
     pub played: i64,
     pub guest_won: i64,
@@ -5371,6 +6009,9 @@ pub struct BattleCardTally {
     pub slug: String,
     pub title_ru: Option<String>,
     pub title_uk: Option<String>,
+    pub title_es: Option<String>,
+    pub title_de: Option<String>,
+    pub title_it: Option<String>,
     pub title_en: Option<String>,
     /// В скольких доигранных партиях карта была на поле.
     pub played: i64,
@@ -5862,9 +6503,15 @@ pub struct BattleErrand {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub note_uk: Option<String>,
+    pub note_es: Option<String>,
+    pub note_de: Option<String>,
+    pub note_it: Option<String>,
     /// Слово из `battles::ERRAND_RULES`. Неизвестное ничего не платит.
     pub rule: String,
     pub threshold: i32,
@@ -5893,9 +6540,15 @@ pub struct BattleErrandDto {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub note_uk: Option<String>,
+    pub note_es: Option<String>,
+    pub note_de: Option<String>,
+    pub note_it: Option<String>,
     pub rule: String,
     pub threshold: i32,
     pub currency: String,
@@ -5922,9 +6575,15 @@ pub struct AdminBattleErrandDto {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub note_uk: Option<String>,
+    pub note_es: Option<String>,
+    pub note_de: Option<String>,
+    pub note_it: Option<String>,
     pub rule: String,
     pub threshold: i32,
     pub currency: String,
@@ -5954,10 +6613,22 @@ pub struct SaveBattleErrandRequest {
     pub title_ru: String,
     #[serde(default)]
     pub title_uk: String,
+    #[serde(default)]
+    pub title_es: String,
+    #[serde(default)]
+    pub title_de: String,
+    #[serde(default)]
+    pub title_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     #[serde(default)]
     pub note_uk: Option<String>,
+    #[serde(default)]
+    pub note_es: Option<String>,
+    #[serde(default)]
+    pub note_de: Option<String>,
+    #[serde(default)]
+    pub note_it: Option<String>,
     pub rule: String,
     pub threshold: i32,
     pub currency: String,
@@ -6143,9 +6814,15 @@ pub struct BattleRace {
     pub name_en: String,
     pub name_ru: String,
     pub name_uk: String,
+    pub name_es: String,
+    pub name_de: String,
+    pub name_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub note_uk: Option<String>,
+    pub note_es: Option<String>,
+    pub note_de: Option<String>,
+    pub note_it: Option<String>,
     /// Shown in the header band of every card of this race. Already a public
     /// URL — set once here, worn by every card, the same choice already made
     /// for frames.
@@ -6176,9 +6853,15 @@ pub struct BattleRaceListed {
     pub name_en: String,
     pub name_ru: String,
     pub name_uk: String,
+    pub name_es: String,
+    pub name_de: String,
+    pub name_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     pub note_uk: Option<String>,
+    pub note_es: Option<String>,
+    pub note_de: Option<String>,
+    pub note_it: Option<String>,
     pub icon_url: Option<String>,
     pub level_frames: Option<String>,
     pub motion_wear: Option<String>,
@@ -6196,10 +6879,22 @@ pub struct BattleRaceDto {
     pub name_ru: String,
     #[serde(default)]
     pub name_uk: String,
+    #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     #[serde(default)]
     pub note_uk: Option<String>,
+    #[serde(default)]
+    pub note_es: Option<String>,
+    #[serde(default)]
+    pub note_de: Option<String>,
+    #[serde(default)]
+    pub note_it: Option<String>,
     pub icon_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub level_frames: Option<String>,
@@ -6232,10 +6927,22 @@ pub struct SaveBattleRaceRequest {
     pub name_ru: String,
     #[serde(default)]
     pub name_uk: String,
+    #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     #[serde(default)]
     pub note_uk: Option<String>,
+    #[serde(default)]
+    pub note_es: Option<String>,
+    #[serde(default)]
+    pub note_de: Option<String>,
+    #[serde(default)]
+    pub note_it: Option<String>,
     pub icon_url: Option<String>,
     pub level_frames: Option<String>,
     #[serde(default)]
@@ -6436,11 +7143,17 @@ pub struct StudioRaceDto {
     pub name_en: String,
     pub name_ru: String,
     pub name_uk: String,
+    pub name_es: String,
+    pub name_de: String,
+    pub name_it: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_en: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ru: Option<String>,
     pub note_uk: Option<String>,
+    pub note_es: Option<String>,
+    pub note_de: Option<String>,
+    pub note_it: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
     pub status: String,
@@ -6462,11 +7175,17 @@ pub struct StudioRaceQueueDto {
     pub name_en: String,
     pub name_ru: String,
     pub name_uk: String,
+    pub name_es: String,
+    pub name_de: String,
+    pub name_it: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_en: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note_ru: Option<String>,
     pub note_uk: Option<String>,
+    pub note_es: Option<String>,
+    pub note_de: Option<String>,
+    pub note_it: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
     pub author: String,
@@ -6480,10 +7199,22 @@ pub struct SaveStudioRaceRequest {
     pub name_ru: String,
     #[serde(default)]
     pub name_uk: String,
+    #[serde(default)]
+    pub name_es: String,
+    #[serde(default)]
+    pub name_de: String,
+    #[serde(default)]
+    pub name_it: String,
     pub note_en: Option<String>,
     pub note_ru: Option<String>,
     #[serde(default)]
     pub note_uk: Option<String>,
+    #[serde(default)]
+    pub note_es: Option<String>,
+    #[serde(default)]
+    pub note_de: Option<String>,
+    #[serde(default)]
+    pub note_it: Option<String>,
     pub icon_url: Option<String>,
     #[serde(default = "crate::studio::default_lang")]
     pub lang: String,
@@ -6690,6 +7421,9 @@ pub struct CopyListingDto {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
     /// Автограф придумавшего — третье обещанное место подписи: имя рядом с
     /// ценой, в тот самый миг, когда его запоминают.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -6727,6 +7461,13 @@ pub struct AuctionDto {
     pub estate: bool,
     /// Как называется то, что продаётся: имя рамы или имя карты.
     pub name: String,
+    /// Название карты на всех языках (язык → название); у рамы пусто.
+    #[serde(skip)]
+    #[sqlx(default)]
+    pub card_titles_json: Option<String>,
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    #[sqlx(skip)]
+    pub card_titles: std::collections::HashMap<String, String>,
     /// Карта — чтобы показать лот НАСТОЯЩЕЙ картой, а не строкой списка.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub card_id: Option<Uuid>,
@@ -6769,9 +7510,16 @@ pub struct TradeDto {
     pub mine: bool,
     /// Что просят взамен — с той стороны прилавка.
     pub want: String,
+    /// Название карты на всех языках, если просят экземпляр карты (язык →
+    /// название; у рамы пусто — её имя не переводится). `want` остаётся
+    /// прежним, для совместимости.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub want_titles: std::collections::HashMap<String, String>,
     /// Что за это дают, словами: у вещи в мене нет цены, и показать её иначе,
     /// чем перечислив, нельзя.
     pub gives: Vec<String>,
+    /// Названия того же на всех языках, в том же порядке, что `gives`.
+    pub gives_titles: Vec<std::collections::HashMap<String, String>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -6789,6 +7537,9 @@ pub struct MyCopyDto {
     pub title_en: String,
     pub title_ru: String,
     pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
 }
 
 /// Лицензия — право носить раму. Экземпляр с номером: «№7 из 200».
@@ -7202,6 +7953,17 @@ pub struct TaleSceneFrame {
     pub url: String,
     #[serde(default)]
     pub caption: String,
+    /// Подпись на других языках (`captionRu` … `captionIt`); пусто — `caption`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub caption_ru: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub caption_uk: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub caption_es: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub caption_de: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub caption_it: String,
     /// `object-position` кадра; пусто — как у сцены.
     #[serde(default)]
     pub position: String,

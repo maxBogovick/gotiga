@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { fade, fly } from 'svelte/transition';
-  import { t, brandName, type TranslationKey } from '$lib/i18n';
+  import { t, brandName, type TranslationKey, lang, LANG_META } from '$lib/i18n';
   import { SITE_URL } from '$lib/site';
 
   import RakingLight from '$lib/components/RakingLight.svelte';
@@ -106,7 +106,7 @@
   <title>{$t('cellarTitle')} — {$brandName}</title>
   <meta name="description" content={$t('cellarLead')} />
   <meta property="og:site_name" content={$brandName} />
-  <meta property="og:locale" content="en_US" />
+  <meta property="og:locale" content={LANG_META[$lang].og} />
   <meta property="og:type" content="article" />
   <meta property="og:title" content="{$t('cellarTitle')} — {$brandName}" />
   <meta property="og:description" content={$t('cellarLead')} />

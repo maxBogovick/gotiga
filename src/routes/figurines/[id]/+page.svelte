@@ -7,7 +7,8 @@
   import { invalidateAll } from '$app/navigation';
   import FigurineDetailView from '$lib/components/FigurineDetailView.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
-  import { t , brandName } from '$lib/i18n';
+  import { t, brandName, lang, LANG_META } from '$lib/i18n';
+  import { localizeWork, localizeListItem } from '$lib/workText';
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
   import { jsonLdSafe } from '$lib/jsonld';
   import { IMAGE_RIGHTS_PATH } from '$lib/site';
@@ -15,7 +16,10 @@
   import '$lib/styles/figurine-detail.css';
 
   let { data } = $props();
-  let figurine = $derived(data.figurine);
+  // Тексты на языке читателя (`workText`); английский — та же запись.
+  let figurine = $derived(data.figurine ? localizeWork(data.figurine, $lang) : data.figurine);
+  let prevWork = $derived(data.prev ? localizeListItem(data.prev, $lang) : null);
+  let nextWork = $derived(data.next ? localizeListItem(data.next, $lang) : null);
 
   onMount(() => {
     const fid = data.figurine?.id;
@@ -214,7 +218,7 @@
   <!-- Open Graph -->
   <meta property="og:type"        content="article" />
   <meta property="og:site_name"   content={$brandName} />
-  <meta property="og:locale"      content="en_US" />
+  <meta property="og:locale"      content={LANG_META[$lang].og} />
   <meta property="og:title"       content={seoTitle} />
   <meta property="og:description" content={figurine?.shortText ?? figurine?.fullDescription ?? ''} />
   {#if ogImage()}
@@ -277,7 +281,7 @@
   <NotFound backHref="/figurines" backLabel={$t('figurineBackToArchive')} />
 {:else}
   {#key id}
-    <FigurineDetailView {figurine} {id} prev={data.prev ?? null} next={data.next ?? null} gazetteLeaves={data.gazetteLeaves ?? []} />
+    <FigurineDetailView {figurine} {id} prev={prevWork} next={nextWork} gazetteLeaves={data.gazetteLeaves ?? []} />
   {/key}
 {/if}
 

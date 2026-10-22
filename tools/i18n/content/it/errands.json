@@ -1,0 +1,72 @@
+{
+  "kind": "errands",
+  "lang": "it",
+  "source": "migrations 20260907000000, 20260908000000, 20260909000000, 20260911000000, 20261015000000 (WHERE slug = …)",
+  "items": [
+    {
+      "key": "came-by",
+      "title": "Entrare nel gioco",
+      "note": "Per una visita oggi. Se salti un giorno, non perdi niente."
+    },
+    {
+      "key": "look-around",
+      "title": "Guardare le opere",
+      "note": "Apri cinque opere nell’archivio."
+    },
+    {
+      "key": "closer-look",
+      "title": "Segnare un’opera che ti piace",
+      "note": "Metti un cuore a un’opera che ti è piaciuta."
+    },
+    {
+      "key": "read-a-tale",
+      "title": "Leggere un racconto",
+      "note": "Leggi un racconto fino in fondo."
+    },
+    {
+      "key": "leave-impression",
+      "title": "Lasciare un commento su un’opera",
+      "note": "Scrivi cosa pensi di un’opera. Vale quando l’autrice lo approva."
+    },
+    {
+      "key": "first-card",
+      "title": "Prendere la prima carta",
+      "note": "Una carta qualsiasi dallo scaffale."
+    },
+    {
+      "key": "lay-the-table",
+      "title": "Comporre un mazzo",
+      "note": "Sei carte: tre sul campo, tre in mano."
+    },
+    {
+      "key": "finish-a-study",
+      "title": "Finire una battaglia",
+      "note": "Vittoria o sconfitta, l’importante è arrivare alla fine."
+    },
+    {
+      "key": "raise-a-card",
+      "title": "Alzare il livello di una carta",
+      "note": "Il livello non influisce sulla battaglia: indica da quanto tempo hai la carta."
+    },
+    {
+      "key": "three-cards",
+      "title": "Raccogliere tre carte",
+      "note": "Tre tue, non in prestito."
+    },
+    {
+      "key": "an-impression",
+      "title": "Lasciare un commento che piaccia all’autrice",
+      "note": "La ricompensa la dà l’autrice, se lo ritiene giusto."
+    },
+    {
+      "key": "a-showing",
+      "title": "Venire a una visione",
+      "note": "Una visione che si è svolta davvero."
+    },
+    {
+      "key": "a-commission",
+      "title": "Ordinare un’opera",
+      "note": "La ricompensa più rara e la più grande."
+    }
+  ]
+}
