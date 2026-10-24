@@ -40,6 +40,25 @@
 
 <body>
   <div style="display: contents">%sveltekit.body%</div>
+  <!-- Возврат на середину страницы («назад», обновление): шапка из HTML развёрнута, а
+       после гидрации сворачивается, и страница прыгала бы на глазах. Если SvelteKit
+       собирается вернуть прокрутку ниже порога свёртки, шапка сворачивается сразу.
+       Тот же расчёт — в src/lib/restored-scroll.ts; порог — COLLAPSE_AT в SiteHeader. -->
+  <script>
+    (function () {
+      try {
+        var h = document.querySelector('.site-header');
+        if (!h || h.classList.contains('is-leaf')) return;
+        var p = JSON.parse(sessionStorage.getItem('sveltekit:scroll') || '{}')[
+          history.state && history.state['sveltekit:history']
+        ];
+        if (p && p.y > 48) {
+          h.classList.add('is-scrolled');
+          document.documentElement.classList.add('hdr-scrolled');
+        }
+      } catch (e) {}
+    })();
+  </script>
 </body>
 
 </html>

@@ -14,7 +14,8 @@
   // Лист один: сверху отбор печатями (те же, что разделы шапки), ниже работы в
   // арках, небылицы и вестник строками, карты в рамке карты. Под каждой вещью
   // сказано словами, почему она найдена.
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack, type Component } from 'svelte';
+  import { page } from '$app/state';
   import { afterNavigate, goto } from '$app/navigation';
   import { t, lang } from '$lib/i18n';
   import { figurineHref } from '$lib/figurineHref';
@@ -23,10 +24,16 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import { indexIn, loadIndex } from '$lib/site-index';
   import { buildVocabulary, suggest } from '$lib/site-suggest';
+  import {
+    ASK_TOPICS, TOPIC_LABEL, forPage, groupByTopic, inTopic, matchQuestions, pageKeyOf, topicsWithQuestions,
+    type AskTopic,
+  } from '$lib/askQuestions';
   import { interact } from '$lib/analytics';
-  import { navCounts } from '$lib/stores/nav-counts.svelte';
+  import { voiceSupported, startVoice, type Voice } from '$lib/voiceInput';
+  import { readingMinutes, minutesKey } from '$lib/tales';
   import {
     searchSite,
+    rankFound,
     foundTotal,
     markParts,
     shortWorkName,
@@ -38,7 +45,7 @@
   } from '$lib/site-search';
   import SectionIcon, { type SectionIconName } from '$lib/components/SectionIcon.svelte';
   import { WAX_PATH } from '$lib/components/SectionSeal.svelte';
-  import type { BattleCard, FigurineListItem } from '$lib/types/api';
+  import type { AskQuestion, BattleCard, FigurineListItem, SiteHit } from '$lib/types/api';
 
   let { variant = 'field' }: { variant?: 'field' | 'button' } = $props();
 
@@ -54,15 +61,147 @@
   let open = $state(false);
   let scope = $state<SearchScope>('all');
   let active = $state(-1);
-  let meaning = $state<string[] | null>(null);
-  let meaningFor = '';
+  // Порядок от сервера (`/search/site`): все виды вещей одним списком. Пока он не
+  // пришёл, показывается то, что нашлось по словам в самом браузере.
+  let ranked = $state.raw<SiteHit[] | null>(null);
+  let rankedFor = '';
   let root = $state<HTMLElement | null>(null);
   let input = $state<HTMLInputElement | null>(null);
   let panel = $state<HTMLElement | null>(null);
   let trigger = $state<HTMLButtonElement | null>(null);
   let reduceMotion = $state(false);
 
-  let found = $derived<SiteFound | null>(index ? searchSite(index, query, $lang, meaning) : null);
+  // ── Вопросы ─────────────────────────────────────────────────────────────
+  // Код ответов (разбор, каталог, хранилище разговора) нужен только тому, кто
+  // открыл поиск, поэтому грузится при первом открытии, а не на каждой странице.
+  interface AskKit {
+    siteAsk: typeof import('$lib/stores/site-ask.svelte').siteAsk;
+    QUESTION_MAX: number;
+    askShape: typeof import('$lib/site-ask').askShape;
+    hasPageContext: typeof import('$lib/site-ask-page').hasPageContext;
+  }
+  let kit = $state.raw<AskKit | null>(null);
+  let Talk = $state.raw<Component<{ onfollow: () => void; compact?: boolean }> | null>(null);
+  function ensureAsk() {
+    if (kit) return;
+    void Promise.all([
+      import('$lib/stores/site-ask.svelte'),
+      import('$lib/site-ask'),
+      import('$lib/site-ask-page'),
+      import('$lib/components/SiteSearchTalk.svelte'),
+    ]).then(([store, ask, pageCtx, talk]) => {
+      kit = {
+        siteAsk: store.siteAsk,
+        QUESTION_MAX: store.QUESTION_MAX,
+        askShape: ask.askShape,
+        hasPageContext: pageCtx.hasPageContext,
+      };
+      Talk = talk.default;
+    }).catch(() => {});
+  }
+
+  // Список вопросов каталога: тема, страницы и формулировки каждого. Не пришёл —
+  // окно показывает прежние четыре вопроса, а подсказок при печати нет.
+  let askList = $state.raw<AskQuestion[]>([]);
+  $effect(() => {
+    const l = $lang;
+    if (!kit) return;
+    void api.askQuestions(l).then((list) => {
+      if (l === untrack(() => $lang)) askList = list;
+    });
+  });
+
+  /** Слово для поиска, вопрос или команда. До загрузки кода ответов — всегда слово. */
+  let shape = $derived(kit ? kit.askShape(query) : 'search');
+
+  // Ответ «на лету»: пока человек печатает вопрос, сайт показывает ответ над
+  // результатами. Спрашивается он с паузой, одним словом не бывает, а команду
+  // («открой игру») не выполняет, пока не нажат Enter.
+  const LIVE_MS = 450;
+  let liveTimer: ReturnType<typeof setTimeout> | undefined;
+  let liveFor = '';
+  $effect(() => {
+    const q = query.trim();
+    const k = kit;
+    const sh = shape;
+    clearTimeout(liveTimer);
+    if (!k) return;
+    if (open && sh === 'question' && q.length >= 5) {
+      if (q === liveFor) return;
+      liveTimer = setTimeout(() => {
+        liveFor = q;
+        void k.siteAsk.ask(q, 'live');
+      }, LIVE_MS);
+    } else {
+      liveFor = '';
+      untrack(() => k.siteAsk.dropLive());
+    }
+    return () => clearTimeout(liveTimer);
+  });
+
+  /** Отправить вопрос: ответ, уже показанный на лету, становится обычным. */
+  function sendQuestion(text: string, via: 'input' | 'chip' | 'voice') {
+    if (!kit) return;
+    const q = text.trim().slice(0, kit.QUESTION_MAX);
+    if (!q) return;
+    clearTimeout(liveTimer);
+    const live = kit.siteAsk.turns.find((x) => x.live && x.question === q);
+    if (live) kit.siteAsk.commitLive();
+    else void kit.siteAsk.ask(q, via);
+    liveFor = '';
+    query = '';
+    active = -1;
+    input?.focus();
+  }
+
+  // ── Голос ────────────────────────────────────────────────────────────────
+  let canVoice = $state(false);
+  let listening = $state(false);
+  let voiceNote = $state('');
+  let voice: Voice | null = null;
+  let heard = '';
+  let noteTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function note(key: 'askVoiceDenied' | 'askVoiceFailed' | 'askVoiceSilence') {
+    voiceNote = $t(key);
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => (voiceNote = ''), 5000);
+  }
+
+  function toggleVoice() {
+    if (listening) {
+      voice?.stop();
+      return;
+    }
+    voiceNote = '';
+    heard = '';
+    interact('site_ask_voice', 'start');
+    voice = startVoice($lang, {
+      onText: (spoken, final) => {
+        query = spoken;
+        if (final) heard = spoken;
+      },
+      onEnd: () => {
+        listening = false;
+        voice = null;
+        // Фраза дослушана — вопрос уходит сам: ради этого голос и включали.
+        // Остановили вручную раньше — набранное остаётся в поле, его можно поправить.
+        if (heard) {
+          const q = heard;
+          heard = '';
+          sendQuestion(q, 'voice');
+        }
+      },
+      onError: (e) => note(e === 'denied' ? 'askVoiceDenied' : e === 'silence' ? 'askVoiceSilence' : 'askVoiceFailed'),
+    });
+    listening = !!voice;
+    if (listening) query = '';
+  }
+
+  let local = $derived<SiteFound | null>(index ? searchSite(index, query, $lang, null) : null);
+  let found = $derived<SiteFound | null>(
+    index && ranked && rankedFor === query.trim() ? rankFound(index, ranked, local) : local,
+  );
   let asked = $derived(query.trim().length >= 2);
 
   // Подсказки при вводе: хвост слова серым и ряд вариантов под полем.
@@ -80,10 +219,12 @@
     return true;
   }
 
-  // ── Подсказка в пустом поле: пример сменяется раз в три секунды ─────────
+  // ── Подсказка в пустом поле: пример выбирается один раз за заход ────────
+  // Прежде он сменялся каждые 3,2 с без возможности остановить: движение в
+  // постоянно видимой части страницы дольше пяти секунд читателю не отключить
+  // (WCAG 2.2.2). Разнообразие осталось — от захода к заходу, а не на глазах.
   let hints = $derived($t('searchHints').split('|'));
   let hintAt = $state(0);
-  let hintSwap = $state<'' | 'out' | 'in'>('');
 
   // ── Данные ──────────────────────────────────────────────────────────────
   function ensureIndex() {
@@ -93,32 +234,38 @@
       .catch(() => { loadFailed = true; });
   }
 
-  // Смысловой поиск сервера — только работы, с паузой после ввода (он считает
-  // дольше словаря, а ручка ограничена тридцатью запросами в минуту).
-  let meaningTimer: ReturnType<typeof setTimeout> | undefined;
+  // Поиск по всему сайту на сервере — с паузой после ввода: он считает дольше
+  // слов, а ручка ограничена тридцатью запросами в минуту.
+  let rankedTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     const q = query.trim();
-    clearTimeout(meaningTimer);
-    if (q.length < 3) {
-      meaning = null;
-      meaningFor = '';
+    clearTimeout(rankedTimer);
+    if (q.length < 2) {
+      ranked = null;
+      rankedFor = '';
       return;
     }
-    if (q === meaningFor) return;
-    meaningTimer = setTimeout(() => {
-      meaningFor = q;
-      api
-        .semanticSearch(q, 24)
-        .then((hits) => { if (meaningFor === q) meaning = hits.map((h) => h.id); })
-        .catch(() => {});
+    if (q === rankedFor) return;
+    rankedTimer = setTimeout(() => {
+      api.siteSearch(q, 40).then((hits) => {
+        // Пока считалось, запрос мог измениться: чужой порядок не берётся.
+        if (hits && q === query.trim()) {
+          ranked = hits;
+          rankedFor = q;
+        }
+      });
     }, 380);
-    return () => clearTimeout(meaningTimer);
+    return () => clearTimeout(rankedTimer);
   });
 
   // ── Открыть и закрыть ───────────────────────────────────────────────────
   async function openPanel(focus = true) {
     ensureIndex();
-    if (!open) interact('site_search', variant === 'field' ? 'field' : 'button');
+    ensureAsk();
+    if (!open) {
+      interact('site_search', variant === 'field' ? 'field' : 'button');
+      startMode = 'home';
+    }
     open = true;
     active = -1;
     if (focus) {
@@ -129,6 +276,9 @@
 
   function closePanel(refocus = false) {
     if (!open) return;
+    // Закрыли лист, не стерев вопрос: ответ, который был на виду, считается заданным.
+    kit?.siteAsk.commitLive();
+    voice?.stop();
     open = false;
     active = -1;
     if (variant === 'field') input?.blur();
@@ -159,7 +309,8 @@
   type Row =
     | { kind: 'work'; href: string; item: FigurineListItem; why: FoundWhy }
     | { kind: 'tale' | 'leaf'; href: string; item: import('$lib/types/api').GazetteLeaf; why: FoundWhy }
-    | { kind: 'card'; href: string; item: BattleCard; why: FoundWhy };
+    | { kind: 'card'; href: string; item: BattleCard; why: FoundWhy }
+    | { kind: 'ask'; href: string; text: string };
 
   const CAP = { works: 6, tales: 5, gazette: 3, cards: 6 } as const;
   const CAP_ALONE = { works: 24, tales: 12, gazette: 12, cards: 24 } as const;
@@ -177,28 +328,64 @@
   let gazetteShown = $derived(found && shows('gazette') ? found.gazette.slice(0, cap('gazette')) : []);
   let cardsShown = $derived(found && shows('cards') ? found.cards.slice(0, cap('cards')) : []);
 
-  let recent = $derived(
-    index
-      ? [...index.works]
-          .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
-          .slice(0, 4)
-      : [],
+  // Пустое поле: несколько вопросов автору и самая свежая небылица. Входы в
+  // разделы здесь не повторяются: они стоят в шапке над полем.
+  let onPage = $derived(kit ? kit.hasPageContext({ path: page.url.pathname, card: page.url.searchParams.get('card') }) : false);
+  // Что в пустом поле: первым делом вопросы про страницу, на которой человек стоит
+  // (каталог отмечает их сам), затем темы и «все вопросы». Нет вопросов страницы
+  // или список не пришёл — прежние четыре.
+  let startMode = $state<'home' | 'all' | AskTopic>('home');
+  let pageQuestions = $derived.by(() => {
+    const here = pageKeyOf(page.url.pathname);
+    return here ? forPage(askList, here, 3) : [];
+  });
+  let homeQuestions = $derived(
+    pageQuestions.length
+      ? [...(onPage ? [$t('askChipPage')] : []), ...pageQuestions.map((q) => q.question), $t('askChipMatch')].slice(0, 4)
+      : onPage
+        ? [$t('askChipPage'), $t('askChipOrder'), $t('askChipStart'), $t('askChipMatch')]
+        : [$t('askChipOrder'), $t('askChipStart'), $t('askChipPlay'), $t('askChipMatch')],
+  );
+  let startTopics = $derived(topicsWithQuestions(askList));
+  let allGroups = $derived(groupByTopic(askList));
+  let questions = $derived(
+    startMode === 'home'
+      ? homeQuestions
+      : startMode === 'all'
+        ? allGroups.flatMap((g) => g.items.map((q) => q.question))
+        : inTopic(askList, startMode).map((q) => q.question),
+  );
+  // Пока человек печатает, подсказываются вопросы каталога, в которых есть его слова.
+  let matched = $derived(asked && scope === 'all' && kit ? matchQuestions(askList, query, 3) : []);
+
+  function openTopic(mode: 'all' | AskTopic) {
+    interact('site_ask_topic', mode);
+    startMode = mode;
+    active = -1;
+    input?.focus();
+  }
+  let freshTale = $derived(
+    index ? ([...index.tales].sort((a, b) => leafWhen(b).localeCompare(leafWhen(a)))[0] ?? null) : null,
   );
 
   // Плоский список того, что выбирают стрелками, в порядке листа.
   let rows = $derived<Row[]>(
     asked
       ? [
+          ...matched.map((q) => ({ kind: 'ask' as const, href: '', text: q.question })),
           ...worksShown.map((f) => ({ kind: 'work' as const, href: figurineHref(f.item, SRC), item: f.item, why: f.why })),
           ...talesShown.map((f) => ({ kind: 'tale' as const, href: leafHref(f.item, SRC), item: f.item, why: f.why })),
           ...gazetteShown.map((f) => ({ kind: 'leaf' as const, href: leafHref(f.item, SRC), item: f.item, why: f.why })),
           ...cardsShown.map((f) => ({ kind: 'card' as const, href: cardHref(f.item), item: f.item, why: f.why })),
         ]
-      : recent.map((w) => ({ kind: 'work' as const, href: figurineHref(w, SRC), item: w, why: { kind: 'name' } as FoundWhy })),
+      : [
+          ...(kit ? questions.map((text) => ({ kind: 'ask' as const, href: '', text })) : []),
+          ...(freshTale && startMode === 'home' ? [{ kind: 'tale' as const, href: leafHref(freshTale, SRC), item: freshTale, why: { kind: 'name' } as FoundWhy }] : []),
+        ],
   );
 
-  let workBase = $derived(0);
-  let taleBase = $derived(worksShown.length);
+  let workBase = $derived(matched.length);
+  let taleBase = $derived(workBase + worksShown.length);
   let leafBase = $derived(taleBase + talesShown.length);
   let cardBase = $derived(leafBase + gazetteShown.length);
 
@@ -260,13 +447,22 @@
   }
 
   function choose(row: Row) {
+    if (row.kind === 'ask') {
+      interact('site_search_open', 'ask:question');
+      sendQuestion(row.text, 'chip');
+      return;
+    }
     interact('site_search_open', `${row.kind}:${scope}`);
+    // Выбрали вещь из списка: ответ на лету не задавали, он не считается.
+    kit?.siteAsk.dropLive();
     closePanel();
     void goto(row.href);
   }
 
   function onKey(e: KeyboardEvent) {
-    if ((e.key === 'Tab' || e.key === 'ArrowRight') && active < 0 && !e.shiftKey && acceptGhost()) {
+    // Серый хвост принимают → и Tab. Tab занят только пока хвост виден: без
+    // него он уходит из поля, как всегда, и остановка в шапке остаётся одна.
+    if ((e.key === 'ArrowRight' || e.key === 'Tab') && active < 0 && !e.shiftKey && acceptGhost()) {
       e.preventDefault();
       return;
     }
@@ -284,6 +480,9 @@
       if (active >= 0 && rows[active]) {
         e.preventDefault();
         choose(rows[active]);
+      } else if (query.trim() && shape !== 'search') {
+        e.preventDefault();
+        sendQuestion(query, 'input');
       } else if (asked) {
         e.preventDefault();
         closePanel();
@@ -293,6 +492,7 @@
       e.preventDefault();
       e.stopPropagation();
       if (query) query = '';
+      else if (startMode !== 'home') startMode = 'home';
       else closePanel(true);
     }
   }
@@ -304,24 +504,15 @@
 
   onMount(() => {
     reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    canVoice = voiceSupported();
     document.addEventListener('pointerdown', onOutside, { capture: true });
     window.addEventListener(SITE_SEARCH_OPEN, onOpenRequest);
-    let timer: ReturnType<typeof setInterval> | undefined;
-    if (!reduceMotion && variant === 'field') {
-      timer = setInterval(() => {
-        if (open || query || document.hidden) return;
-        hintSwap = 'out';
-        setTimeout(() => {
-          hintAt = (hintAt + 1) % hints.length;
-          hintSwap = 'in';
-          requestAnimationFrame(() => requestAnimationFrame(() => (hintSwap = '')));
-        }, 420);
-      }, 3200);
-    }
+    if (variant === 'field') hintAt = Math.floor(Math.random() * Math.max(1, hints.length));
     return () => {
       document.removeEventListener('pointerdown', onOutside, { capture: true });
       window.removeEventListener(SITE_SEARCH_OPEN, onOpenRequest);
-      clearInterval(timer);
+      voice?.stop();
+      clearTimeout(noteTimer);
     };
   });
 
@@ -335,16 +526,6 @@
   });
 
   let archiveHref = $derived(asked ? `/figurines?q=${encodeURIComponent(query.trim())}` : '/figurines');
-  let scopeLine = $derived(
-    [
-      ['dockWorks', navCounts.total('works')],
-      ['navTales', navCounts.total('tales')],
-      ['navGazette', navCounts.total('gazette')],
-    ]
-      .filter(([, n]) => typeof n === 'number' && n > 0)
-      .map(([k, n]) => `${$t(k as 'dockWorks')} ${n}`)
-      .join(' · '),
-  );
 </script>
 
 {#snippet inputRow(inPanel: boolean)}
@@ -364,7 +545,7 @@
       aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined}
       aria-label={$t('searchLabel')}
       onfocus={() => void openPanel(false)}
-      onpointerenter={ensureIndex}
+      onpointerenter={() => { ensureIndex(); ensureAsk(); }}
       onkeydown={onKey}
       onkeyup={syncCaret}
       onclick={syncCaret}
@@ -376,8 +557,25 @@
     {#if !query}
       <span class="hint" aria-hidden="true">
         <span class="hint-lead">{$t('searchLead')}</span>
-        <span class="hint-word" class:out={hintSwap === 'out'} class:in={hintSwap === 'in'}>{hints[hintAt % hints.length]}</span>
+        <span class="hint-word">{hints[hintAt % hints.length]}</span>
       </span>
+    {/if}
+    {#if canVoice}
+      <button
+        type="button"
+        class="mic"
+        class:on={listening}
+        aria-pressed={listening}
+        aria-label={$t('askVoice')}
+        title={$t('askVoiceTip')}
+        onpointerdown={(e) => e.preventDefault()}
+        onclick={toggleVoice}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="12" rx="3" fill="currentColor" />
+          <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
+      </button>
     {/if}
     {#if query}
       <button type="button" class="clear" aria-label={$t('searchClear')} onpointerdown={(e) => { e.preventDefault(); query = ''; input?.focus(); }}>×</button>
@@ -423,7 +621,6 @@
   {#if variant === 'field'}
     {@render inputRow(false)}
     <span class="ink" aria-hidden="true"></span>
-    {#if scopeLine}<span class="scope-line" aria-hidden="true">{scopeLine}</span>{/if}
   {:else}
     <button
       bind:this={trigger}
@@ -433,7 +630,7 @@
       title={$t('searchLabel')}
       aria-expanded={open}
       onclick={() => (open ? closePanel() : void openPanel())}
-      onpointerenter={ensureIndex}
+      onpointerenter={() => { ensureIndex(); ensureAsk(); }}
     >
       <SectionIcon name="search" variant="line" size={21} />
     </button>
@@ -468,6 +665,11 @@
         </div>
       {/if}
 
+      {#if voiceNote}<p class="voice-note" role="status">{voiceNote}</p>{/if}
+      <!-- Пока человек ищет слово, ответы прошлых вопросов не занимают лист: результаты важнее. -->
+      {#if Talk && !(asked && shape === 'search')}<Talk compact={asked} onfollow={() => closePanel()} />{/if}
+
+      {#if asked}
       <div class="scopes" role="group" aria-label={$t('searchLabel')}>
         {#each SCOPES as s (s.key)}
           {@const n = scopeCount(s.key)}
@@ -489,27 +691,112 @@
           </button>
         {/each}
       </div>
+      {/if}
 
       <div class="body" id={listId} role="listbox" aria-label={$t('searchLabel')}>
+        {#if matched.length}
+          <section class="grp asks">
+            <div class="gh">{$t('searchAsk')}</div>
+            <div class="qs">
+              {#each matched as q, i (q.key)}
+                <button
+                  type="button"
+                  class="qr"
+                  class:act={active === i}
+                  role="option"
+                  id="{listId}-{i}"
+                  aria-selected={active === i}
+                  data-row={i}
+                  onpointerdown={(e) => e.preventDefault()}
+                  onclick={() => choose(rows[i])}
+                  onpointerenter={() => (active = i)}
+                >{@render parts(q.question)}<span class="mk" aria-hidden="true">?</span></button>
+              {/each}
+            </div>
+          </section>
+        {/if}
         {#if !index}
           <p class="wait">{loadFailed ? $t('searchFailed') : $t('searchLooking')}</p>
         {:else if !asked}
-          <div class="start">
+          <div class="start" class:single={startMode !== 'home'}>
+            {#if kit}
             <section>
-              <h4>{$t('searchRecent')}</h4>
-              <div class="arches arches--four">
-                {#each recent as w, i (w.id)}{@render workPlate(w, null, i)}{/each}
-              </div>
-            </section>
-            <section>
-              <h4>{$t('searchExamples')}</h4>
-              <div class="sugg">
-                {#each $t('searchExampleWords').split('|') as word (word)}
-                  <button type="button" onpointerdown={(e) => e.preventDefault()} onclick={() => useExample(word)}>{word}</button>
+              {#if startMode === 'home'}
+                <h4>{$t('searchAsk')}</h4>
+              {:else}
+                <h4 class="back-row">
+                  <button type="button" class="back" onpointerdown={(e) => e.preventDefault()} onclick={() => { startMode = 'home'; active = -1; input?.focus(); }}>← {$t('askBack')}</button>
+                  <span>{startMode === 'all' ? $t('askAll') : $t(TOPIC_LABEL[startMode])}</span>
+                </h4>
+              {/if}
+              {#if startMode === 'all'}
+                {#each allGroups as g (g.topic)}
+                  <h5 class="topic-head">{$t(TOPIC_LABEL[g.topic])}</h5>
+                  <div class="qs">
+                    {#each g.items as q, k (q.key)}
+                      {@const i = g.at + k}
+                      <button
+                        type="button"
+                        class="qr"
+                        class:act={active === i}
+                        role="option"
+                        id="{listId}-{i}"
+                        aria-selected={active === i}
+                        data-row={i}
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => choose(rows[i])}
+                        onpointerenter={() => (active = i)}
+                      >{q.question}<span class="mk" aria-hidden="true">?</span></button>
+                    {/each}
+                  </div>
                 {/each}
-              </div>
+              {:else}
+                <div class="qs">
+                  {#each questions as q, i (q)}
+                    <button
+                      type="button"
+                      class="qr"
+                      class:act={active === i}
+                      role="option"
+                      id="{listId}-{i}"
+                      aria-selected={active === i}
+                      data-row={i}
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={() => choose(rows[i])}
+                      onpointerenter={() => (active = i)}
+                    >{q}<span class="mk" aria-hidden="true">?</span></button>
+                  {/each}
+                </div>
+              {/if}
+              {#if startMode === 'home' && startTopics.length}
+                <div class="topics" role="group" aria-label={$t('askTopics')}>
+                  {#each startTopics as topic (topic)}
+                    <button type="button" onpointerdown={(e) => e.preventDefault()} onclick={() => openTopic(topic)}>{$t(TOPIC_LABEL[topic])}</button>
+                  {/each}
+                  <button type="button" class="all" onpointerdown={(e) => e.preventDefault()} onclick={() => openTopic('all')}>{$t('askAll')}</button>
+                </div>
+              {/if}
             </section>
+            {/if}
+            {#if freshTale && startMode === 'home'}
+              {@const at = kit ? questions.length : 0}
+              {@const copy = leafCopy(freshTale, $lang)}
+              {@const mins = readingMinutes(copy.body)}
+              <section>
+                <h4>{$t('searchFreshTale')}</h4>
+                <div class="rows">
+                  <a href={leafHref(freshTale, SRC)} class="rw" class:act={active === at} role="option" id="{listId}-{at}" aria-selected={active === at} data-row={at} style:--i={at}
+                    onclick={(e) => { e.preventDefault(); choose(rows[at]); }} onpointerenter={() => (active = at)}>
+                    <span class="th">{#if leafCoverUrl(freshTale)}<img src={resolveMediaUrl(leafCoverUrl(freshTale))} alt="" loading="lazy" />{/if}</span>
+                    <span class="tx"><span class="tt">{copy.title}</span>{#if copy.dek}<span class="dk">{copy.dek}</span>{/if}</span>
+                    <span class="meta">{mins ? `${mins} ${$t(minutesKey(mins, $lang))}` : ''}</span>
+                  </a>
+                </div>
+              </section>
+            {/if}
           </div>
+        {:else if found && foundTotal(found) === 0 && matched.length}
+          <!-- Работ и небылиц нет, но подсказан вопрос: «не нашлось» рядом с ним спорило бы с ним. -->
         {:else if found && foundTotal(found) === 0}
           <div class="none">
             <h4>{$t('searchNone')}</h4>
@@ -596,7 +883,7 @@
       </div>
 
       <div class="foot">
-        <a href={archiveHref} onclick={() => closePanel()}>{asked ? $t('searchAllMatches').replace('{q}', query.trim()) : $t('searchWholeArchive')}</a>
+        <a href={archiveHref} onclick={() => { kit?.siteAsk.dropLive(); closePanel(); }}>{asked ? $t('searchAllMatches').replace('{q}', query.trim()) : $t('searchWholeArchive')}</a>
         <span class="keys" aria-hidden="true">
           <span><kbd>↑↓</kbd>{$t('searchKeyPick')}</span>
           <span><kbd>↵</kbd>{$t('searchKeyOpen')}</span>
@@ -739,17 +1026,8 @@
   .hint-word {
     display: inline-block;
     font-style: italic;
-    color: #8f6f52;
-    transition: opacity 0.42s ease, transform 0.42s ease;
-  }
-  .hint-word.out {
-    opacity: 0;
-    transform: translateY(-7px);
-  }
-  .hint-word.in {
-    opacity: 0;
-    transform: translateY(7px);
-    transition: none;
+    /* ink-3 на бумаге 6.2:1; прежние #8f6f52 давали 4.1:1. */
+    color: var(--ss-ink-3);
   }
   .key {
     flex: none;
@@ -786,9 +1064,11 @@
   .ink {
     position: relative;
     display: block;
-    height: 1px;
+    height: 1.5px;
     margin-left: 34px;
-    background: var(--ss-rule);
+    /* Черта под полем — единственная граница поля: прежние #b9a184 давали 2.3:1,
+       и поле читалось подсказкой, а не местом ввода. Теперь 3.5:1. */
+    background: #8f7355;
   }
   .ink::after {
     content: '';
@@ -802,25 +1082,9 @@
   .ss.on .ink::after {
     transform: scaleX(1);
   }
-  .scope-line {
-    display: block;
-    margin: 6px 0 0 34px;
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--ss-ink-3);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    transition: opacity 0.25s ease;
-  }
-  .ss.on .scope-line {
-    opacity: 0;
-  }
-
   /* ── Лупа ── */
   .trigger {
+    position: relative;
     display: grid;
     place-items: center;
     width: 36px;
@@ -832,6 +1096,17 @@
     cursor: pointer;
     --ib: var(--color-canvas-base, #f8f1e7);
     transition: color 0.2s ease, background 0.2s ease;
+  }
+  @media (max-width: 1024px), (pointer: coarse) {
+    .trigger::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 44px;
+      height: 44px;
+      transform: translate(-50%, -50%);
+    }
   }
   .trigger:hover,
   .ss.on .trigger {
@@ -1034,8 +1309,144 @@
     gap: 34px;
     padding: 26px 26px 10px;
   }
+  .start.single {
+    grid-template-columns: 1fr;
+  }
+  .qs {
+    display: flex;
+    flex-direction: column;
+  }
+  .back-row {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  .back {
+    border: 0;
+    background: none;
+    padding: 2px 0;
+    cursor: pointer;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: var(--ss-ember-deep);
+  }
+  .back:hover,
+  .back:focus-visible {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .topic-head {
+    margin: 16px 0 2px;
+    padding-left: 12px;
+    font-family: var(--font-ui, Inter, system-ui, sans-serif);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ss-ink-3);
+  }
+  .topics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 14px;
+    padding: 0 12px;
+  }
+  .topics button {
+    padding: 5px 12px;
+    border: 1px solid var(--ss-line);
+    border-radius: 14px;
+    background: none;
+    cursor: pointer;
+    font-family: var(--font-ui, Inter, system-ui, sans-serif);
+    font-size: 12.5px;
+    color: var(--ss-ink-2);
+    transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  }
+  .topics button:hover,
+  .topics button:focus-visible {
+    color: var(--ss-ember-deep);
+    border-color: var(--ss-ember);
+    background: color-mix(in srgb, var(--ss-ember) 7%, transparent);
+  }
+  .topics button:focus-visible {
+    outline: 2px solid rgba(180, 78, 36, 0.6);
+    outline-offset: 2px;
+  }
+  .topics .all {
+    border-style: dashed;
+  }
+  .asks {
+    padding-bottom: 6px;
+  }
+  .qr {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
+    border: 0;
+    border-left: 2px solid transparent;
+    background: none;
+    cursor: pointer;
+    text-align: left;
+    font-family: var(--font-display, Fraunces, Georgia, serif);
+    font-style: italic;
+    font-size: 17px;
+    color: var(--ss-ink);
+  }
+  .qr .mk {
+    margin-left: auto;
+    font-style: normal;
+    color: var(--ss-ember-deep);
+  }
+  .qr.act,
+  .qr:hover {
+    background: color-mix(in srgb, var(--ss-ember) 7%, transparent);
+    border-left-color: var(--ss-ember);
+  }
+  .qr:focus-visible {
+    outline: 2px solid rgba(180, 78, 36, 0.6);
+    outline-offset: -2px;
+  }
   .none {
     padding: 28px 26px 10px;
+  }
+  .mic {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    background: none;
+    color: var(--ss-ink-3);
+    cursor: pointer;
+    transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  }
+  .mic:hover {
+    color: var(--ss-ember-deep);
+    border-color: var(--ss-line);
+  }
+  .mic.on {
+    color: #fbf7ef;
+    background: var(--ss-ember-deep);
+    animation: listen 1.4s ease-in-out infinite;
+  }
+  @keyframes listen {
+    50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--ss-ember) 25%, transparent); }
+  }
+  .mic:focus-visible {
+    outline: 2px solid rgba(180, 78, 36, 0.6);
+    outline-offset: 2px;
+  }
+  .voice-note {
+    margin: 0;
+    padding: 8px 26px 0;
+    font-size: 12.5px;
+    color: var(--ss-ember-deep);
   }
   .none p {
     margin: 0 0 14px;
@@ -1415,8 +1826,7 @@
       animation: none;
     }
     .loupe,
-    .ink::after,
-    .hint-word {
+    .ink::after {
       transition: none;
     }
   }

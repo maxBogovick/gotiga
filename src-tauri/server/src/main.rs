@@ -104,6 +104,14 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => tracing::warn!("Siege gear pictures were not laid: {e}"),
     }
 
+    // Готовые обложки книг небылиц: встроены в сервер и кладутся на склад при
+    // запуске (`tale_covers.rs`), миграция только ссылается на них.
+    match gotiga_server::tale_covers::lay_cover_art(std::path::Path::new(&config.upload_dir)) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("Laid {n} book covers into the store"),
+        Err(e) => tracing::warn!("Book covers were not laid: {e}"),
+    }
+
     // Background: give an existing main background (uploaded before the resize/
     // WebP pipeline existed) the same treatment a fresh upload gets now. Idempotent
     // and detached — see backfill_background_image's doc comment.
@@ -111,6 +119,19 @@ async fn main() -> anyhow::Result<()> {
         let upload_dir = config.upload_dir.clone();
         tokio::spawn(async move {
             api::backfill_background_image(upload_dir).await;
+        });
+    }
+
+    // Гео-база: выкладка раз в месяц заменяет файл на диске, а сервер читал его
+    // только при запуске. Раз в час сверяем время изменения файла.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                tick.tick().await;
+                svc.reload_geoip();
+            }
         });
     }
 
@@ -218,6 +239,32 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background: каталог ответов «Спросить сайт» строится при первом вопросе
+    // (вектор каждой формулировки), а это секунды работы модели. Строим сразу
+    // после запуска, чтобы первый посетитель их не ждал.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            match svc.warm_ask_index().await {
+                Ok(n) => tracing::info!("Ask the site: {n} answers indexed"),
+                Err(e) => tracing::warn!("Ask the site: the catalog was not indexed at start: {e}"),
+            }
+        });
+    }
+
+    // Background: поиск по всему сайту держит небылицы, листы вестника и карты
+    // вместе с векторами (`site_search`). Строим при запуске: первый поиск иначе
+    // ждал бы модель. Дальше индекс пересобирается сам раз в несколько минут.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            match svc.warm_site_index().await {
+                Ok(n) => tracing::info!("Site search: {n} tales, leaves and cards indexed"),
+                Err(e) => tracing::warn!("Site search: the index was not built at start: {e}"),
+            }
+        });
+    }
+
     // Background: объявления в Telegram-канале. Тик — пять минут: вместе с
     // выдержкой в десять минут работа выходит в канал через десять–пятнадцать
     // минут после того, как появилась на сайте. Первый тик — через минуту
@@ -233,6 +280,11 @@ async fn main() -> anyhow::Result<()> {
                     Ok(n) if n > 0 => tracing::info!("Telegram channel: {n} posts out"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Telegram channel round failed: {e}"),
+                }
+                // Новый релиз в файле заметок — черновик поста в админке. После
+                // объявлений: журнал уже заметил то, что вышло к выкладке.
+                if let Err(e) = svc.prepare_release_draft().await {
+                    tracing::warn!("Release draft round failed: {e}");
                 }
             }
         });

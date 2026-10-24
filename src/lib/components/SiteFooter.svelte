@@ -24,6 +24,9 @@
     { href: '/impressions', label: $t('navImpressions') },
     { href: '/upcoming', label: $t('navUpcoming') },
     { href: '/battles', label: $t('navBattles') },
+    // Брони были в шапке (кнопка появлялась у того, у кого они есть); оттуда
+    // убрана, а страница осталась, и это её адрес.
+    { href: '/bookings', label: $t('bookingsHeaderTitle') },
   ]);
 
   let year = $derived(new Date().getFullYear());

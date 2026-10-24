@@ -457,6 +457,25 @@ pub struct SemanticHit {
     pub score: f32,
 }
 
+/// Что нашёл поиск по всему сайту (`GET /search/site`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SiteKind {
+    Work,
+    Tale,
+    Leaf,
+    Card,
+}
+
+/// Одна найденная вещь: её номер, вид и оценка (чем больше, тем ближе).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteHit {
+    pub id: String,
+    pub kind: SiteKind,
+    pub score: f32,
+}
+
 /// Помощник админки (`GET /admin/readiness`): что у работ и байек не доделано.
 /// В списках только то, у чего есть пропуски.
 #[derive(Debug, Clone, Serialize)]
@@ -3997,6 +4016,67 @@ pub struct HeaderPortraitShown {
     pub edge: HeaderPortraitEdge,
 }
 
+/// Разделы меню, у которых может быть своя картинка на печати.
+pub const NAV_SEAL_SECTIONS: [&str; 5] = ["works", "gazette", "tales", "game", "studio"];
+
+/// Одна картинка печати: основная (для двойной и тройной плотности) и малая
+/// (для обычного экрана), обе уже уменьшены сервером.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NavSealImage {
+    pub id: String,
+    /// `/static/seals/…` — крупная копия.
+    pub url: String,
+    /// `/static/seals/…` — малая копия, вдвое уже.
+    pub url_small: String,
+    pub width: u32,
+    pub height: u32,
+    pub width_small: u32,
+}
+
+/// Картинки одного раздела меню. Одна — стоит всегда; несколько — сменяются
+/// каждые `interval_sec` секунд.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NavSealSection {
+    #[serde(default)]
+    pub images: Vec<NavSealImage>,
+    /// Через сколько секунд сменяется картинка.
+    #[serde(default = "nav_seal_default_interval")]
+    pub interval_sec: u32,
+    /// `circle` — фото обрезано кругом на бумажной печати, `free` — картинка с
+    /// прозрачным фоном без круга, `rect` — прямоугольник по первой картинке.
+    #[serde(default = "nav_seal_default_shape")]
+    pub shape: String,
+}
+
+fn nav_seal_default_interval() -> u32 {
+    20
+}
+
+fn nav_seal_default_shape() -> String {
+    "free".into()
+}
+
+impl Default for NavSealSection {
+    fn default() -> Self {
+        Self {
+            images: Vec::new(),
+            interval_sec: nav_seal_default_interval(),
+            shape: nav_seal_default_shape(),
+        }
+    }
+}
+
+/// Картинки на печатях меню по разделам. Раздел без картинок показывает то, что
+/// сайт рисует сам.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NavSeals {
+    #[serde(default)]
+    pub sections: std::collections::BTreeMap<String, NavSealSection>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReelThemePreset {
@@ -4131,6 +4211,8 @@ pub struct GazetteLeafListed {
     pub figurine_status: Option<String>,
     pub watch_count: i64,
     pub shelf_order: Option<i32>,
+    pub book_cover: Option<String>,
+    pub book_cover_text: Option<sqlx::types::Json<BookCoverText>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4194,6 +4276,13 @@ pub struct GazetteLeafDto {
     /// Place on the shelf of tall tales. Absent for every other kind of leaf.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shelf_order: Option<i32>,
+    /// Готовая обложка книги, загруженная на столе рассказов. Нет — на полке
+    /// обложка собирается из фото работы.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub book_cover: Option<String>,
+    /// Надписи на загруженной обложке: название и имя автора.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub book_cover_text: Option<BookCoverText>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4299,11 +4388,53 @@ pub struct SectionCount {
 }
 
 /// Числа для шапки: работы, листы вестника (без небылиц) и небылицы.
+/// `etudes` — сколько этюдов на людях (число у пункта «Игра»); «нового» для
+/// него нет, поэтому это одно число, а не `SectionCount`.
 #[derive(Debug, Serialize)]
 pub struct SectionCounts {
     pub works: SectionCount,
     pub gazette: SectionCount,
     pub tales: SectionCount,
+    pub etudes: i64,
+    /// Фото случайной работы для печати «Все работы». Нет работы с фото — поля нет.
+    #[serde(rename = "sealWork", skip_serializing_if = "Option::is_none")]
+    pub seal_work: Option<NavSealWork>,
+    /// Последняя вышедшая небылица для печати «Небылицы». Нет — поля нет.
+    #[serde(rename = "sealTale", skip_serializing_if = "Option::is_none")]
+    pub seal_tale: Option<NavSealTale>,
+}
+
+/// Картинка для печати «Все работы»: тот же адрес, что у `faceImageUrl` в списке работ.
+#[derive(Debug, Serialize)]
+pub struct NavSealWork {
+    pub src: String,
+}
+
+/// Только то, что нужно печати «Небылицы»: названия, фото и готовая обложка.
+/// Тела и остальные поля листа не нужны, поэтому в ответ не попадают.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct NavSealTale {
+    pub id: Uuid,
+    pub title_en: String,
+    pub title_ru: String,
+    pub title_uk: String,
+    pub title_es: String,
+    pub title_de: String,
+    pub title_it: String,
+    pub image_url: Option<String>,
+    pub image_urls: Vec<String>,
+    pub book_cover: Option<String>,
+}
+
+/// Какой язык предложить посетителю по его стране. `country` — код страны по
+/// адресу запроса, `suggest` — язык сайта для неё; пусто там, где лучшей
+/// догадки, чем язык по умолчанию, нет (английская страна, язык без перевода,
+/// адрес без места, база не загружена).
+#[derive(Debug, Serialize)]
+pub struct SiteLocale {
+    pub country: Option<String>,
+    pub suggest: Option<&'static str>,
 }
 
 /// Метки «когда посетитель в последний раз смотрел эту полку». Пусто — меток
@@ -4801,6 +4932,133 @@ pub struct CloseTalePollRequest {
 }
 
 /// Какую байку продолжает эта. `None` — никакую.
+/// Одна надпись на обложке: название или имя автора. Места и величины — в
+/// долях обложки, а не в пикселях: обложка бывает и в 64 px на печати, и в
+/// 460 px на развороте.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookCoverLabel {
+    /// Печатается ли надпись.
+    #[serde(default)]
+    pub shown: bool,
+    /// Свой текст. Пусто — название небылицы на языке читателя, у автора —
+    /// имя из листа.
+    #[serde(default)]
+    pub text: String,
+    /// Середина надписи, % ширины и высоты обложки.
+    #[serde(default = "label_half")]
+    pub x: f32,
+    #[serde(default = "label_half")]
+    pub y: f32,
+    /// Ширина надписи, % ширины обложки.
+    #[serde(default = "label_wide")]
+    pub width: f32,
+    /// Начертание, id из `SITE_FONTS`; пусто — шрифт обложки.
+    #[serde(default)]
+    pub font: String,
+    /// Кегль, % ширины обложки.
+    #[serde(default = "label_size")]
+    pub size: f32,
+    /// Толщина, 100…900 с шагом 100.
+    #[serde(default = "label_weight")]
+    pub weight: u16,
+    /// Высота строки, множитель кегля.
+    #[serde(default = "label_leading")]
+    pub line_height: f32,
+    /// Расстояние между буквами, в em.
+    #[serde(default)]
+    pub spacing: f32,
+    #[serde(default)]
+    pub italic: bool,
+    /// Тёмная тень под буквами, 0…1: без таблички она держит текст на картинке.
+    #[serde(default)]
+    pub shadow: f32,
+    /// `left`, `center` или `right`.
+    #[serde(default = "label_align")]
+    pub align: String,
+    /// Чернила, `#rrggbb`.
+    #[serde(default = "label_ink")]
+    pub color: String,
+    #[serde(default)]
+    pub plate: BookCoverPlate,
+}
+
+/// Матовая полупрозрачная табличка под надписью.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookCoverPlate {
+    #[serde(default = "plate_on")]
+    pub on: bool,
+    /// Цвет таблички, `#rrggbb`.
+    #[serde(default = "plate_color")]
+    pub color: String,
+    /// Непрозрачность, 0…1.
+    #[serde(default = "plate_opacity")]
+    pub opacity: f32,
+    /// Размытие обложки под табличкой, % ширины обложки.
+    #[serde(default = "plate_blur")]
+    pub blur: f32,
+    /// Скругление углов, % ширины обложки.
+    #[serde(default = "plate_radius")]
+    pub radius: f32,
+    /// Поле между текстом и краем таблички, % ширины обложки.
+    #[serde(default = "plate_pad")]
+    pub pad: f32,
+}
+
+impl Default for BookCoverPlate {
+    fn default() -> Self {
+        Self {
+            on: plate_on(),
+            color: plate_color(),
+            opacity: plate_opacity(),
+            blur: plate_blur(),
+            radius: plate_radius(),
+            pad: plate_pad(),
+        }
+    }
+}
+
+fn label_half() -> f32 { 50.0 }
+fn label_wide() -> f32 { 70.0 }
+fn label_size() -> f32 { 8.0 }
+fn label_weight() -> u16 { 500 }
+fn label_leading() -> f32 { 1.1 }
+fn label_align() -> String { "center".into() }
+fn label_ink() -> String { "#2a1d14".into() }
+fn plate_on() -> bool { true }
+fn plate_color() -> String { "#f3ead9".into() }
+fn plate_opacity() -> f32 { 0.55 }
+fn plate_blur() -> f32 { 1.5 }
+fn plate_radius() -> f32 { 1.5 }
+fn plate_pad() -> f32 { 3.0 }
+
+/// Надписи обложки. Каждая необязательна: нет записи — надписи нет.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookCoverText {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<BookCoverLabel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<BookCoverLabel>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTaleBookCoverTextRequest {
+    /// `null` снимает все надписи.
+    #[serde(default)]
+    pub text: Option<BookCoverText>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTaleBookCoverRequest {
+    /// Путь `/static/…` или https; пусто или `null` снимает обложку.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetTaleSequelRequest {
@@ -8002,4 +8260,160 @@ pub struct TaleScene {
 
 fn tale_scene_enabled() -> bool {
     true
+}
+
+// ============================================================
+// ПОСТ О РЕЛИЗЕ
+// ============================================================
+
+/// Черновик или вышедший пост о релизе. `notes` — JSON пунктов по языкам.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ReleasePostRow {
+    pub id: String,
+    pub created_at: DateTime<Utc>,
+    pub since: Option<DateTime<Utc>>,
+    pub notes: String,
+    pub status: String,
+}
+
+/// Что ушло в канал одного языка.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ReleaseSendRow {
+    pub lang: String,
+    pub caption: String,
+    pub posted_at: Option<DateTime<Utc>>,
+    pub attempts: i32,
+    pub last_error: Option<String>,
+}
+
+/// Один канал в черновике: что в него уйдёт и чем кончилась отправка.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminReleaseChannel {
+    pub lang: String,
+    /// Текст поста для этого канала; `None` — писать нечего.
+    pub caption: Option<String>,
+    /// Язык, на котором написаны пункты, если не язык канала.
+    pub written_in: Option<String>,
+    /// Раздел, куда ведёт кнопка.
+    pub link: String,
+    pub posted_at: Option<String>,
+    pub attempts: i32,
+    pub last_error: Option<String>,
+}
+
+/// Черновик релиза для вкладки «Канал».
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminRelease {
+    pub id: String,
+    pub created_at: String,
+    pub since: Option<String>,
+    /// `draft`, `sent` или `dismissed`.
+    pub status: String,
+    pub notes: crate::channel::Notes,
+    pub channels: Vec<AdminReleaseChannel>,
+    /// Сколько нового вышло на сайте с прошлого релиза (во всех списках).
+    pub news_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveReleaseNotes {
+    pub notes: crate::channel::Notes,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendRelease {
+    /// Какие каналы отправить; пусто — все, куда ещё не ушло.
+    #[serde(default)]
+    pub langs: Vec<String>,
+}
+
+/// Канал одного языка во вкладке «Канал».
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminChannelInfo {
+    pub lang: String,
+    /// `@имя` или номер канала, как он записан в окружении.
+    pub chat: String,
+    /// Сколько вещей ждёт выхода.
+    pub waiting: i64,
+    /// Сколько оставлено после исчерпанных попыток (причина — в журнале).
+    pub failed: i64,
+}
+
+/// Всё, что показывает вкладка «Канал».
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminChannelOverview {
+    /// Есть ли бот уведомлений: без него ничего не отправится.
+    pub bot_ready: bool,
+    /// Стенд на своей машине: пост печатается в журнал, а не уходит.
+    pub local: bool,
+    pub channels: Vec<AdminChannelInfo>,
+    pub release: Option<AdminRelease>,
+}
+
+/// Просьба выпустить вещь в каналы ещё раз.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChannelRepostRequest {
+    /// `work`, `leaf` (байка или лист вестника), `card`, `etude`.
+    pub kind: String,
+    pub id: Uuid,
+}
+
+/// Что вышло в одном канале: `sent`, `failed`, `local` (стенд на своей
+/// машине, пост напечатан в журнал) или `not_on_display` (вещи сейчас нет на
+/// сайте, и канал её не показывает).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelRepostOutcome {
+    pub lang: String,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelRepostResult {
+    pub local: bool,
+    pub results: Vec<ChannelRepostOutcome>,
+}
+
+#[cfg(test)]
+mod section_counts_tests {
+    use super::*;
+
+    /// Клиент читает `sealWork` и `sealTale`; внешняя структура не `camelCase`, и без
+    /// явных имён поля уходили как `seal_work` и `seal_tale`, то есть картинки печатей
+    /// не доходили до страницы.
+    #[test]
+    fn seal_fields_keep_the_names_the_page_reads() {
+        let count = || SectionCount { total: 1, fresh: 0, latest: None };
+        let counts = SectionCounts {
+            works: count(),
+            gazette: count(),
+            tales: count(),
+            etudes: 0,
+            seal_work: Some(NavSealWork { src: "/static/a.jpg".into() }),
+            seal_tale: Some(NavSealTale {
+                id: Uuid::nil(),
+                title_en: "T".into(),
+                title_ru: "Т".into(),
+                title_uk: String::new(),
+                title_es: String::new(),
+                title_de: String::new(),
+                title_it: String::new(),
+                image_url: None,
+                image_urls: vec![],
+                book_cover: None,
+            }),
+        };
+        let json = serde_json::to_value(&counts).unwrap();
+        assert_eq!(json["sealWork"]["src"], "/static/a.jpg");
+        assert_eq!(json["sealTale"]["titleEn"], "T");
+        assert!(json.get("seal_work").is_none() && json.get("seal_tale").is_none());
+    }
 }

@@ -16,8 +16,11 @@ use tokio::sync::Mutex;
 use base64::Engine as _;
 use uuid::Uuid;
 
+mod ask;
+mod site_search;
 mod insights;
 mod oauth_login;
+mod release;
 mod readiness;
 pub use insights::{BattleReport, BehaviourReport, HealthReport, PipelineHealth};
 
@@ -52,6 +55,27 @@ pub struct AppService {
     /// Протокол входа через Google и Apple (`crate::oauth`). Ключи провайдеров
     /// кэшируются внутри, поэтому он один на сервис, а не строится на запрос.
     oauth: crate::oauth::Oauth,
+    /// Каталог ответов «Спросить сайт» вместе с векторами формулировок. Собирается
+    /// при первом вопросе и сбрасывается правкой каталога в админке.
+    ask_index: Arc<tokio::sync::RwLock<Option<Arc<ask::AskIndex>>>>,
+    /// Небылицы, листы вестника и карты вместе с их векторами для общего поиска
+    /// (`site_search`). Живёт `INDEX_TTL` и пересобирается сам.
+    site_index: Arc<tokio::sync::RwLock<Option<Arc<site_search::SiteIndex>>>>,
+    /// То, что в картинках печатей шапки одно на всех и меняется редко: последняя
+    /// небылица и признак «автор загрузил свои картинки для печати „Все работы“».
+    /// `GET /site/counts` вызывает каждая загрузка каждой страницы, и три лишних
+    /// запроса к базе на каждый вызов не нужны; минута устаревания не видна.
+    nav_seal_cache: Arc<Mutex<Option<(Instant, NavSealShared)>>>,
+}
+
+/// Минута: столько ответ с картинками печатей может отставать от правки в админке.
+const NAV_SEAL_TTL: Duration = Duration::from_secs(60);
+
+#[derive(Clone)]
+struct NavSealShared {
+    tale: Option<crate::models::NavSealTale>,
+    /// У печати «Все работы» есть картинки автора: фото случайной работы не нужно.
+    own_works_art: bool,
 }
 
 /// Widest rate-limit window in use anywhere (the daily upload cap); the GC keeps
@@ -118,6 +142,9 @@ impl AppService {
             search_cache: Arc::new(Mutex::new(HashMap::new())),
             http_client,
             oauth,
+            ask_index: Arc::new(tokio::sync::RwLock::new(None)),
+            site_index: Arc::new(tokio::sync::RwLock::new(None)),
+            nav_seal_cache: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -4611,9 +4638,12 @@ struct ChannelPost {
     url: String,
     image: Option<String>,
     button: &'static str,
-    /// Род вещи словами («Новая байка») и метка для поиска по каналу («байка»).
-    label: &'static str,
+    /// Род вещи словами («Новая байка») и, если часть текста не на языке
+    /// канала, пометка об этом; метка для поиска по каналу («байка»).
+    label: String,
     tag: &'static str,
+    /// В какой список поста о релизе вещь попадёт.
+    group: crate::channel::Group,
 }
 
 /// Знаки слова для сверки: без 0/O, 1/I/L и прочих пар, которые глаз путает.
@@ -5388,64 +5418,108 @@ impl AppService {
     }
 
     // ============================================================
-    // TELEGRAM-КАНАЛ
+    // TELEGRAM-КАНАЛЫ
     // ============================================================
 
-    /// Объявить в канале то, что появилось на сайте. Зовётся фоном раз в
-    /// несколько минут; возвращает число вышедших постов.
+    /// Заведённые каналы: английский и остальные языки.
+    fn channels(&self) -> Vec<(crate::lang::Lang, String)> {
+        self.config.channels()
+    }
+
+    /// Ключ настройки «когда канал подключили» для канала этого языка.
+    /// Английский — прежний ключ: канал был один, и его записи не переезжают.
+    fn channel_key(base: &str, lang: crate::lang::Lang) -> String {
+        if lang == crate::lang::Lang::En {
+            base.to_string()
+        } else {
+            format!("{base}_{}", lang.code())
+        }
+    }
+
+    /// Объявить в каналах то, что появилось на сайте. Зовётся фоном раз в
+    /// несколько минут; возвращает число вышедших постов (по всем каналам).
     ///
     /// Событий «опубликовано» здесь не ловят вовсе: запланированный лист
     /// выходит сам, когда наступило его время, а работа — когда с неё сняли
     /// «в работе» или истёк первый взгляд. Поэтому канал сверяет то, что на
     /// людях **сейчас**, с журналом `telegram_channel_posts` — и это
     /// единственный способ не пропустить ни один из путей на сайт.
+    ///
+    /// У каждого языка свой канал и своя строка журнала: немецкий канал,
+    /// подключённый позже английского, не получает архив и не мешает ему.
     pub async fn announce_to_channel(&self) -> Result<usize> {
-        let Some((bot, chat)) = self.channel_bot() else {
-            return Ok(0); // канала нет — объявлять некуда
+        let channels = self.channels();
+        let Some(bot) = self.channel_bot() else {
+            return Ok(0); // бота нет — объявлять некому
         };
-        let posts = self.channel_on_display().await?;
+        if channels.is_empty() {
+            return Ok(0); // каналов нет — объявлять некуда
+        }
+        let langs: Vec<crate::lang::Lang> = channels.iter().map(|(l, _)| *l).collect();
+        let mut all = self.channel_on_display(&langs).await?;
+        let mut sent = 0;
+        for (lang, chat) in channels {
+            let posts = all.remove(&lang).unwrap_or_default();
+            sent += self.announce_in(&bot, lang, &chat, &posts).await?;
+        }
+        Ok(sent)
+    }
+
+    /// Один канал: подключение, выдержка, очередь.
+    async fn announce_in(
+        &self,
+        bot: &crate::telegram::Bot,
+        lang: crate::lang::Lang,
+        chat: &str,
+        posts: &HashMap<(String, Uuid), ChannelPost>,
+    ) -> Result<usize> {
+        let code = lang.code();
         let ids = |kind: &str| -> Vec<Uuid> {
             posts.keys().filter(|(k, _)| k == kind).map(|(_, id)| *id).collect()
         };
+        let since_key = Self::channel_key(CHANNEL_SINCE_KEY, lang);
+        let play_key = Self::channel_key(CHANNEL_PLAY_SINCE_KEY, lang);
 
         // Первый тик после подключения канала: всё, что уже стоит на сайте,
         // отмечается как пропущенное. Иначе канал начался бы с архива целиком.
-        if self.repo.get_setting(CHANNEL_SINCE_KEY).await?.is_none() {
-            let works = self.repo.channel_note_seen("work", &ids("work"), true).await?;
-            let leaves = self.repo.channel_note_seen("leaf", &ids("leaf"), true).await?;
-            self.repo
-                .upsert_setting(CHANNEL_SINCE_KEY, &Utc::now().to_rfc3339())
-                .await?;
+        if self.repo.get_setting(&since_key).await?.is_none() {
+            let works = self.repo.channel_note_seen(code, "work", &ids("work"), true).await?;
+            let leaves = self.repo.channel_note_seen(code, "leaf", &ids("leaf"), true).await?;
+            // Игра подключается вместе с остальным: ключ игры нужен только
+            // каналу, который был до неё.
+            let cards = self.repo.channel_note_seen(code, "card", &ids("card"), true).await?;
+            let etudes = self.repo.channel_note_seen(code, "etude", &ids("etude"), true).await?;
+            self.repo.upsert_setting(&since_key, &Utc::now().to_rfc3339()).await?;
+            self.repo.upsert_setting(&play_key, &Utc::now().to_rfc3339()).await?;
             tracing::info!(
-                "Telegram channel {chat} connected: {works} works and {leaves} leaves already on \
-                 the site are left unannounced; everything that appears from now on goes out"
+                "Telegram channel {chat} ({code}) connected: {works} works, {leaves} leaves, \
+                 {cards} cards and {etudes} etudes already on the site are left unannounced; \
+                 everything that appears from now on goes out"
             );
             return Ok(0);
         }
 
         // Игра пришла в канал позже работ и листов: всё, что уже стоит на полке
         // и на карте этюдов к первому проходу, отмечается пропущенным.
-        if self.repo.get_setting(CHANNEL_PLAY_SINCE_KEY).await?.is_none() {
-            let cards = self.repo.channel_note_seen("card", &ids("card"), true).await?;
-            let etudes = self.repo.channel_note_seen("etude", &ids("etude"), true).await?;
-            self.repo
-                .upsert_setting(CHANNEL_PLAY_SINCE_KEY, &Utc::now().to_rfc3339())
-                .await?;
+        if self.repo.get_setting(&play_key).await?.is_none() {
+            let cards = self.repo.channel_note_seen(code, "card", &ids("card"), true).await?;
+            let etudes = self.repo.channel_note_seen(code, "etude", &ids("etude"), true).await?;
+            self.repo.upsert_setting(&play_key, &Utc::now().to_rfc3339()).await?;
             tracing::info!(
-                "Telegram channel {chat}: {cards} cards and {etudes} etudes already on the site \
-                 are left unannounced; new ones go out from now on"
+                "Telegram channel {chat} ({code}): {cards} cards and {etudes} etudes already on \
+                 the site are left unannounced; new ones go out from now on"
             );
         }
 
         for kind in ["work", "leaf", "card", "etude"] {
-            self.repo.channel_note_seen(kind, &ids(kind), false).await?;
+            self.repo.channel_note_seen(code, kind, &ids(kind), false).await?;
         }
 
         // Ждущее, но снова снятое с сайта, не выходит и не занимает очередь:
         // вернут на сайт — выйдет тогда.
         let due = self
             .repo
-            .channel_due(CHANNEL_GRACE_SECS, CHANNEL_MAX_ATTEMPTS, 200)
+            .channel_due(code, CHANNEL_GRACE_SECS, CHANNEL_MAX_ATTEMPTS, 200)
             .await?;
         let mut sent = 0;
         for (kind, id) in due {
@@ -5456,7 +5530,7 @@ impl AppService {
                 continue;
             };
             let caption = crate::telegram::announcement_caption(
-                post.label,
+                &post.label,
                 post.tag,
                 &post.title,
                 post.lead.as_deref(),
@@ -5467,57 +5541,141 @@ impl AppService {
             // что у письма (`say_or_send`): вместо действия — строка в журнале.
             if self.config.public_url_is_local() {
                 tracing::info!(
-                    "Telegram channel (local, not sent): {} → {}\n{caption}",
+                    "Telegram channel {code} (local, not sent): {} → {}\n{caption}",
                     post.url,
                     post.image.as_deref().unwrap_or("no photo")
                 );
-                self.repo.channel_mark_posted(&kind, id, None).await?;
+                self.repo.channel_mark_posted(code, &kind, id, None).await?;
                 sent += 1;
                 continue;
             }
 
-            // Фотографию Telegram забирает по адресу сам и не всякую берёт
-            // (формат, размер). Не взял — выходит текст со ссылкой: пост без
-            // фотографии лучше, чем никакого.
-            let photo = match post.image.as_deref() {
-                Some(img) => bot.post_photo(&chat, img, &caption, post.button, &post.url).await,
-                None => Err("no photo".to_string()),
-            };
-            let result = match photo {
-                Ok(message_id) => Ok(message_id),
-                Err(photo_why) => bot
-                    .post_text(&chat, &caption, post.button, &post.url)
-                    .await
-                    .map_err(|text_why| format!("photo: {photo_why}; text: {text_why}")),
-            };
-            match result {
+            match Self::send_channel_post(bot, chat, post, &caption).await {
                 Ok(message_id) => {
-                    self.repo.channel_mark_posted(&kind, id, Some(message_id)).await?;
-                    self.note_on_chart(&format!("Channel post: {}", post.title)).await;
+                    self.repo.channel_mark_posted(code, &kind, id, Some(message_id)).await?;
+                    self.note_on_chart(&format!("Channel post ({code}): {}", post.title)).await;
                     sent += 1;
                 }
                 Err(why) => {
-                    tracing::warn!("Telegram channel post for {kind} {id} failed: {why}");
-                    self.repo.channel_mark_failed(&kind, id, &why).await?;
+                    tracing::warn!("Telegram channel {code} post for {kind} {id} failed: {why}");
+                    self.repo.channel_mark_failed(code, &kind, id, &why).await?;
                 }
             }
         }
         Ok(sent)
     }
 
-    fn channel_bot(&self) -> Option<(crate::telegram::Bot, String)> {
-        let token = self.config.telegram_bot_token.clone().filter(|t| !t.trim().is_empty())?;
-        let chat = self.config.telegram_channel_id.clone()?;
-        Some((crate::telegram::Bot::new(token, self.http_client.clone()), chat))
+    /// Отправить готовый пост в канал. Фотографию Telegram забирает по адресу
+    /// сам и не всякую берёт (формат, размер). Не взял — выходит текст со
+    /// ссылкой: пост без фотографии лучше, чем никакого.
+    async fn send_channel_post(
+        bot: &crate::telegram::Bot,
+        chat: &str,
+        post: &ChannelPost,
+        caption: &str,
+    ) -> std::result::Result<i64, String> {
+        let photo = match post.image.as_deref() {
+            Some(img) => bot.post_photo(chat, img, caption, post.button, &post.url).await,
+            None => Err("no photo".to_string()),
+        };
+        match photo {
+            Ok(message_id) => Ok(message_id),
+            Err(photo_why) => bot
+                .post_text(chat, caption, post.button, &post.url)
+                .await
+                .map_err(|text_why| format!("photo: {photo_why}; text: {text_why}")),
+        }
     }
 
-    /// Что сейчас на людях и годится в канал, с готовым текстом поста.
+    /// Выпустить вещь в каналы ещё раз — по просьбе администратора, во все
+    /// каналы сразу и мимо журнала: журнал решает, что объявлять само, а здесь
+    /// решил человек. Вещь, которой сейчас нет на людях (скрытая работа,
+    /// черновик байки), не выходит: канал не должен показывать то, что сайт
+    /// не показывает.
+    ///
+    /// Журнал после этого говорит «вышло»: вещь, которую канал ещё не успел
+    /// заметить, иначе ушла бы вторым постом через выдержку. Сбой одного
+    /// канала другим не мешает; ответ называет исход каждого.
+    pub async fn admin_channel_repost(&self, kind: &str, id: Uuid) -> Result<ChannelRepostResult> {
+        if !["work", "leaf", "card", "etude"].contains(&kind) {
+            return Err(AppError::BadRequest("Unknown kind of post".into()));
+        }
+        let Some(bot) = self.channel_bot() else {
+            return Err(AppError::BadRequest("The notification bot is not set up".into()));
+        };
+        let channels = self.channels();
+        if channels.is_empty() {
+            return Err(AppError::BadRequest("No Telegram channels are set up".into()));
+        }
+        let langs: Vec<crate::lang::Lang> = channels.iter().map(|(l, _)| *l).collect();
+        let mut all = self.channel_on_display(&langs).await?;
+        let local = self.config.public_url_is_local();
+
+        let mut results = Vec::new();
+        for (lang, chat) in channels {
+            let code = lang.code().to_string();
+            let key = (kind.to_string(), id);
+            let Some(post) = all.get_mut(&lang).and_then(|posts| posts.remove(&key)) else {
+                results.push(ChannelRepostOutcome { lang: code, status: "not_on_display".into(), error: None });
+                continue;
+            };
+            let caption = crate::telegram::announcement_caption(
+                &post.label,
+                post.tag,
+                &post.title,
+                post.lead.as_deref(),
+            );
+            // Строка журнала нужна до отправки: пометить «вышло» можно только её.
+            self.repo.channel_note_seen(&code, kind, &[id], false).await?;
+            if local {
+                tracing::info!(
+                    "Telegram channel {code} (local, repost, not sent): {} → {}\n{caption}",
+                    post.url,
+                    post.image.as_deref().unwrap_or("no photo")
+                );
+                self.repo.channel_mark_posted(&code, kind, id, None).await?;
+                results.push(ChannelRepostOutcome { lang: code, status: "local".into(), error: None });
+                continue;
+            }
+            match Self::send_channel_post(&bot, &chat, &post, &caption).await {
+                Ok(message_id) => {
+                    self.repo.channel_mark_posted(&code, kind, id, Some(message_id)).await?;
+                    self.note_on_chart(&format!("Channel repost ({code}): {}", post.title)).await;
+                    results.push(ChannelRepostOutcome { lang: code, status: "sent".into(), error: None });
+                }
+                Err(why) => {
+                    tracing::warn!("Telegram channel {code} repost for {kind} {id} failed: {why}");
+                    results.push(ChannelRepostOutcome { lang: code, status: "failed".into(), error: Some(why) });
+                }
+            }
+        }
+        Ok(ChannelRepostResult { local, results })
+    }
+
+    /// Бот уведомлений: он пишет во все каналы и должен быть администратором
+    /// каждого.
+    fn channel_bot(&self) -> Option<crate::telegram::Bot> {
+        let token = self.config.telegram_bot_token.clone().filter(|t| !t.trim().is_empty())?;
+        Some(crate::telegram::Bot::new(token, self.http_client.clone()))
+    }
+
+    /// Что сейчас на людях и годится в канал, с готовым текстом поста — для
+    /// каждого из названных языков.
     ///
     /// Работа — та же выборка, что у ленты для Pinterest: видимая, не «в
     /// работе» и не под первым взглядом. Лист — всякий живой, кроме двух
     /// родов: `world` пересказывает чужие новости, а `arrival` о работе
     /// объявил бы её второй раз — работа выходит в канал сама.
-    async fn channel_on_display(&self) -> Result<HashMap<(String, Uuid), ChannelPost>> {
+    ///
+    /// Данные читаются один раз, а текст собирается на каждом языке:
+    /// запросы не множатся вместе с каналами.
+    async fn channel_on_display(
+        &self,
+        langs: &[crate::lang::Lang],
+    ) -> Result<HashMap<crate::lang::Lang, HashMap<(String, Uuid), ChannelPost>>> {
+        use crate::channel::{labelled, pick_text, pick_text_or, words, Sort};
+        use crate::lang::Lang;
+
         let base = self.config.public_url.trim_end_matches('/').to_string();
         let absolute = |url: &str| -> String {
             if url.starts_with("http://") || url.starts_with("https://") {
@@ -5527,17 +5685,19 @@ impl AppService {
             }
         };
         // `src` остаётся в замере посещений (§ 18): по нему видно, сколько
-        // людей привёл канал.
-        let link = |path: &str| format!("{base}{path}?src=telegram");
+        // людей привёл канал. `lang` открывает сайт на языке канала: читатель
+        // немецкого канала не должен попасть на английскую страницу.
+        let link = |lang: Lang, path: &str| format!("{base}{path}?src=telegram&lang={}", lang.code());
         // Адрес, у которого уже есть строка запроса (`?card=`, `?play=`).
-        let link_with = |path: &str| format!("{base}{path}&src=telegram");
+        let link_with = |lang: Lang, path: &str| format!("{base}{path}&src=telegram&lang={}", lang.code());
 
         let now = Utc::now();
         let works = self
             .list_figurines(true, FigurineQuery::default())
             .await?
             .items;
-        let mut posts = HashMap::new();
+        let mut out: HashMap<Lang, HashMap<(String, Uuid), ChannelPost>> =
+            langs.iter().map(|l| (*l, HashMap::new())).collect();
         let mut faces: HashMap<Uuid, String> = HashMap::new();
         for f in works {
             if f.status == FigurineStatus::InProgress || f.first_look_until.is_some_and(|t| t > now) {
@@ -5554,18 +5714,42 @@ impl AppService {
                 faces.insert(id, img.clone());
             }
             let handle = f.slug.clone().unwrap_or_else(|| f.id.clone());
-            posts.insert(
-                ("work".to_string(), id),
-                ChannelPost {
-                    title: f.name.clone(),
-                    lead: f.short_text.clone(),
-                    url: link(&format!("/figurines/{handle}")),
-                    image,
-                    button: "Смотреть на сайте",
-                    label: "Новая работа",
-                    tag: "работа",
-                },
-            );
+            // Основные поля работы — английские, остальные языки лежат в
+            // переводах. Название — имя: оно не считается непереведённым.
+            let tr = |code: &str| f.translations.get(code);
+            for &lang in langs {
+                let title = tr(lang.code())
+                    .and_then(|t| t.name.as_deref())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&f.name)
+                    .to_string();
+                let lead = pick_text(
+                    lang,
+                    [
+                        f.short_text.as_deref(),
+                        tr("ru").and_then(|t| t.short_text.as_deref()),
+                        tr("uk").and_then(|t| t.short_text.as_deref()),
+                        tr("es").and_then(|t| t.short_text.as_deref()),
+                        tr("de").and_then(|t| t.short_text.as_deref()),
+                        tr("it").and_then(|t| t.short_text.as_deref()),
+                    ],
+                );
+                let w = words(lang, Sort::Work);
+                out.get_mut(&lang).expect("язык канала").insert(
+                    ("work".to_string(), id),
+                    ChannelPost {
+                        title,
+                        url: link(lang, &format!("/figurines/{handle}")),
+                        image: image.clone(),
+                        button: w.button,
+                        label: labelled(lang, w.label, &lead.iter().map(|(_, l)| *l).collect::<Vec<_>>()),
+                        tag: w.tag,
+                        group: Sort::Work.group(),
+                        lead: lead.map(|(t, _)| t),
+                    },
+                );
+            }
         }
 
         let leaves = self.list_gazette_public(1, 500).await?.items;
@@ -5574,23 +5758,6 @@ impl AppService {
                 continue;
             }
             let Ok(id) = Uuid::parse_str(&leaf.id) else { continue };
-            let pick = |ru: &Option<String>, en: &Option<String>| -> Option<String> {
-                [ru, en]
-                    .into_iter()
-                    .flatten()
-                    .map(|s| s.trim())
-                    .find(|s| !s.is_empty())
-                    .map(str::to_string)
-            };
-            let title = pick(&Some(leaf.title_ru.clone()), &Some(leaf.title_en.clone()))
-                .unwrap_or_default();
-            if title.is_empty() {
-                continue;
-            }
-            let lead = pick(&leaf.dek_ru, &leaf.dek_en).or_else(|| {
-                pick(&leaf.body_ru, &leaf.body_en)
-                    .map(|body| crate::gazette::excerpt(&body, crate::gazette::EXCERPT_MAX))
-            });
             let image = leaf
                 .image_url
                 .as_deref()
@@ -5601,33 +5768,74 @@ impl AppService {
                     let work = Uuid::parse_str(leaf.figurine_id.as_deref()?).ok()?;
                     faces.get(&work).cloned()
                 });
-            let button = match leaf.kind.as_str() {
-                "tale" | "guest_story" => "Читать",
-                _ => "Открыть на сайте",
-            };
             // Род называет то, что человек увидит, открыв пост: байку читают,
             // эскиз смотрят. Прочие листы — просто листы вестника.
-            let (label, tag) = match leaf.kind.as_str() {
-                "tale" => ("Новая байка", "байка"),
-                "guest_story" => ("Гостевая история", "история"),
-                "sketch" => ("Эскиз из мастерской", "эскиз"),
-                "showing" => ("Показ", "показ"),
-                "collage" => ("Коллаж", "коллаж"),
-                "arrival" => ("Новое поступление", "поступление"),
-                _ => ("Лист вестника", "вестник"),
+            let sort = match leaf.kind.as_str() {
+                "tale" => Sort::Tale,
+                "guest_story" => Sort::GuestStory,
+                "sketch" => Sort::Sketch,
+                "showing" => Sort::Showing,
+                "collage" => Sort::Collage,
+                "arrival" => Sort::Arrival,
+                _ => Sort::Leaf,
             };
-            posts.insert(
-                ("leaf".to_string(), id),
-                ChannelPost {
-                    title,
-                    lead,
-                    url: link(&crate::gazette::leaf_path(&leaf.kind, &leaf.slug)),
-                    image,
-                    button,
-                    label,
-                    tag,
-                },
-            );
+            for &lang in langs {
+                let Some((title, title_in)) = pick_text(
+                    lang,
+                    [
+                        Some(&leaf.title_en),
+                        Some(&leaf.title_ru),
+                        Some(&leaf.title_uk),
+                        Some(&leaf.title_es),
+                        Some(&leaf.title_de),
+                        Some(&leaf.title_it),
+                    ]
+                    .map(|s| s.map(String::as_str)),
+                ) else {
+                    continue;
+                };
+                let dek = pick_text(
+                    lang,
+                    [
+                        leaf.dek_en.as_deref(),
+                        leaf.dek_ru.as_deref(),
+                        leaf.dek_uk.as_deref(),
+                        leaf.dek_es.as_deref(),
+                        leaf.dek_de.as_deref(),
+                        leaf.dek_it.as_deref(),
+                    ],
+                );
+                let lead = dek.or_else(|| {
+                    pick_text(
+                        lang,
+                        [
+                            leaf.body_en.as_deref(),
+                            leaf.body_ru.as_deref(),
+                            leaf.body_uk.as_deref(),
+                            leaf.body_es.as_deref(),
+                            leaf.body_de.as_deref(),
+                            leaf.body_it.as_deref(),
+                        ],
+                    )
+                    .map(|(body, from)| (crate::gazette::excerpt(&body, crate::gazette::EXCERPT_MAX), from))
+                });
+                let w = words(lang, sort);
+                let mut written_in = vec![title_in];
+                written_in.extend(lead.iter().map(|(_, l)| *l));
+                out.get_mut(&lang).expect("язык канала").insert(
+                    ("leaf".to_string(), id),
+                    ChannelPost {
+                        title,
+                        lead: lead.map(|(t, _)| t),
+                        url: link(lang, &crate::gazette::leaf_path(&leaf.kind, &leaf.slug)),
+                        image: image.clone(),
+                        button: w.button,
+                        label: labelled(lang, w.label, &written_in),
+                        tag: w.tag,
+                        group: sort.group(),
+                    },
+                );
+            }
         }
 
         // Карты полки. Строения (стены, башни) — снаряжение этюдов, не карта,
@@ -5639,15 +5847,6 @@ impl AppService {
                 continue;
             }
             let Ok(id) = Uuid::parse_str(&card.id) else { continue };
-            let title = [&card.title_ru, &card.title_en]
-                .into_iter()
-                .map(|s| s.trim())
-                .find(|s| !s.is_empty())
-                .unwrap_or_default()
-                .to_string();
-            if title.is_empty() {
-                continue;
-            }
             let image = card
                 .art_url
                 .as_deref()
@@ -5660,37 +5859,61 @@ impl AppService {
             if let Some(img) = &image {
                 card_art.insert(card.slug.clone(), img.clone());
             }
-            let lead = [&card.lore_ru, &card.effect_ru, &card.lore_en, &card.effect_en]
-                .into_iter()
-                .flatten()
-                .map(|s| s.trim())
-                .find(|s| !s.is_empty())
-                .map(str::to_string);
-            posts.insert(
-                ("card".to_string(), id),
-                ChannelPost {
-                    title,
-                    lead,
-                    url: link_with(&format!("/battles?card={}", card.id)),
-                    image,
-                    button: "Открыть карту",
-                    label: "Новая карта в игре",
-                    tag: "карта",
-                },
-            );
+            for &lang in langs {
+                let Some((title, title_in)) = pick_text(
+                    lang,
+                    [
+                        Some(&card.title_en),
+                        Some(&card.title_ru),
+                        Some(&card.title_uk),
+                        Some(&card.title_es),
+                        Some(&card.title_de),
+                        Some(&card.title_it),
+                    ]
+                    .map(|s| s.map(String::as_str)),
+                ) else {
+                    continue;
+                };
+                let lead = pick_text_or(
+                    lang,
+                    [
+                        card.lore_en.as_deref(),
+                        card.lore_ru.as_deref(),
+                        card.lore_uk.as_deref(),
+                        card.lore_es.as_deref(),
+                        card.lore_de.as_deref(),
+                        card.lore_it.as_deref(),
+                    ],
+                    [
+                        card.effect_en.as_deref(),
+                        card.effect_ru.as_deref(),
+                        card.effect_uk.as_deref(),
+                        card.effect_es.as_deref(),
+                        card.effect_de.as_deref(),
+                        card.effect_it.as_deref(),
+                    ],
+                );
+                let w = words(lang, Sort::Card);
+                let mut written_in = vec![title_in];
+                written_in.extend(lead.iter().map(|(_, l)| *l));
+                out.get_mut(&lang).expect("язык канала").insert(
+                    ("card".to_string(), id),
+                    ChannelPost {
+                        title,
+                        lead: lead.map(|(t, _)| t),
+                        url: link_with(lang, &format!("/battles?card={}", card.id)),
+                        image: image.clone(),
+                        button: w.button,
+                        label: labelled(lang, w.label, &written_in),
+                        tag: w.tag,
+                        group: Sort::Card.group(),
+                    },
+                );
+            }
         }
 
         // Этюды. Картинка — фон поля, а без него — первая карта противника.
         for etude in self.repo.list_battle_challenges(true).await? {
-            let title = [&etude.title_ru, &etude.title_en]
-                .into_iter()
-                .map(|s| s.trim())
-                .find(|s| !s.is_empty())
-                .unwrap_or_default()
-                .to_string();
-            if title.is_empty() {
-                continue;
-            }
             let setup: serde_json::Value =
                 serde_json::from_str(&etude.setup).unwrap_or(serde_json::Value::Null);
             let image = setup
@@ -5705,31 +5928,52 @@ impl AppService {
                         .filter_map(|p| p.get("card")?.as_str())
                         .find_map(|slug| card_art.get(slug).cloned())
                 });
-            let lead = [&etude.note_ru, &etude.note_en]
-                .into_iter()
-                .flatten()
-                .map(|s| s.trim())
-                .find(|s| !s.is_empty())
-                .map(str::to_string);
-            let (label, tag) = if etude.player_side == "deck" {
-                ("Новая встреча в игре", "этюд")
-            } else {
-                ("Новый этюд в игре", "этюд")
-            };
-            posts.insert(
-                ("etude".to_string(), etude.id),
-                ChannelPost {
-                    title,
-                    lead,
-                    url: link_with(&format!("/battles/etude?play={}", etude.id)),
-                    image,
-                    button: "Сыграть",
-                    label,
-                    tag,
-                },
-            );
+            let sort = if etude.player_side == "deck" { Sort::EtudeDeck } else { Sort::EtudeSolo };
+            for &lang in langs {
+                let Some((title, title_in)) = pick_text(
+                    lang,
+                    [
+                        Some(&etude.title_en),
+                        Some(&etude.title_ru),
+                        Some(&etude.title_uk),
+                        Some(&etude.title_es),
+                        Some(&etude.title_de),
+                        Some(&etude.title_it),
+                    ]
+                    .map(|s| s.map(String::as_str)),
+                ) else {
+                    continue;
+                };
+                let lead = pick_text(
+                    lang,
+                    [
+                        etude.note_en.as_deref(),
+                        etude.note_ru.as_deref(),
+                        etude.note_uk.as_deref(),
+                        etude.note_es.as_deref(),
+                        etude.note_de.as_deref(),
+                        etude.note_it.as_deref(),
+                    ],
+                );
+                let w = words(lang, sort);
+                let mut written_in = vec![title_in];
+                written_in.extend(lead.iter().map(|(_, l)| *l));
+                out.get_mut(&lang).expect("язык канала").insert(
+                    ("etude".to_string(), etude.id),
+                    ChannelPost {
+                        title,
+                        lead: lead.map(|(t, _)| t),
+                        url: link_with(lang, &format!("/battles/etude?play={}", etude.id)),
+                        image: image.clone(),
+                        button: w.button,
+                        label: labelled(lang, w.label, &written_in),
+                        tag: w.tag,
+                        group: sort.group(),
+                    },
+                );
+            }
         }
-        Ok(posts)
+        Ok(out)
     }
 
     /// Секрет webhook — читает только обработчик, сверяя два доказательства.
@@ -7667,6 +7911,83 @@ impl AppService {
         Ok(clean)
     }
 
+    // === NAV SEALS ===
+
+    pub async fn get_nav_seals(&self) -> Result<crate::models::NavSeals> {
+        parse_json_setting("nav_seals", self.repo.get_setting("nav_seals").await?)
+    }
+
+    /// Приводит присланное в порядок и сохраняет. Форме не верит: неизвестный
+    /// раздел отбрасывается, чужой путь — отказ, срок смены зажимается.
+    pub async fn save_nav_seals(
+        &self,
+        body: crate::models::NavSeals,
+    ) -> Result<crate::models::NavSeals> {
+        use crate::models::*;
+        const IMAGES_MAX: usize = 12;
+        const SHAPES: [&str; 3] = ["circle", "free", "rect"];
+
+        fn id_ok(id: &str) -> bool {
+            !id.is_empty()
+                && id.len() <= 64
+                && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        }
+        fn path(raw: &str) -> Result<String> {
+            let raw = raw.trim();
+            if raw.len() > 200
+                || !raw.starts_with("/static/seals/")
+                || raw.contains("..")
+                || raw.contains("//")
+            {
+                return Err(AppError::BadRequest(
+                    "A menu picture must come from the house store".into(),
+                ));
+            }
+            Ok(raw.to_string())
+        }
+
+        let mut sections = std::collections::BTreeMap::new();
+        for (key, sec) in body.sections {
+            if !NAV_SEAL_SECTIONS.contains(&key.as_str()) {
+                continue;
+            }
+            let mut seen = std::collections::HashSet::new();
+            let mut images = Vec::new();
+            for img in sec.images.into_iter().take(IMAGES_MAX) {
+                if !id_ok(&img.id) || !seen.insert(img.id.clone()) {
+                    continue;
+                }
+                images.push(NavSealImage {
+                    url: path(&img.url)?,
+                    url_small: path(&img.url_small)?,
+                    width: img.width.clamp(1, 4000),
+                    height: img.height.clamp(1, 4000),
+                    width_small: img.width_small.clamp(1, 4000),
+                    id: img.id,
+                });
+            }
+            let shape = if SHAPES.contains(&sec.shape.as_str()) {
+                sec.shape
+            } else {
+                "free".into()
+            };
+            sections.insert(
+                key,
+                NavSealSection {
+                    images,
+                    interval_sec: sec.interval_sec.clamp(5, 3600),
+                    shape,
+                },
+            );
+        }
+        let clean = NavSeals { sections };
+        let json = serde_json::to_string(&clean).map_err(|e| AppError::Internal(e.to_string()))?;
+        self.repo.upsert_setting("nav_seals", &json).await?;
+        // Автор поменял картинки печатей: общая часть ответа шапки читается заново.
+        *self.nav_seal_cache.lock().await = None;
+        Ok(clean)
+    }
+
     pub async fn get_reel_theme_presets(&self) -> Result<Vec<crate::models::ReelThemePreset>> {
         match self.repo.get_setting("reel_theme_presets").await? {
             Some(j) => serde_json::from_str(&j)
@@ -9229,16 +9550,22 @@ impl AppService {
     // === БАЙКИ: ЧИТАТЕЛЬ ПОСЛЕ ПОСЛЕДНЕЙ СТРОКИ ===
 
     /// Двери, через которые следующая байка приходит сама.
-    pub async fn tale_doors(&self) -> crate::models::TaleDoorsDto {
+    ///
+    /// Канал зовёт читателя на его языке; нет канала на этом языке — на
+    /// английском, а нет и его — на любом заведённом.
+    pub async fn tale_doors(&self, lang: crate::lang::Lang) -> crate::models::TaleDoorsDto {
+        let channels = self.channels();
+        let chat = channels
+            .iter()
+            .find(|(l, _)| *l == lang)
+            .or_else(|| channels.iter().find(|(l, _)| *l == crate::lang::Lang::En))
+            .or_else(|| channels.first())
+            .map(|(_, chat)| chat.clone());
         crate::models::TaleDoorsDto {
             // Локально письмо печатается в журнал (закон `say_or_send`), поэтому
             // стенду есть чем «отправить» и без SMTP.
             letters: self.config.public_url_is_local() || self.mail_works().await,
-            telegram: self
-                .config
-                .telegram_channel_id
-                .as_deref()
-                .and_then(crate::tales::channel_link),
+            telegram: chat.as_deref().and_then(crate::tales::channel_link),
             // Записку пишет бот входа; локально она, как и письмо, печатается
             // в журнал.
             telegram_notes: self.config.public_url_is_local() || self.login_bot().is_some(),
@@ -9566,6 +9893,39 @@ impl AppService {
 
     pub async fn admin_delete_tale_scene(&self, tale_id: Uuid) -> Result<()> {
         self.repo.delete_tale_scene(tale_id).await
+    }
+
+    /// Назначить обложку книги небылицы. Принимается только свой склад
+    /// (`/static/…`) или https: чужой адрес заставил бы страницу читателя ходить
+    /// на чужой сервер при каждом открытии полки.
+    pub async fn admin_set_tale_book_cover(&self, tale_id: Uuid, url: Option<String>) -> Result<()> {
+        let cover = url.as_deref().map(str::trim).filter(|u| !u.is_empty());
+        if let Some(u) = cover {
+            let ok = u.len() <= 500
+                && (u.starts_with("/static/") || u.starts_with("https://"))
+                && !u.contains("..");
+            if !ok {
+                return Err(AppError::BadRequest("Cover must be a /static/ or https address".into()));
+            }
+        }
+        if !self.repo.set_tale_book_cover(tale_id, cover).await? {
+            return Err(AppError::NotFound(format!("Tale {tale_id} not found")));
+        }
+        Ok(())
+    }
+
+    /// Надписи на обложке. Числа прижимаются к пределам, цвета и начертание
+    /// проверяются: сохранённое попадает в стиль страницы читателя.
+    pub async fn admin_set_tale_book_cover_text(
+        &self,
+        tale_id: Uuid,
+        text: Option<BookCoverText>,
+    ) -> Result<()> {
+        let text = text.map(normalize_cover_text).filter(|t| t.title.is_some() || t.author.is_some());
+        if !self.repo.set_tale_book_cover_text(tale_id, text.as_ref()).await? {
+            return Err(AppError::NotFound(format!("Tale {tale_id} not found")));
+        }
+        Ok(())
     }
 
     /// Назначить, какую байку продолжает эта. Если продолжение уже вышло и
@@ -10261,6 +10621,8 @@ impl AppService {
             figurine_status: row.figurine_status,
             watch_count: if admin { Some(row.watch_count) } else { None },
             shelf_order: row.shelf_order,
+            book_cover: row.book_cover,
+            book_cover_text: row.book_cover_text.map(|t| t.0),
             created_at: row.created_at.to_rfc3339(),
             updated_at: row.updated_at.to_rfc3339(),
             prev: None,
@@ -10417,10 +10779,82 @@ impl AppService {
 
     /// Числа для шапки: сколько работ, листов вестника и небылиц и сколько из
     /// них новее меток посетителя.
+    /// Язык по стране посетителя. Ничего не пишет: адрес разбирается по
+    /// локальной базе и в ответ не попадает. `forced` — страна, названная
+    /// запросом; принимается только на локальной машине, где настоящего адреса
+    /// нет и без неё проверить ответ нечем.
+    pub fn site_locale(&self, ip: Option<&str>, forced: Option<&str>) -> SiteLocale {
+        let forced = forced
+            .filter(|_| self.config.public_url_is_local())
+            .map(|c| c.trim().to_ascii_uppercase())
+            .filter(|c| c.len() == 2 && c.bytes().all(|b| b.is_ascii_alphabetic()));
+        let country = forced.or_else(|| ip.and_then(|i| self.geoip.country(i)));
+        let suggest = country.as_deref().and_then(crate::geo::language_of_country);
+        SiteLocale { country, suggest }
+    }
+
+    /// Подхватить обновлённый файл гео-базы (раз в месяц его заменяет выкладка).
+    pub fn reload_geoip(&self) {
+        self.geoip.reload_if_changed();
+    }
+
     pub async fn section_counts(&self, q: SectionCountsQuery) -> Result<SectionCounts> {
-        self.repo
+        let mut counts = self
+            .repo
             .section_counts(q.works_since, q.gazette_since, q.tales_since)
-            .await
+            .await?;
+        // Картинки на печатях шапки идут в этом же ответе: прежде страница ради
+        // них тянула полный список работ и четыре списка игры. Украшение не
+        // должно ронять числа, поэтому сбой здесь только пишется в журнал.
+        match self.nav_seal_shared().await {
+            Ok(shared) => {
+                counts.seal_tale = shared.tale;
+                if !shared.own_works_art {
+                    match self.nav_seal_work().await {
+                        Ok(w) => counts.seal_work = w,
+                        Err(e) => tracing::warn!("nav seal: could not pick a work photo: {e}"),
+                    }
+                }
+            }
+            Err(e) => tracing::warn!("nav seal: could not read the shared part: {e}"),
+        }
+        Ok(counts)
+    }
+
+    /// Общая для всех часть картинок печатей, не чаще раза в `NAV_SEAL_TTL`.
+    async fn nav_seal_shared(&self) -> Result<NavSealShared> {
+        let mut cache = self.nav_seal_cache.lock().await;
+        if let Some((at, shared)) = cache.as_ref() {
+            if at.elapsed() < NAV_SEAL_TTL {
+                return Ok(shared.clone());
+            }
+        }
+        let tale = self.repo.latest_tale_for_seal().await?;
+        let own_works_art = self
+            .get_nav_seals()
+            .await?
+            .sections
+            .get("works")
+            .is_some_and(|s| !s.images.is_empty());
+        let shared = NavSealShared { tale, own_works_art };
+        *cache = Some((Instant::now(), shared.clone()));
+        Ok(shared)
+    }
+
+    /// Фото случайной работы на людях. Берётся из нескольких случайных: первая,
+    /// у которой есть фото.
+    async fn nav_seal_work(&self) -> Result<Option<crate::models::NavSealWork>> {
+        let ids = self.repo.random_visible_figurine_ids(8).await?;
+        if ids.is_empty() {
+            return Ok(None);
+        }
+        let faces = self.repo.get_face_images_for_figurines(&ids).await?;
+        Ok(ids
+            .iter()
+            .find_map(|id| faces.get(id))
+            .map(|img| crate::models::NavSealWork {
+                src: self.face_image_url(img),
+            }))
     }
 
     /// Lay the shelf out in the given order; position is the index in the list.
@@ -18148,6 +18582,50 @@ fn scene_position_ok(p: &str) -> bool {
 /// доводится до допустимого, а недопустимое заменяется значением по умолчанию:
 /// сцена, которую можно сохранить только безупречной, терялась бы вместе с
 /// вечером работы.
+/// `#rrggbb` или запасное значение: цвет попадает в `style`, и произвольная
+/// строка вышла бы из него.
+fn cover_color(value: &str, fallback: &str) -> String {
+    let v = value.trim();
+    let ok = v.len() == 7 && v.starts_with('#') && v[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if ok { v.to_ascii_lowercase() } else { fallback.to_string() }
+}
+
+fn cover_num(value: f32, min: f32, max: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value.clamp(min, max) } else { fallback }
+}
+
+fn normalize_cover_label(mut l: BookCoverLabel) -> BookCoverLabel {
+    l.text = l.text.trim().chars().take(120).collect();
+    l.x = cover_num(l.x, 0.0, 100.0, 50.0);
+    l.y = cover_num(l.y, 0.0, 100.0, 50.0);
+    l.width = cover_num(l.width, 10.0, 100.0, 70.0);
+    l.size = cover_num(l.size, 2.0, 30.0, 8.0);
+    l.line_height = cover_num(l.line_height, 0.7, 2.5, 1.1);
+    l.spacing = cover_num(l.spacing, -0.1, 0.5, 0.0);
+    l.shadow = cover_num(l.shadow, 0.0, 1.0, 0.0);
+    l.weight = (l.weight.clamp(100, 900) + 50) / 100 * 100;
+    l.weight = l.weight.min(900);
+    if !matches!(l.align.as_str(), "left" | "center" | "right") {
+        l.align = "center".into();
+    }
+    l.font.retain(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    l.font.truncate(24);
+    l.color = cover_color(&l.color, "#2a1d14");
+    l.plate.color = cover_color(&l.plate.color, "#f3ead9");
+    l.plate.opacity = cover_num(l.plate.opacity, 0.0, 1.0, 0.55);
+    l.plate.blur = cover_num(l.plate.blur, 0.0, 6.0, 1.5);
+    l.plate.radius = cover_num(l.plate.radius, 0.0, 10.0, 1.5);
+    l.plate.pad = cover_num(l.plate.pad, 0.0, 10.0, 3.0);
+    l
+}
+
+fn normalize_cover_text(text: BookCoverText) -> BookCoverText {
+    BookCoverText {
+        title: text.title.map(normalize_cover_label),
+        author: text.author.map(normalize_cover_label),
+    }
+}
+
 fn normalize_tale_scene(mut scene: TaleScene) -> Result<TaleScene> {
     scene.frames.retain(|f| {
         let u = f.url.trim();

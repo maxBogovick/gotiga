@@ -14,6 +14,7 @@
   // in a pile of loose variables that could drift from what the card shows.
   import { onDestroy, onMount, tick } from "svelte";
   import { api } from "$lib/api";
+  import ChannelRepost from "$lib/components/admin/ChannelRepost.svelte";
   import {
     t,
     lang,
@@ -6741,6 +6742,11 @@
                 class="px-4 py-2 text-[10px] uppercase tracking-[0.16em] border border-[#34251c]/20 text-[#6f3b24] hover:bg-[#c65f3c]/10"
                 >{$t("adminBattlesDelete")}</button
               >
+              <ChannelRepost
+                kind="card"
+                id={selectedId}
+                disabled={draft.status !== "published"}
+              />
             {/if}
             <!-- Жалоба — кнопка, а не надпись. Пока она была надписью, отказ
                  сообщал, ЧТО не так, и ни слова о том, где это лежит: на листе

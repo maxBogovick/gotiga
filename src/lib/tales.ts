@@ -243,3 +243,11 @@ export function taleMorphNames(tales: GazetteLeaf[]): Map<string, string> {
   }
   return out;
 }
+
+/** Кожа книги — по номеру небылицы, чтобы у неё один и тот же переплёт при каждом заходе
+ *  (полка, книга, печать в шапке). */
+export function taleTone(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return h % 6;
+}

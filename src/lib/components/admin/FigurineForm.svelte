@@ -11,6 +11,7 @@
    * another work while an upload is in flight is blocked by the page (it watches
    * `busy`); the id checks around every await are the second line of defence.
    */
+  import ChannelRepost from '$lib/components/admin/ChannelRepost.svelte';
   import { untrack } from 'svelte';
   import { api } from '$lib/api';
   import { sketchUrlsFromWork } from '$lib/gazette';
@@ -790,6 +791,15 @@
         {isSaving ? $t('adminFormSaving') : unsaved ? $t('adminFormSaveChanges') : $t('adminFormSaved')}
     </button>
 </div>
+
+<!-- ── Повторная публикация в Telegram-каналы ──────────────────
+     Отдельной строкой: верхняя панель и так заполнена, и кнопка с подписью
+     налезала на «Отмену» и «Сохранить». -->
+{#if figurineExists}
+<div class="shrink-0 flex items-center justify-end gap-3 px-5 py-1.5 border-b border-[#34251c]/10 bg-[#f8f1e7]">
+    <ChannelRepost kind="work" id={figurine.id} />
+</div>
+{/if}
 
 <!-- ── TAB STRIP ─────────────────────────────────────────── -->
 <div class="shrink-0 flex border-b border-[#34251c]/10 bg-[#f8f1e7] px-1">

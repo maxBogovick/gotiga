@@ -395,6 +395,33 @@ impl Bot {
             .ok_or_else(|| "answer without message_id".to_string())
     }
 
+    /// Пост без превью ссылки и без фотографии: заметка о релизе стоит в ленте
+    /// сама, а превью раздела сайта сделало бы её вдвое выше.
+    pub async fn post_note(&self, chat: &str, text: &str, button: &str, url: &str) -> Result<i64, String> {
+        let body = serde_json::json!({
+            "chat_id": chat,
+            "text": text,
+            "parse_mode": "HTML",
+            "link_preview_options": { "is_disabled": true },
+            "reply_markup": { "inline_keyboard": [[ { "text": button, "url": url } ]] },
+        });
+        let value = self.call_why("sendMessage", body).await?;
+        value["result"]["message_id"]
+            .as_i64()
+            .ok_or_else(|| "answer without message_id".to_string())
+    }
+
+    /// Записка в личный чат (владельцу): куда нажать, чтобы продолжить.
+    pub async fn tell(&self, chat: &str, text: &str) {
+        let body = serde_json::json!({
+            "chat_id": chat,
+            "text": text,
+            "parse_mode": "HTML",
+            "link_preview_options": { "is_disabled": true },
+        });
+        self.call("sendMessage", body).await;
+    }
+
     /// Обязательный ответ на нажатие — без него в Telegram кнопка «думает»
     /// до таймаута.
     pub async fn ack(&self, callback_id: &str, text: &str) {

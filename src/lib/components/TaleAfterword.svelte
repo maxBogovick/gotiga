@@ -77,7 +77,7 @@
 
   onMount(() => {
     visitorBook.load();
-    void api.getTaleDoors().then((d) => (doors = d));
+    void api.getTaleDoors($lang).then((d) => (doors = d));
   });
 
   /** «Хочу продолжение» — назначается; повтор снимает просьбу. */

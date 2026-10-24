@@ -137,6 +137,12 @@ export default defineConfig(async () => ({
               expiration: { maxAgeSeconds: 60 * 60 * 24 * 365 },
             },
           },
+          // The language suggested for the visitor's country depends on who asks.
+          // Before the general /api/ rule below: the first matching route wins.
+          {
+            urlPattern: /\/api\/v1\/site\/locale/,
+            handler: "NetworkOnly",
+          },
           {
             urlPattern: /\/api\//,
             handler: "NetworkFirst",

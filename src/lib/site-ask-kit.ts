@@ -15,7 +15,7 @@ import type { AskIndex } from '$lib/site-index';
 export type { Lang };
 import type { BattleCard, BattleChallenge, FigurineListItem, GazetteLeaf } from '$lib/types/api';
 
-export type AskIntent = 'summary' | 'start' | 'new' | 'tale' | 'play' | 'search' | 'count' | 'about' | 'page' | 'go' | 'match' | 'none';
+export type AskIntent = 'summary' | 'start' | 'new' | 'tale' | 'play' | 'search' | 'count' | 'about' | 'page' | 'go' | 'match' | 'chat' | 'catalog' | 'none';
 
 export type AskLinkKind = 'work' | 'tale' | 'leaf' | 'card' | 'etude' | 'section' | 'question' | 'choice';
 
@@ -44,6 +44,9 @@ export interface AskReply {
   /** Абзацы ответа. Печатаются по словам, поэтому без разметки. */
   paragraphs: string[];
   links: AskLink[];
+  /** «Возможно, вы спрашивали»: вопросы-предложения от каталога, когда ответ
+   *  собран по словам и его могло быть недостаточно. Нажатие задаёт вопрос. */
+  suggest?: AskLink[];
 }
 
 /** Сколько ссылок под ответом: больше шести не читают. */

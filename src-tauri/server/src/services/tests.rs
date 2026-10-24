@@ -32,6 +32,7 @@ fn test_config() -> Config {
         telegram_login_bot_username: None,
         telegram_webhook_secret: None,
         telegram_channel_id: None,
+        telegram_channel_extra: vec![],
         telegram_chat_id: None,
         google_client_id: None,
         google_client_secret: None,
@@ -916,4 +917,66 @@ fn a_line_counted_under_the_wrong_rules_would_stop_short() {
     };
     let (acts, _) = AppService::count_the_line(&setup, &journal, strict);
     assert_eq!(acts, 1, "второе дело под этими правилами незаконно");
+}
+
+// ── site_locale ─────────────────────────────────────────────────────────────
+
+fn service_at(public_url: &str) -> AppService {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://unused:unused@127.0.0.1:1/unused")
+        .expect("connect_lazy never dials");
+    let mut config = test_config();
+    config.public_url = public_url.into();
+    AppService::new(Repository::new(pool), config)
+}
+
+#[tokio::test]
+async fn site_locale_ignores_a_named_country_on_a_public_site() {
+    // Иначе любой мог бы выдать себя за немца запросом `?country=DE`.
+    let svc = lazy_service();
+    let locale = svc.site_locale(Some("8.8.8.8"), Some("DE"));
+    assert_eq!(locale.country, None);
+    assert_eq!(locale.suggest, None);
+}
+
+#[tokio::test]
+async fn site_locale_takes_a_named_country_locally() {
+    let svc = service_at("http://localhost:3000");
+    let locale = svc.site_locale(None, Some("de"));
+    assert_eq!(locale.country.as_deref(), Some("DE"));
+    assert_eq!(locale.suggest, Some("de"));
+    // Не код страны — ничего не предлагается.
+    assert_eq!(svc.site_locale(None, Some("Germany")).country, None);
+    assert_eq!(svc.site_locale(None, Some("US")).suggest, None);
+}
+
+// ── Надписи на обложке книги ────────────────────────────────────────────────
+
+#[test]
+fn cover_text_is_clamped_and_cannot_carry_markup_into_style() {
+    let label: BookCoverLabel = serde_json::from_value(serde_json::json!({
+        "shown": true,
+        "x": 400.0, "y": -5.0, "width": 1.0, "size": 99.0, "weight": 550,
+        "lineHeight": 9.0, "align": "diagonal",
+        "font": "Fraunces;}</style>", "color": "red; background:url(x)",
+        "plate": { "color": "#ABCDEF", "opacity": 3.0, "blur": 99.0 }
+    }))
+    .unwrap();
+    let out = normalize_cover_label(label);
+    assert_eq!((out.x, out.y, out.width, out.size), (100.0, 0.0, 10.0, 30.0));
+    assert_eq!(out.weight, 600);
+    assert_eq!(out.line_height, 2.5);
+    assert_eq!(out.align, "center");
+    assert!(out.font.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'));
+    assert_eq!(out.color, "#2a1d14");
+    assert_eq!(out.plate.color, "#abcdef");
+    assert_eq!((out.plate.opacity, out.plate.blur), (1.0, 6.0));
+}
+
+#[test]
+fn cover_text_defaults_fill_a_bare_label() {
+    let label: BookCoverLabel = serde_json::from_value(serde_json::json!({ "shown": true })).unwrap();
+    let out = normalize_cover_label(label);
+    assert!(out.plate.on);
+    assert_eq!((out.x, out.y, out.weight), (50.0, 50.0, 500));
 }

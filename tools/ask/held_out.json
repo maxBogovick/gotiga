@@ -1,0 +1,458 @@
+[
+ {
+  "q": "сколько делается работа",
+  "expect": "lead_time"
+ },
+ {
+  "q": "как долго ждать готовую фигурку",
+  "expect": "lead_time"
+ },
+ {
+  "q": "через сколько недель будет готово",
+  "expect": "lead_time"
+ },
+ {
+  "q": "how many weeks until it is finished",
+  "expect": "lead_time"
+ },
+ {
+  "q": "хочу купить, что для этого нужно сделать",
+  "expect": "how_order"
+ },
+ {
+  "q": "как мне получить вот эту работу",
+  "expect": "how_order"
+ },
+ {
+  "q": "where do I buy one",
+  "expect": "how_order"
+ },
+ {
+  "q": "как приобрести",
+  "expect": "how_order"
+ },
+ {
+  "q": "а дорого?",
+  "expect": "price"
+ },
+ {
+  "q": "цены где посмотреть",
+  "expect": "price"
+ },
+ {
+  "q": "what is the price range",
+  "expect": "price"
+ },
+ {
+  "q": "есть ли доставка в Германию",
+  "expect": "shipping"
+ },
+ {
+  "q": "Do you ship to the US?",
+  "expect": "shipping"
+ },
+ {
+  "q": "привезут ли мне домой в другую страну",
+  "expect": "shipping"
+ },
+ {
+  "q": "можно ли оплатить картой",
+  "expect": "payment"
+ },
+ {
+  "q": "принимаете ли PayPal",
+  "expect": "payment"
+ },
+ {
+  "q": "как расплачиваться за заказ",
+  "expect": "payment"
+ },
+ {
+  "q": "можно ли сделать фигурку по моему рисунку",
+  "expect": "commission"
+ },
+ {
+  "q": "могу ли я попросить сделать что-то особенное",
+  "expect": "commission"
+ },
+ {
+  "q": "can you make a custom piece from my sketch",
+  "expect": "commission"
+ },
+ {
+  "q": "чем лучше чистить фигурку от пыли",
+  "expect": "care"
+ },
+ {
+  "q": "можно ли протирать, не испортится ли от света",
+  "expect": "care"
+ },
+ {
+  "q": "how should I clean it",
+  "expect": "care"
+ },
+ {
+  "q": "как вернуть",
+  "expect": "returns"
+ },
+ {
+  "q": "если не понравится, заберёте обратно?",
+  "expect": "returns"
+ },
+ {
+  "q": "what if it arrives broken",
+  "expect": "returns"
+ },
+ {
+  "q": "как отследить заказ",
+  "expect": "order_status"
+ },
+ {
+  "q": "я заказала, а что с ним сейчас",
+  "expect": "order_status"
+ },
+ {
+  "q": "where is my order",
+  "expect": "order_status"
+ },
+ {
+  "q": "куда писать если сломалось",
+  "expect": "contact"
+ },
+ {
+  "q": "как достучаться до мастера",
+  "expect": "contact"
+ },
+ {
+  "q": "email автора",
+  "expect": "contact"
+ },
+ {
+  "q": "кто это всё лепит",
+  "expect": "author"
+ },
+ {
+  "q": "расскажи про автора",
+  "expect": "author"
+ },
+ {
+  "q": "who is behind this",
+  "expect": "author"
+ },
+ {
+  "q": "из какой глины или чего это",
+  "expect": "materials"
+ },
+ {
+  "q": "what technique do you use",
+  "expect": "materials"
+ },
+ {
+  "q": "самая большая фигурка какой высоты",
+  "expect": "size"
+ },
+ {
+  "q": "помещается ли на ладони",
+  "expect": "size"
+ },
+ {
+  "q": "how tall are they",
+  "expect": "size"
+ },
+ {
+  "q": "можно ли получить такую же ещё раз",
+  "expect": "unique"
+ },
+ {
+  "q": "are these mass produced",
+  "expect": "unique"
+ },
+ {
+  "q": "у вас тут магазин или музей",
+  "expect": "is_shop"
+ },
+ {
+  "q": "is this a store",
+  "expect": "is_shop"
+ },
+ {
+  "q": "есть ли скидки",
+  "expect": "discounts"
+ },
+ {
+  "q": "будет ли распродажа",
+  "expect": "discounts"
+ },
+ {
+  "q": "promo code?",
+  "expect": "discounts"
+ },
+ {
+  "q": "можно придержать работу, пока я соберусь с деньгами",
+  "expect": "reserve"
+ },
+ {
+  "q": "how do I put one on hold",
+  "expect": "reserve"
+ },
+ {
+  "q": "что-нибудь милое для подруги на день рождения",
+  "expect": "gift"
+ },
+ {
+  "q": "ищу подарок",
+  "expect": "gift"
+ },
+ {
+  "q": "gift idea for my sister",
+  "expect": "gift"
+ },
+ {
+  "q": "объясни правила игры",
+  "expect": "play_rules"
+ },
+ {
+  "q": "как вообще работает бой",
+  "expect": "play_rules"
+ },
+ {
+  "q": "how does the game work",
+  "expect": "play_rules"
+ },
+ {
+  "q": "как сыграть первый бой",
+  "expect": "play_first"
+ },
+ {
+  "q": "с чего начать играть",
+  "expect": "play_first"
+ },
+ {
+  "q": "кто сильнее гном или маг",
+  "expect": "play_races"
+ },
+ {
+  "q": "кого бьют ведьмы лучше всего",
+  "expect": "play_races"
+ },
+ {
+  "q": "which race counters undead",
+  "expect": "play_races"
+ },
+ {
+  "q": "что нужно, чтобы победить соперника",
+  "expect": "play_win"
+ },
+ {
+  "q": "когда партия считается выигранной",
+  "expect": "play_win"
+ },
+ {
+  "q": "почему я проиграл",
+  "expect": "play_win"
+ },
+ {
+  "q": "где взять карты",
+  "expect": "play_cards_get"
+ },
+ {
+  "q": "как пополнить колоду",
+  "expect": "play_cards_get"
+ },
+ {
+  "q": "how do I earn dust",
+  "expect": "play_cards_get"
+ },
+ {
+  "q": "что значит небылица",
+  "expect": "tale_what"
+ },
+ {
+  "q": "зачем здесь байки",
+  "expect": "tale_what"
+ },
+ {
+  "q": "а что за вестник",
+  "expect": "gazette_what"
+ },
+ {
+  "q": "what are the gazette sheets",
+  "expect": "gazette_what"
+ },
+ {
+  "q": "хочу выйти из списка рассылки",
+  "expect": "unsubscribe"
+ },
+ {
+  "q": "перестаньте присылать письма",
+  "expect": "unsubscribe"
+ },
+ {
+  "q": "stop sending me emails",
+  "expect": "unsubscribe"
+ },
+ {
+  "q": "что вы про меня знаете",
+  "expect": "privacy"
+ },
+ {
+  "q": "do you use cookies or track me",
+  "expect": "privacy"
+ },
+ {
+  "q": "нужно ли регистрироваться, чтобы написать",
+  "expect": "account"
+ },
+ {
+  "q": "под каким именем заходить",
+  "expect": "account"
+ },
+ {
+  "q": "забыла как войти",
+  "expect": "forgot_signs"
+ },
+ {
+  "q": "не помню знаки",
+  "expect": "forgot_signs"
+ },
+ {
+  "q": "can't log in",
+  "expect": "forgot_signs"
+ },
+ {
+  "q": "ты бот",
+  "expect": "bot_nature"
+ },
+ {
+  "q": "вы вообще живой человек или программа",
+  "expect": "bot_nature"
+ },
+ {
+  "q": "am I talking to a human",
+  "expect": "bot_nature"
+ },
+ {
+  "q": "привет",
+  "expect": null
+ },
+ {
+  "q": "спасибо большое",
+  "expect": null
+ },
+ {
+  "q": "добрый вечер",
+  "expect": null
+ },
+ {
+  "q": "сколько всего фигурок",
+  "expect": "data_count"
+ },
+ {
+  "q": "how many tales do you have",
+  "expect": "data_count"
+ },
+ {
+  "q": "сколько карт в игре",
+  "expect": "data_count"
+ },
+ {
+  "q": "что у вас свежего",
+  "expect": "data_new"
+ },
+ {
+  "q": "any new arrivals",
+  "expect": "data_new"
+ },
+ {
+  "q": "почитай что-нибудь короткое",
+  "expect": "data_read"
+ },
+ {
+  "q": "хочу историю минут на десять",
+  "expect": "data_read"
+ },
+ {
+  "q": "something quick to read",
+  "expect": "data_read"
+ },
+ {
+  "q": "посоветуй с чего начать",
+  "expect": "data_start"
+ },
+ {
+  "q": "first time here, what should I look at",
+  "expect": "data_start"
+ },
+ {
+  "q": "расскажи коротко об этом месте",
+  "expect": null
+ },
+ {
+  "q": "what do you do here",
+  "expect": null
+ },
+ {
+  "q": "перескажи эту страницу",
+  "expect": null
+ },
+ {
+  "q": "о чём этот текст",
+  "expect": null
+ },
+ {
+  "q": "работы с совой",
+  "expect": null
+ },
+ {
+  "q": "у вас есть кошки?",
+  "expect": null
+ },
+ {
+  "q": "покажи что-нибудь страшное",
+  "expect": null
+ },
+ {
+  "q": "ведьма",
+  "expect": null
+ },
+ {
+  "q": "witch with a raven",
+  "expect": null
+ },
+ {
+  "q": "красная шапка",
+  "expect": null
+ },
+ {
+  "q": "какая сегодня погода",
+  "expect": null
+ },
+ {
+  "q": "who won the football match",
+  "expect": null
+ },
+ {
+  "q": "как приготовить борщ",
+  "expect": null
+ },
+ {
+  "q": "курс доллара",
+  "expect": null
+ },
+ {
+  "q": "tell me a joke",
+  "expect": null
+ },
+ {
+  "q": "напиши мне стихотворение про осень",
+  "expect": null
+ },
+ {
+  "q": "реши уравнение x2 = 9",
+  "expect": null
+ },
+ {
+  "q": "asdfgh",
+  "expect": null
+ }
+]

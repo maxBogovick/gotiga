@@ -1,33 +1,40 @@
 <script lang="ts">
-  import { figurineNameIn } from '$lib/workText';
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { allClaims } from '$lib/stores/all-claims.svelte';
   import { authStore } from '$lib/stores/auth.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
-  import { t, brandName, lang, locale } from '$lib/i18n';
-  import { fade, fly } from 'svelte/transition';
+  import { t, lang, brandName } from '$lib/i18n';
+  import { fade } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
   import LangSwitcher from '$lib/components/LangSwitcher.svelte';
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
   import NeighborPlate from '$lib/components/NeighborPlate.svelte';
   import { afterLoadIdle } from '$lib/after-load-idle';
-  import { isNavActive, GAME_HREF } from '$lib/nav';
+  import { fitRow } from '$lib/actions/fitRow';
+  import { dismissable } from '$lib/actions/dismissable';
+  import HeaderNotifications from '$lib/components/HeaderNotifications.svelte';
+  import UserMenuPanel from '$lib/components/UserMenuPanel.svelte';
+  import { isNavActive, GAME_HREF, WORK_LEAF_RE } from '$lib/nav';
   import { keeper } from '$lib/stores/keeper.svelte';
   import { userDesk } from '$lib/stores/user-desk.svelte';
   import { navCounts, SECTION_HREF, type NavSection } from '$lib/stores/nav-counts.svelte';
   import NavCount from '$lib/components/NavCount.svelte';
+  import { interact } from '$lib/analytics';
   import SectionSeal from '$lib/components/SectionSeal.svelte';
+  import { navPhoto } from '$lib/stores/nav-photo.svelte';
+  import { navSeals, sealSrcset } from '$lib/stores/nav-seals.svelte';
+  import type { NavSealKey } from '$lib/types/api';
+  import TaleBookFace from '$lib/components/TaleBookFace.svelte';
+  import { neighborTitle, leafCoverUrl } from '$lib/gazette';
+  import { taleTone } from '$lib/tales';
   import SiteSearch, { SITE_SEARCH_OPEN } from '$lib/components/SiteSearch.svelte';
-  import SiteAskButton from '$lib/components/SiteAskButton.svelte';
-  import SiteAskHost from '$lib/components/SiteAskHost.svelte';
   import type { SectionIconName } from '$lib/components/SectionIcon.svelte';
   import { ARCHIVE_KEEPER_INPUT_ID } from '$lib/keeper-search';
   import { edgeMask } from '$lib/headerPortrait';
+  import { COLLAPSE_AT, restoredCollapsed, restoredScrollY } from '$lib/restored-scroll';
   import type { AuthorProfile, Figurine, FigurineListItem, HeaderDecor, HeaderPortraitShown } from '$lib/types/api';
-
-  const WORK_LEAF_RE = /^\/figurines\/[^/]+\/?$/;
 
   type WorkLeafData = {
     figurine?: Figurine | null;
@@ -62,23 +69,29 @@
   let decorLeft = $derived(decor ? decorStyle(decor.left) : null);
   let decorRight = $derived(decor ? decorStyle(decor.right) : null);
 
-  function loadDecor() {
-    if (typeof window === 'undefined') return;
-    const wide = window.matchMedia(DECOR_MIN_WIDTH);
-    const fetchOnce = () => {
-      api.getHeaderDecor().then((d) => { decor = d; }).catch(() => {});
-    };
-    if (wide.matches) {
-      fetchOnce();
-      return;
+  // Выполняет `run`, когда окно подходит под запрос: сразу, если уже подходит, а
+  // если окно растянули позже — один раз при этом. Возвращает отмену: прежде
+  // слушатель оставался на `matchMedia` после ухода шапки.
+  function whenMedia(query: string, run: () => void): () => void {
+    if (typeof window === 'undefined') return () => {};
+    const mq = window.matchMedia(query);
+    if (mq.matches) {
+      run();
+      return () => {};
     }
-    // Окно растянули после загрузки — спрашиваем один раз, когда оно стало широким.
     const onChange = (e: MediaQueryListEvent) => {
       if (!e.matches) return;
-      wide.removeEventListener('change', onChange);
-      fetchOnce();
+      mq.removeEventListener('change', onChange);
+      run();
     };
-    wide.addEventListener('change', onChange);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }
+
+  function loadDecor(): () => void {
+    return whenMedia(DECOR_MIN_WIDTH, () => {
+      api.getHeaderDecor().then((d) => { decor = d; }).catch(() => {});
+    });
   }
 
   // Готовая картинка автора для свёрнутой шапки на компьютере (собирается в
@@ -93,31 +106,30 @@
     portrait && portrait.height > 0 ? Math.round((PORTRAIT_H * portrait.width) / portrait.height) : 0,
   );
 
-  function loadPortrait() {
-    if (typeof window === 'undefined') return;
-    const wide = window.matchMedia(PORTRAIT_MIN_WIDTH);
-    const fetchOnce = () => {
+  function loadPortrait(): () => void {
+    return whenMedia(PORTRAIT_MIN_WIDTH, () => {
       api.getHeaderPortrait().then((p) => { portrait = p; }).catch(() => {});
-    };
-    if (wide.matches) {
-      fetchOnce();
-      return;
-    }
-    const onChange = (e: MediaQueryListEvent) => {
-      if (!e.matches) return;
-      wide.removeEventListener('change', onChange);
-      fetchOnce();
-    };
-    wide.addEventListener('change', onChange);
+    });
   }
 
+  // Ряд печатей и левая колонка (портрет автора) существуют только на компьютере;
+  // на телефоне они скрыты стилем. Скрытая `<img>` всё равно качается, поэтому
+  // картинки для них не создаются, пока окно не широкое.
+  let wide = $state(false);
+
+  // Фото автора нужно в свёрнутой шапке и на странице работы. В развёрнутой левая
+  // колонка скрыта (`display: none`), но файл всё равно качался бы: 55 КБ на каждой
+  // странице ради картинки, которой не видно. Запрос начинается с первого движения
+  // прокрутки (раньше, чем шапка свернётся за 48 px), поэтому к свёртке файл
+  // уже на месте; раз начавшись, он не снимается.
+  const AVATAR_PREFETCH_AT = 8;
+  let avatarWanted = $state(restoredScrollY() > AVATAR_PREFETCH_AT);
+
   let rightLinks = $derived([
-    { href: '/workshop', label: $t('navWorkshop') },
     // Студия стоит в навигации, а не за дверью, как полка битв: на неё
     // приходят из соцсетей, и комната, которую надо знать по адресу,
     // посетителей не собирает.
     { href: '/studio',   label: $t('navStudio') },
-    { href: '/author',   label: $t('navAuthor') },
   ]);
 
   // Ряд печатей на компьютере: все семь разделов на виду, «Ещё» не нужно.
@@ -130,47 +142,73 @@
     section: NavSection | null;
     minor: boolean;
   };
+  /** Поперечник печати в развёрнутой шапке: вторая строка высотой 72 px, оправа и
+   *  зазор занимают ещё по 4 px сверху и снизу, так что печать стоит на всю высоту
+   *  строки. В свёрнутой шапке размер задаёт `--seal-size`. */
+  const SEAL_SIZE = 58;
+
+  /** Готовые картинки-медальоны на печатях (прозрачный фон, `static/seals/`). */
+  const SEAL_ART: Partial<Record<SectionIconName, string>> = {
+    gazette: '/seals/gazette.webp',
+    studio: '/seals/studio.webp',
+    game: '/seals/game.webp',
+  };
+  /** Как выглядит печать раздела. Если автор загрузил для него картинки в админке
+   *  («Автор → Печати меню»), стоит текущая из них; иначе то, что сайт рисует сам:
+   *  фото случайной работы, обложка последней небылицы или готовая картинка. Пока
+   *  ответ с настройкой не пришёл, готовые картинки не показываются: иначе
+   *  картинка по умолчанию мелькала бы перед картинкой автора. */
+  function sealLook(link: SealLink) {
+    // Узкое окно: ряд скрыт, а его картинки всё равно качались бы.
+    if (!wide) {
+      return {
+        photo: null,
+        tale: false,
+        art: '',
+        artSet: '',
+        artStyle: 'free' as const,
+        shape: link.section === 'tales' || link.href === GAME_HREF ? ('rect' as const) : ('round' as const),
+        ratio: link.href === GAME_HREF ? GAME_SEAL_RATIO : 2 / 3,
+      };
+    }
+    const key = link.icon as NavSealKey;
+    const cfg = navSeals.of(key);
+    const cur = navSeals.current(key);
+    if (cfg && cur) {
+      const first = cfg.images[0];
+      return {
+        photo: null,
+        tale: false,
+        art: resolveMediaUrl(cur.url) ?? cur.url,
+        artSet: sealSrcset(cur),
+        artStyle: cfg.shape === 'circle' ? ('circle' as const) : ('free' as const),
+        shape: cfg.shape === 'rect' ? ('rect' as const) : ('round' as const),
+        ratio: first.width / first.height,
+      };
+    }
+    return {
+      photo: link.section === 'works' ? navPhoto.works : null,
+      tale: link.section === 'tales' && Boolean(navPhoto.tale),
+      art: navSeals.ready ? (SEAL_ART[link.icon] ?? '') : '',
+      artSet: '',
+      artStyle: 'free' as const,
+      shape: link.section === 'tales' || link.href === GAME_HREF ? ('rect' as const) : ('round' as const),
+      ratio: link.href === GAME_HREF ? GAME_SEAL_RATIO : 2 / 3,
+    };
+  }
+  /** Ширина к высоте у картинки карты на печати «Игра» (`static/seals/game.webp`). */
+  const GAME_SEAL_RATIO = 454 / 572;
   let sealLinks = $derived<SealLink[]>([
     { href: '/figurines', label: $t('navAllWorks'), icon: 'works', section: 'works', minor: false },
     { href: '/gazette', label: $t('navGazette'), icon: 'gazette', section: 'gazette', minor: false },
     { href: '/tales', label: $t('navTales'), icon: 'tales', section: 'tales', minor: false },
     { href: GAME_HREF, label: $t('navGame'), icon: 'game', section: null, minor: false },
     { href: '/studio', label: $t('navStudio'), icon: 'studio', section: null, minor: true },
-    { href: '/workshop', label: $t('navWorkshop'), icon: 'workshop', section: null, minor: true },
-    { href: '/author', label: $t('navAuthor'), icon: 'author', section: null, minor: true },
   ]);
 
-  // Объявлен раньше `minorActive`: при отрисовке на сервере `$derived` считается сразу,
-  // и чтение `pathname` до его объявления роняло пререндер главной.
+  // Объявлен раньше всего, что его читает: при отрисовке на сервере `$derived` считается
+  // сразу, и чтение `pathname` до его объявления роняло пререндер главной.
   let pathname = $derived(page.url.pathname);
-
-  // Свёрнутая прокруткой шапка показывает три служебных раздела одной печатью
-  // «Ещё»: шесть одинаковых кругов подряд (три малые печати, лупа, язык,
-  // профиль) сливались, и разделы было не отличить от действий.
-  let minorLinks = $derived(sealLinks.filter((l) => l.minor));
-  let minorActive = $derived(minorLinks.some((l) => isNavActive(pathname, l.href)));
-  let sealMoreOpen = $state(false);
-  let sealMoreRef = $state<HTMLElement | null>(null);
-  let sealMoreBtn = $state<HTMLButtonElement | null>(null);
-
-  function closeSealMore(refocus = false) {
-    if (!sealMoreOpen) return;
-    sealMoreOpen = false;
-    if (refocus) sealMoreBtn?.focus();
-  }
-
-  function handleSealMoreOutside(e: MouseEvent) {
-    if (sealMoreOpen && sealMoreRef && !sealMoreRef.contains(e.target as Node)) sealMoreOpen = false;
-  }
-
-  // Развернулась шапка — листок «Ещё» не нужен: служебные разделы снова на виду.
-  $effect(() => {
-    if (!isScrolled) sealMoreOpen = false;
-  });
-
-  // Шапка на компьютере выше прежней (две строки), на телефоне — прежняя полоса.
-  // Высоту читают липкие полосы страниц (`--site-header-h`).
-  let isDesk = $state(false);
 
   let isHome = $derived(pathname === '/');
 
@@ -211,13 +249,9 @@
     // the browser scrolls there once the home page has mounted.
   }
 
-  let panelOpen = $state(false);
-  let panelRef = $state<HTMLElement | null>(null);
   let mobileNavOpen = $state(false);
-  let isScrolled = $state(false);
-  // Reserved for pages that open on a full-bleed dark plate. The home page is
-  // parchment again, so nothing turns this on today.
-  let isOverPlate = $state(false);
+  // Возврат на середину страницы: шапка сразу сложена, как скрипт в app.html сложил её в HTML.
+  let isScrolled = $state(restoredCollapsed());
 
   // On the home page, the maker avatar stays out of sight until the visitor
   // has scrolled past the hero photograph — it shouldn't compete with that
@@ -231,14 +265,35 @@
   let leafChrome = $state(false);
   let birdReady = $state(false);
   let stopBird: (() => void) | null = null;
+  // Всё, что надо снять при уходе шапки: слушатели `matchMedia`, отложенные чтения.
+  const cleanups: (() => void)[] = [];
 
-  function updateAvatarVisibility() {
+  // Фото автора на главной появляется, когда первый кадр ушёл выше окна. Следит
+  // за этим наблюдатель, а не обработчик прокрутки: прежде на каждом событии
+  // `scroll` читался `getBoundingClientRect`, то есть принудительный расчёт
+  // раскладки.
+  let heroObserver: IntersectionObserver | null = null;
+  let heroRetry: ReturnType<typeof setTimeout> | undefined;
+
+  function watchHero(attempt = 0) {
+    heroObserver?.disconnect();
+    heroObserver = null;
+    clearTimeout(heroRetry);
     if (pathname !== '/') {
       avatarVisible = true;
       return;
     }
-    const heroFrame = document.querySelector('.cine-frame');
-    avatarVisible = heroFrame ? heroFrame.getBoundingClientRect().bottom <= 0 : true;
+    const frame = document.querySelector('.cine-frame');
+    if (!frame) {
+      // Разметка главной ещё собирается: спросить позже, но не дольше двух секунд.
+      avatarVisible = true;
+      if (attempt < 14) heroRetry = setTimeout(() => watchHero(attempt + 1), 150);
+      return;
+    }
+    heroObserver = new IntersectionObserver(([entry]) => {
+      avatarVisible = !entry.isIntersecting && entry.boundingClientRect.bottom <= 0;
+    });
+    heroObserver.observe(frame);
   }
 
   // Правило «какой пункт горит» общее с нижней панелью разделов на телефоне.
@@ -253,35 +308,44 @@
     }
   }
   function closeMobileNav() { mobileNavOpen = false; }
-  function togglePanel() { panelOpen = !panelOpen; }
-  function closePanel()  { panelOpen = false; }
+
+  // Свёртка с запасом: сворачивается за 48 px, разворачивается ближе к верху (за
+  // 16 px). С одним порогом в обе стороны шапка на границе дрожала от каждого
+  // толчка колеса.
+  const EXPAND_AT = 16;
+  // Первый заход не играет смену вида: шапка из разметки уже стоит как надо.
+  let settling = $state(false);
 
   function handleScroll() {
-    isScrolled = window.scrollY > 48;
-    updateAvatarVisibility();
-  }
-
-  // Keep --site-header-h in sync so sticky sub-headers on detail/archive pages
-  // track the main header height without JS coupling between components.
-  $effect(() => {
-    if (typeof document === 'undefined') return;
-    document.documentElement.style.setProperty(
-      '--site-header-h',
-      isWorkLeaf ? '56px' : isDesk ? (isScrolled ? '58px' : '150px') : isScrolled ? '54px' : '78px'
-    );
-  });
-
-  function fmtDate(iso: string) {
-    return new Date(iso).toLocaleDateString($locale, { day: '2-digit', month: 'short' });
-  }
-
-  function handleOutside(e: MouseEvent) {
-    if (panelOpen && panelRef && !panelRef.contains(e.target as Node)) {
-      panelOpen = false;
+    const y = window.scrollY;
+    if (y > AVATAR_PREFETCH_AT) avatarWanted = true;
+    const next = isScrolled ? y > EXPAND_AT : y > COLLAPSE_AT;
+    if (next !== isScrolled) {
+      settling = true;
+      isScrolled = next;
     }
   }
 
-  let count = $derived(allClaims.pendingCount);
+  // Одно чтение за кадр, а не за каждое событие прокрутки.
+  let scrollFrame = 0;
+  function onScroll() {
+    if (scrollFrame) return;
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = 0;
+      handleScroll();
+    });
+  }
+
+  // Высоту шапки знает только CSS (`--site-header-h` в app.css, по ширине окна);
+  // здесь выставляются лишь два признака её состояния на <html>. Прежде число
+  // писал сюда JS, и до монтирования, а на телефоне и после него, оно расходилось
+  // с настоящей высотой (78 px при 58 px).
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement.classList;
+    root.toggle('hdr-leaf', isWorkLeaf);
+    root.toggle('hdr-scrolled', isScrolled && !isWorkLeaf);
+  });
 
   // ── Меню вошедшего ──────────────────────────────────────────────────────
   //
@@ -291,13 +355,9 @@
   // с их числами и работает с любой страницы, минуя первый экран профиля, —
   // ради этого его и открывают.
   let userMenuOpen = $state(false);
-  let userMenuRef = $state<HTMLElement | null>(null);
-  let userMenuBtn = $state<HTMLButtonElement | null>(null);
 
-  function closeUserMenu(refocus = false) {
-    if (!userMenuOpen) return;
+  function closeUserMenu() {
     userMenuOpen = false;
-    if (refocus) userMenuBtn?.focus();
   }
 
   function toggleUserMenu() {
@@ -308,35 +368,13 @@
     if (userMenuOpen) void userDesk.load();
   }
 
-  function handleUserOutside(e: MouseEvent) {
-    if (userMenuOpen && userMenuRef && !userMenuRef.contains(e.target as Node)) {
-      userMenuOpen = false;
-    }
-  }
-
-  // Разделы меню. Числа берутся из того же стола, что и рейка профиля: два
-  // счётчика одного однажды разошлись бы.
-  let userMenuRooms = $derived([
-    { href: '/profile/dealings', label: $t('profileHubDealings'), count: userDesk.counts.deals, unread: 0 },
-    { href: '/profile/messages', label: $t('profileMessages'), count: userDesk.counts.threads, unread: userDesk.counts.unread },
-    { href: '/profile/wishlist', label: $t('profileWishlist'), count: userDesk.counts.wishlist, unread: 0 },
-    { href: '/profile/watches', label: $t('profileWatches'), count: userDesk.counts.watches, unread: 0 },
-  ]);
-
   // "Write to the author" panel — a quill icon always in reach, so the
   // lightweight contact form (see ContactMessageForm) is one click away
   // from any page, not just the home correspondence card.
   let contactPanelOpen = $state(false);
-  let contactPanelRef = $state<HTMLElement | null>(null);
 
   function toggleContactPanel() { contactPanelOpen = !contactPanelOpen; }
   function closeContactPanel() { contactPanelOpen = false; }
-
-  function handleContactOutside(e: MouseEvent) {
-    if (contactPanelOpen && contactPanelRef && !contactPanelRef.contains(e.target as Node)) {
-      contactPanelOpen = false;
-    }
-  }
 
   // Mobile mirror of the "write to the author" quill. The desktop contact button
   // lives in .ghost-right-group (hidden on mobile), so the compact mobile bar gets
@@ -344,7 +382,6 @@
   // its outside-click handler doesn't fight the desktop one.
   let mobileContactOpen = $state(false);
   let mobileContactRef = $state<HTMLElement | null>(null);
-  let mobileContactPanelRef = $state<HTMLElement | null>(null);
 
   function toggleMobileContact() {
     mobileContactOpen = !mobileContactOpen;
@@ -357,13 +394,6 @@
   function openWriteFromMenu() {
     mobileNavOpen = false;
     mobileContactOpen = true;
-  }
-
-  function handleMobileContactOutside(e: MouseEvent) {
-    if (!mobileContactOpen) return;
-    const node = e.target as Node;
-    if (mobileContactRef?.contains(node) || mobileContactPanelRef?.contains(node)) return;
-    mobileContactOpen = false;
   }
 
   function isArchiveList(path: string) {
@@ -380,19 +410,52 @@
   // Escape закрывает меню вошедшего; «/» ставит курсор в поиск. На архиве и на
   // первом экране главной у страницы своё поле, и «/» ведёт туда: два поля на
   // одном экране отвечали бы на одну клавишу по-разному.
-  function handleHeaderKey(e: KeyboardEvent) {
-    if (e.key === 'Escape' && sealMoreOpen) {
-      closeSealMore(true);
-      return;
+  // Что в шапке нажимают: одно имя на всё («header_click»), в `detail` — что
+  // именно. Раньше считались только поиск и «Спросить сайт», и сказать, нужен
+  // ли пункту ряда печатей или значку справа свой вес, было нечем. Отметка
+  // идёт по классам, а не вешается на каждый элемент: так новая кнопка
+  // не остаётся незамеченной по забывчивости. Повторные нажатия считаются.
+  const SEAL_NAME: Record<string, string> = {
+    '/figurines': 'works', '/gazette': 'gazette', '/tales': 'tales',
+    '/studio': 'studio',
+  };
+  function headerClickName(el: Element): string | null {
+    if (el.matches('.seal-link')) {
+      const href = (el as HTMLAnchorElement).getAttribute('href') ?? '';
+      return 'seal:' + (SEAL_NAME[href] ?? (href === GAME_HREF ? 'game' : 'other'));
     }
-    if (e.key === 'Escape' && userMenuOpen) {
-      // Фокус возвращается на кнопку: меню открыли с клавиатуры — с неё же и
-      // продолжают. Прежде Escape меню не закрывал вовсе.
-      closeUserMenu(true);
+    if (el.matches('.contact-btn, .mobile-contact-btn, .mobile-nav-link--write')) return 'act:write';
+    if (el.matches('.mobile-menu-btn')) return 'menu';
+    if (el.matches('.mobile-nav-link')) return 'mobile_nav';
+    if (el.matches('.user-btn, .mobile-user-btn')) return 'act:profile';
+    if (el.matches('.ghost-right-group .seal')) return 'act:lang';
+    if (el.matches('.brand')) return 'brand';
+    if (el.matches('.header-avatar')) return 'author_photo';
+    return null;
+  }
+  function handleHeaderClick(e: MouseEvent) {
+    const hit = (e.target as Element | null)?.closest?.('.site-header a, .site-header button');
+    const name = hit ? headerClickName(hit) : null;
+    if (name) interact('header_click', name, null, false);
+  }
+
+  // Escape закрывает все панели шапки одним действием `dismissable`; здесь
+  // осталась только клавиша «/».
+  function refreshCounts() {
+    if (!document.hidden) void navCounts.load();
+  }
+
+  function handleHeaderKey(e: KeyboardEvent) {
+    // ⌘K / Ctrl+K открывает поиск с вопросами из любого места, в том числе из поля ввода.
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      window.dispatchEvent(new Event(SITE_SEARCH_OPEN));
       return;
     }
     if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
     if (typingInField(e.target)) return;
+    // Открыто модальное окно: поиск под ним был бы невидим.
+    if (document.querySelector('dialog[open]')) return;
     e.preventDefault();
     if (isArchiveList(pathname)) {
       const el = document.getElementById(ARCHIVE_KEEPER_INPUT_ID);
@@ -409,7 +472,6 @@
         return;
       }
     }
-    panelOpen = false;
     userMenuOpen = false;
     contactPanelOpen = false;
     mobileContactOpen = false;
@@ -438,22 +500,25 @@
     allClaims.verify();
     allClaims.startPolling();
     // Числа у пунктов — украшение, поэтому спрашиваются после загрузки страницы.
-    afterLoadIdle(() => { void navCounts.load(); });
-    document.addEventListener('click', handleOutside, { capture: true });
-    document.addEventListener('click', handleUserOutside, { capture: true });
-    document.addEventListener('click', handleContactOutside, { capture: true });
-    document.addEventListener('click', handleMobileContactOutside, { capture: true });
+    // Окно широкое сейчас или станет таким: от этого зависят картинки печатей и
+    // фото автора. На телефоне настройка печатей не спрашивается вовсе.
+    const wideMq = window.matchMedia(PORTRAIT_MIN_WIDTH);
+    const onWideChange = () => { wide = wideMq.matches; };
+    onWideChange();
+    wideMq.addEventListener('change', onWideChange);
+    cleanups.push(() => wideMq.removeEventListener('change', onWideChange));
+    cleanups.push(whenMedia(PORTRAIT_MIN_WIDTH, () => navSeals.load()));
+    cleanups.push(afterLoadIdle(() => { void navCounts.load(); }));
     document.addEventListener('keydown', handleHeaderKey);
-    document.addEventListener('click', handleSealMoreOutside, { capture: true });
-    const desk = window.matchMedia('(min-width: 1025px)');
-    isDesk = desk.matches;
-    desk.addEventListener('change', (e) => { isDesk = e.matches; });
-    window.addEventListener('scroll', handleScroll, { passive: true });
+    document.addEventListener('click', handleHeaderClick, { capture: true });
+    // Вкладка долго открыта: числа у пунктов перечитываются, когда в неё вернулись
+    // (чаще раза в пять минут стор не спрашивает).
+    document.addEventListener('visibilitychange', refreshCounts);
+    window.addEventListener('scroll', onScroll, { passive: true });
     handleScroll();
 
     api.getAuthorProfile().then((p) => { authorProfile = p; }).catch(() => {});
-    loadDecor();
-    loadPortrait();
+    cleanups.push(loadDecor(), loadPortrait());
 
     if (!authStore.isLoggedIn && authStore.token) {
       try {
@@ -476,32 +541,35 @@
 
   onDestroy(() => {
     stopBird?.();
+    heroObserver?.disconnect();
+    clearTimeout(heroRetry);
+    for (const stop of cleanups) stop();
     allClaims.stopPolling();
     if (typeof document !== 'undefined') {
-      document.removeEventListener('click', handleOutside, { capture: true });
-      document.removeEventListener('click', handleUserOutside, { capture: true });
-      document.removeEventListener('click', handleContactOutside, { capture: true });
-      document.removeEventListener('click', handleMobileContactOutside, { capture: true });
       document.removeEventListener('keydown', handleHeaderKey);
-      document.removeEventListener('click', handleSealMoreOutside, { capture: true });
+      document.removeEventListener('click', handleHeaderClick, { capture: true });
+      document.removeEventListener('visibilitychange', refreshCounts);
     }
     if (typeof window !== 'undefined') {
-      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(scrollFrame);
+    }
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.remove('hdr-leaf', 'hdr-scrolled');
     }
   });
 
   $effect(() => {
     void pathname;
-    sealMoreOpen = false;
     mobileNavOpen = false;
     mobileContactOpen = false;
     // Wait a tick so the new page's markup (and its .cine-frame, if any)
     // has mounted before we measure it.
-    requestAnimationFrame(updateAvatarVisibility);
+    requestAnimationFrame(() => watchHero());
   });
 </script>
 
-<header class="site-header" class:is-scrolled={isScrolled} class:over-plate={isOverPlate} class:is-leaf={isWorkLeaf} class:is-home={isHome}>
+<header class="site-header" class:is-scrolled={isScrolled} class:is-settling={settling} class:is-leaf={isWorkLeaf} class:is-home={isHome}>
   {#if birdReady}
     {#await import('$lib/components/HeaderBirdWalk.svelte') then { default: HeaderBirdWalk }}
       <HeaderBirdWalk />
@@ -527,7 +595,7 @@
         class:is-hidden={!avatarVisible}
         href="/#in-the-workshop"
         onclick={jumpToWorkshopStory}
-        aria-label={headerAuthorName}
+        aria-label={$t('headerAuthorAbout').replace('{name}', headerAuthorName)}
         aria-hidden={!avatarVisible}
         tabindex={avatarVisible ? 0 : -1}
         style="
@@ -538,8 +606,14 @@
           {portraitW > 0 && portraitUrl ? `--portrait-w: ${portraitW}px; --portrait-gap-l: ${portrait?.edge?.gapLeft ?? 0}px; --portrait-gap-r: ${portrait?.edge?.gapRight ?? 0}px;` : ''}
         "
       >
-        {#if avatarVisible}
-        <img src={headerAvatarUrl} alt="" class="header-avatar-img" class:has-portrait={!!portraitUrl} decoding="async" />
+        <!-- На странице работы фото автора стоит в капсуле всегда и должно быть в HTML из пререндера
+             (`wide` там ещё ложно): иначе оно появлялось бы только после гидрации. На телефоне
+             левая колонка скрыта, а `loading="lazy"` скрытую картинку не качает (на странице
+             работы капсула лежит в шапке нулевой высоты, и ленивая картинка там не
+             запрашивается вовсе, поэтому для неё загрузка обычная). В остальных случаях —
+             только на компьютере и после первого движения прокрутки. -->
+        {#if avatarVisible && (isWorkLeaf || (wide && avatarWanted))}
+        <img src={headerAvatarUrl} alt="" class="header-avatar-img" class:has-portrait={!!portraitUrl} decoding="async" loading={isWorkLeaf ? 'eager' : 'lazy'} />
         {#if portraitUrl && portraitW > 0}
           <img
             src={portraitUrl}
@@ -547,6 +621,7 @@
             class="header-portrait-img"
             width={portraitW}
             height={PORTRAIT_H}
+            loading="lazy"
             style={portraitMask ? `-webkit-mask-image: ${portraitMask}; mask-image: ${portraitMask};` : undefined}
             decoding="async"
           />
@@ -605,10 +680,8 @@
       <div class="search-slot">
         <div class="search-field"><SiteSearch variant="field" /></div>
         <div class="search-loupe"><SiteSearch variant="button" /></div>
-        <div class="ask-slot"><SiteAskButton /></div>
       </div>
     {/if}
-    <SiteAskHost />
 
     <div class="side side-right">
 
@@ -630,12 +703,18 @@
       {/if}
 
 
-      <div class="contact-anchor" bind:this={contactPanelRef}>
+      <div
+        class="contact-anchor"
+        use:dismissable={{ open: contactPanelOpen, close: closeContactPanel, focusPanel: true }}
+      >
         <button
           class="contact-btn"
           class:is-open={contactPanelOpen}
           onclick={toggleContactPanel}
           aria-label={$t('headerContactLabel')}
+          aria-haspopup="dialog"
+          aria-expanded={contactPanelOpen}
+          aria-controls="contact-panel"
           title={$t('headerContactLabel')}
         >
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -647,7 +726,15 @@
         </button>
 
         {#if contactPanelOpen}
-          <div class="contact-panel" transition:fade={{ duration: 150 }}>
+          <div
+            id="contact-panel"
+            class="contact-panel"
+            role="dialog"
+            aria-label={$t('headerContactLabel')}
+            tabindex="-1"
+            data-panel
+            transition:fade={{ duration: 150 }}
+          >
             <div class="panel-head">
               <span class="panel-title">{$t('headerContactLabel')}</span>
               <button class="panel-close" onclick={closeContactPanel} aria-label={$t('uiClose')}>✕</button>
@@ -661,84 +748,11 @@
       </div>
 
       <div class="ghost-right">
-      {#if allClaims.claims.length > 0}
-      <div class="bookings-anchor" bind:this={panelRef}>
+      <div
+        class="user-anchor"
+        use:dismissable={{ open: userMenuOpen, close: closeUserMenu }}
+      >
         <button
-          class="bookings-btn"
-          class:has-claims={count > 0}
-          class:is-open={panelOpen}
-          onclick={togglePanel}
-          aria-label={$t('bookingsHeaderTitle')}
-          title={$t('bookingsHeaderTitle')}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1"/>
-            <path d="M4 5h6M4 7.5h6M4 10h4" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-          </svg>
-          {#if count > 0}
-            <span class="badge">{count}</span>
-          {/if}
-        </button>
-
-        {#if panelOpen}
-          <div class="bookings-panel" transition:fade={{ duration: 150 }}>
-            <div class="panel-head">
-              <span class="panel-title">{$t('bookingsHeaderTitle')}</span>
-              <button class="panel-close" onclick={closePanel} aria-label={$t('uiClose')}>✕</button>
-            </div>
-
-            {#if allClaims.claims.length === 0}
-              <div class="panel-empty">
-                <p>{$t('bookingsEmpty')}</p>
-              </div>
-            {:else}
-              <ul class="panel-list">
-                {#each allClaims.claims as c (c.token)}
-                  <li class="panel-item">
-                    <div class="panel-item-top">
-                      <a
-                        href="/figurines/{c.figurineId}"
-                        class="panel-figurine-name"
-                        onclick={closePanel}
-                      >{figurineNameIn(c, $lang)}</a>
-                      <span class="panel-status panel-status--{c.status ?? 'pending'}">
-                        {c.status === 'confirmed' ? $t('bookingsConfirmed')
-                        : c.status === 'rejected'  ? $t('bookingsRejected')
-                        : c.status === 'completed' ? $t('bookingsCompleted')
-                        : $t('bookingsPending')}
-                      </span>
-                    </div>
-                    <p class="panel-dates">{fmtDate(c.startsAt)} — {fmtDate(c.endsAt)}</p>
-                    {#if !c.status || c.status === 'pending'}
-                      <button
-                        class="panel-cancel-btn"
-                        onclick={() => allClaims.cancel(c)}
-                        disabled={allClaims.cancellingToken === c.token}
-                      >
-                        {allClaims.cancellingToken === c.token ? $t('claimCancelling') : $t('claimCancelBtn')}
-                      </button>
-                      {#if allClaims.errors[c.token]}
-                        <p class="panel-err">{allClaims.errors[c.token]}</p>
-                      {/if}
-                    {/if}
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-
-            <div class="panel-footer">
-              <a href={authStore.isLoggedIn ? '/profile/dealings' : '/bookings'} class="panel-view-all" onclick={closePanel}>
-                {$t('bookingsViewAll')} →
-              </a>
-            </div>
-          </div>
-        {/if}
-      </div>
-      {/if}
-
-      <div class="user-anchor" bind:this={userMenuRef}>
-        <button
-          bind:this={userMenuBtn}
           class="user-btn"
           class:logged-in={authStore.isLoggedIn}
           class:has-initial={authStore.isLoggedIn && !avatarUrl}
@@ -750,8 +764,8 @@
                 : authStore.user?.displayName)
             : $t('authLogin')}
           title={authStore.isLoggedIn ? authStore.user?.displayName : $t('authLogin')}
-          aria-haspopup={authStore.isLoggedIn ? 'menu' : undefined}
           aria-expanded={authStore.isLoggedIn ? userMenuOpen : undefined}
+          aria-controls={authStore.isLoggedIn ? 'user-panel' : undefined}
         >
           {#if authStore.isLoggedIn}
             {#if avatarUrl}
@@ -773,41 +787,7 @@
         </button>
 
         {#if userMenuOpen && authStore.isLoggedIn}
-          <div class="user-panel" transition:fade={{ duration: 150 }}>
-            <a href="/profile" class="user-panel-head" onclick={() => closeUserMenu()}>
-              {#if avatarUrl}
-                <img src={avatarUrl} alt="" class="user-panel-avatar" />
-              {:else}
-                <span class="user-panel-initial">{(authStore.user?.displayName ?? '?')[0].toUpperCase()}</span>
-              {/if}
-              <span class="user-panel-info">
-                <span class="user-panel-name">{authStore.user?.displayName}</span>
-                <span class="user-panel-email">{authStore.handle}</span>
-              </span>
-            </a>
-
-            <ul class="user-rooms">
-              {#each userMenuRooms as room (room.href)}
-                <li>
-                  <a href={room.href} class="user-room" onclick={() => closeUserMenu()}>
-                    <span class="user-room-name">{room.label}</span>
-                    {#if room.unread > 0}
-                      <span class="user-room-new">{room.unread}</span>
-                    {:else if room.count > 0}
-                      <span class="user-room-count">{room.count}</span>
-                    {/if}
-                  </a>
-                </li>
-              {/each}
-            </ul>
-
-            <a href="/profile/account" class="user-panel-link" onclick={() => closeUserMenu()}>
-              {$t('profileTabAccount')}
-            </a>
-            <button class="user-panel-logout" onclick={handleLogout}>
-              {$t('profileLogout')}
-            </button>
-          </div>
+          <UserMenuPanel onclose={closeUserMenu} onlogout={handleLogout} />
         {/if}
       </div>
       </div>
@@ -816,68 +796,75 @@
 
     </div>
 
+    <!-- Предмет на печати «Небылицы»: обложка последней небылицы, та же `TaleBookFace`,
+         что на полке. У «Игры» готовая картинка (`SEAL_ART`). -->
+    {#snippet taleSeal()}
+      {#if navPhoto.tale}
+        <TaleBookFace
+          title={neighborTitle(navPhoto.tale, $lang)}
+          photo={leafCoverUrl(navPhoto.tale)}
+          bookCover={navPhoto.tale.bookCover ?? ''}
+          tone={taleTone(navPhoto.tale.id)}
+          sizes="64px"
+          eager
+        />
+      {/if}
+    {/snippet}
+
     <!-- Ряд печатей: разделы на компьютере. Текущий раздел — сургуч, остальные —
          оттиск в бумаге. На телефоне разделы в нижней панели (`SectionBar`). -->
     {#if !isWorkLeaf}
-      <nav class="seal-row" aria-label={$t('dockSections')}>
+      <nav class="seal-row" aria-label={$t('dockSections')} use:fitRow>
         {#each sealLinks as link (link.href)}
           {@const on = isActive(link.href)}
           {@const total = link.section ? navCounts.total(link.section) : null}
           {@const fresh = link.section && !on ? navCounts.fresh(link.section) : 0}
+          {@const look = sealLook(link)}
           <a
             href={link.href}
             class="seal-link seal-host"
             class:seal-link--minor={link.minor}
             class:is-active={on}
             aria-current={on ? 'page' : undefined}
+            data-label={link.label}
             title={link.minor ? link.label : undefined}
           >
-            <SectionSeal icon={link.icon} size={link.minor ? 34 : 46} wax={on} />
+            <SectionSeal
+              icon={link.icon}
+              size={SEAL_SIZE}
+              photo={look.photo}
+              art={look.art}
+              artSet={look.artSet}
+              artStyle={look.artStyle}
+              piece={look.tale ? taleSeal : undefined}
+              shape={look.shape}
+              ratio={look.ratio}
+            />
             <span class="seal-text">
               <span class="seal-name">{link.label}</span>
-              {#if !link.minor && ((total ?? 0) > 0 || fresh > 0)}
-                <span class="seal-num">
-                  {#if total}{total}{/if}
-                  {#if fresh > 0}<em title={$t('navNewSince').replace('{n}', String(fresh))}>{$t('navFreshShort').replace('{n}', String(fresh))}</em>{/if}
+              <!-- Вторая строка есть у каждого крупного пункта, даже пустая: пока число
+                   не пришло, строка пустая, но держит высоту, и название не прыгает.
+                   У всех троих в ней число; у «Игры» это число этюдов. -->
+              {#if !link.minor}
+                {@const shown = link.href === GAME_HREF ? navCounts.etudes : total}
+                <span
+                  class="seal-num"
+                  class:seal-num--empty={link.href !== GAME_HREF && (shown ?? 0) === 0 && fresh === 0}
+                >
+                  {#if link.href === GAME_HREF}
+                    <!-- Пока число этюдов не пришло (старый сервер, сеть), прежняя подпись:
+                         пустая строка под «Игрой» выглядела бы сломанной. -->
+                    {shown ? $t('navGameStudies').replace('{n}', String(shown)) : $t('navGameSub')}
+                  {:else}
+                    {#if total}{total}{/if}
+                    {#if fresh > 0}<em title={$t('navNewSince').replace('{n}', String(fresh))}>{$t('navFreshShort').replace('{n}', String(fresh))}</em>{/if}
+                  {/if}
                 </span>
               {/if}
             </span>
           </a>
           {#if link.href === GAME_HREF}<span class="seal-gap" aria-hidden="true"></span>{/if}
         {/each}
-        <div class="seal-more" bind:this={sealMoreRef}>
-          <button
-            bind:this={sealMoreBtn}
-            type="button"
-            class="seal-link seal-host seal-more-btn"
-            class:is-active={sealMoreOpen || minorActive}
-            aria-expanded={sealMoreOpen}
-            aria-controls="seal-more-list"
-            onclick={() => (sealMoreOpen = !sealMoreOpen)}
-          >
-            <SectionSeal icon="more" size={34} wax={minorActive} />
-            <span class="seal-text"><span class="seal-name">{$t('dockMore')}</span></span>
-          </button>
-          {#if sealMoreOpen}
-            <ul id="seal-more-list" class="seal-more-list" transition:fade={{ duration: 150 }}>
-              {#each minorLinks as link (link.href)}
-                {@const on = isActive(link.href)}
-                <li>
-                  <a
-                    href={link.href}
-                    class="seal-more-link seal-host"
-                    class:is-active={on}
-                    aria-current={on ? 'page' : undefined}
-                    onclick={() => closeSealMore()}
-                  >
-                    <SectionSeal icon={link.icon} size={28} wax={on} />
-                    <span>{link.label}</span>
-                  </a>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
       </nav>
     {/if}
 
@@ -885,7 +872,6 @@
     <div class="mobile-controls">
       {#if !isWorkLeaf}
         <div class="mobile-search"><SiteSearch variant="button" /></div>
-        <div class="mobile-search"><SiteAskButton variant="icon" /></div>
       {/if}
       <div class="mobile-contact-anchor" bind:this={mobileContactRef}>
         <button
@@ -893,6 +879,9 @@
           class:is-open={mobileContactOpen}
           onclick={toggleMobileContact}
           aria-label={$t('headerContactLabel')}
+          aria-haspopup="dialog"
+          aria-expanded={mobileContactOpen}
+          aria-controls="mobile-contact-panel"
           title={$t('headerContactLabel')}
         >
           <svg width="15" height="15" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -960,8 +949,14 @@
     aria-label={$t('navPrimaryLabel')}
     aria-hidden={!mobileNavOpen}
     inert={!mobileNavOpen}
+    use:dismissable={{
+      open: mobileNavOpen,
+      close: closeMobileNav,
+      trigger: () => document.querySelector<HTMLElement>('.mobile-menu-btn'),
+      inside: () => [document.querySelector('.mobile-menu-btn')],
+    }}
   >
-    {#each [...leftLinks, ...rightLinks] as link}
+    {#each [...leftLinks, ...rightLinks] as link (link.href)}
       <a
         href={link.href}
         class="mobile-nav-link"
@@ -989,8 +984,19 @@
   {/if}
   {#if mobileContactOpen}
     <div
+      id="mobile-contact-panel"
       class="contact-panel mobile-contact-panel"
-      bind:this={mobileContactPanelRef}
+      role="dialog"
+      aria-label={$t('headerContactLabel')}
+      tabindex="-1"
+      data-panel
+      use:dismissable={{
+        open: mobileContactOpen,
+        close: closeMobileContact,
+        focusPanel: true,
+        trigger: () => mobileContactRef?.querySelector('button'),
+        inside: () => [mobileContactRef, document.querySelector('.mobile-nav-link--write')],
+      }}
       transition:fade={{ duration: 150 }}
     >
       <div class="panel-head">
@@ -1005,35 +1011,7 @@
   {/if}
 </header>
 
-<!-- Status change notifications -->
-<div class="notif-stack" aria-live="polite">
-  {#each allClaims.notifications as notif (notif.id)}
-    <div
-      class="notif notif--{notif.newStatus}"
-      role="status"
-      in:fly={{ x: 60, duration: 350 }}
-      out:fly={{ x: 60, duration: 250 }}
-    >
-      <div class="notif-body">
-        <span class="notif-name">{figurineNameIn(notif, $lang)}</span>
-        <span class="notif-text">
-          {notif.newStatus === 'confirmed' ? $t('notifConfirmed')
-          : notif.newStatus === 'rejected'  ? $t('notifRejected')
-          : notif.newStatus === 'cancelled' ? $t('notifCancelled')
-          : $t('notifCompleted')}
-        </span>
-      </div>
-      <div class="notif-actions">
-        {#if notif.newStatus === 'rejected'}
-          <a href="/figurines/{notif.figurineId}" class="notif-link">{$t('notifTryAgain')}</a>
-        {:else if notif.newStatus === 'completed'}
-          <a href="/figurines/{notif.figurineId}" class="notif-link">{$t('notifViewFigurine')}</a>
-        {/if}
-        <button class="notif-dismiss" onclick={() => allClaims.dismissNotification(notif.id)} aria-label={$t('uiDismiss')}>✕</button>
-      </div>
-    </div>
-  {/each}
-</div>
+<HeaderNotifications />
 
 <style>
   /* ── Tokens ─────────────────────────────────────────────────── */
@@ -1048,20 +1026,19 @@
     top: 0;
     left: 0;
     width: 100%;
-    /* tallest state: room for brand name row + subtitle */
-    height: 78px;
+    /* Высота — полоса телефона; на компьютере её задаёт блок «Две строки» ниже.
+       Высота не анимируется: раскладка внутри меняется сразу, и плавная высота
+       показывала бы 0,4 с свёрнутое содержимое в ещё высокой полосе. */
+    height: 58px;
     background: rgba(248, 241, 231, 0.97);
     border-bottom: 1px solid var(--border);
     z-index: 200;
-    transition: height 0.4s var(--ease), background 0.3s ease;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    transition: background 0.3s ease;
     /* Cornice of the house: stays while rooms slide (drawer / portiere). */
     view-transition-name: site-header;
   }
 
   .site-header.is-scrolled {
-    height: 54px;
     background: rgba(248, 241, 231, 0.99);
   }
 
@@ -1124,91 +1101,6 @@
 
   :global(html:has(.site-header.is-leaf) .with-site-header) {
     padding-top: 56px;
-  }
-
-  /* ── Floating over the home room photograph ──────────────────
-     No bar, no rule: just type on the picture. The whole palette inverts —
-     parchment where ink used to be — and the header leans on a soft gradient
-     rather than a fill, so the photograph runs right up under it.
-  ──────────────────────────────────────────────────────────── */
-  .site-header.over-plate {
-    /* The reel theme decides these: on a pale backdrop (the daylight themes) the
-       header's ink flips to dark and its scrim to light, or the nav vanishes. */
-    --plate-ink: var(--reel-header-ink, 250 246 238);
-    --plate-scrim: var(--reel-header-scrim, 20 11 7);
-
-    --ink: rgb(var(--plate-ink));
-    --mid: rgb(var(--plate-ink) / 0.72);
-    --copper: rgb(var(--plate-ink));
-    --border: transparent;
-    background: linear-gradient(
-      180deg,
-      rgb(var(--plate-scrim) / 0.72) 0%,
-      rgb(var(--plate-scrim) / 0.38) 55%,
-      transparent 100%
-    );
-    border-bottom-color: transparent;
-    color: rgb(var(--plate-ink));
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-
-  /* The nav links, the subtitle and the avatar tip pin their colour straight to
-     the ink tokens rather than to --ink, so swapping --ink above never reached
-     them — over a dark photograph they stayed brown-on-brown. State them here. */
-  
-  .site-header.over-plate .brand-name,
-  .site-header.over-plate .brand-sub {
-    color: rgb(var(--plate-ink) / 0.78);
-    text-shadow: 0 1px 14px rgb(var(--plate-scrim) / 0.75);
-  }
-
-  /* Число у пункта над фотографией берёт цвет пункта: ink-tertiary на тёмном не читается. */
-  .site-header.over-plate :global(.nav-count) {
-    color: inherit;
-    opacity: 0.8;
-  }
-
-  
-  .site-header.over-plate .brand-name {
-    color: rgb(var(--plate-ink));
-  }
-
-  .site-header.over-plate .brand-sub {
-    color: rgb(var(--plate-ink) / 0.55);
-  }
-
-  /* 0.42 opacity is a discreet grey on parchment; on a photograph it is simply
-     gone. The utilities need real presence here — still quiet, but legible.
-     Scoped to the icon BUTTONS only (not `.ghost-right` as a whole): opacity
-     on an ancestor composites its entire subtree as one layer, and the
-     bookings/user/contact buttons each open a solid dropdown panel — nesting
-     those panels under a dimmed ancestor made them render half see-through
-     no matter how opaque their own background was. The always-accented
-     contact button is excluded — see its own rule below. */
-  .site-header.over-plate .ghost-right .bookings-btn,
-  .site-header.over-plate .ghost-right .user-btn {
-    opacity: 0.72;
-  }
-
-  .site-header.over-plate .ghost-right .bookings-anchor:hover .bookings-btn,
-  .site-header.over-plate .ghost-right .bookings-anchor:focus-within .bookings-btn,
-  .site-header.over-plate .ghost-right .user-anchor:hover .user-btn,
-  .site-header.over-plate .ghost-right .user-anchor:focus-within .user-btn {
-    opacity: 1;
-  }
-
-  /* Same for the bookings/account icons on the right — they draw with
-     currentColor, so one colour here repaints the SVGs too. */
-  .site-header.over-plate .ghost-right :global(button),
-  .site-header.over-plate .ghost-right :global(a) {
-    color: rgb(var(--plate-ink) / 0.9);
-  }
-
-  /* The avatar is the one thing already bright enough; it only needs separating
-     from whatever happens to be behind it. */
-  .site-header.over-plate .header-avatar {
-    box-shadow: 0 4px 20px rgba(20, 11, 7, 0.55);
   }
 
   /* ── 5-column proscenium grid ────────────────────────────────
@@ -1278,8 +1170,6 @@
       -webkit-mask-image: linear-gradient(to left, #000 calc(100% - var(--edge-fade, 35%)), transparent);
       mask-image: linear-gradient(to left, #000 calc(100% - var(--edge-fade, 35%)), transparent);
     }
-    /* Над фотографией главной шапка без фона: картинки по краям там не нужны. */
-    .site-header.over-plate .edge { display: none; }
   }
 
   @keyframes edge-in {
@@ -1322,33 +1212,24 @@
      предке склеивает всё его поддерево в один слой, и выпадающие панели
      (брони, меню вошедшего) рисовались сквозь себя — сквозь меню читался
      заголовок страницы, какой бы непрозрачной ни была его собственная
-     бумага. То же правило уже стояло у `.over-plate` ниже; здесь его не
-     было. */
-  .ghost-right .bookings-btn,
+     бумага. */
   .ghost-right .user-btn {
-    opacity: 0.42;
+    opacity: 0.85;
     transition: opacity 0.3s ease;
   }
-  .ghost-right:hover .bookings-btn,
   .ghost-right:hover .user-btn,
-  .ghost-right:focus-within .bookings-btn,
   .ghost-right:focus-within .user-btn {
-    opacity: 0.78;
+    opacity: 1;
   }
 
   .ghost-left  { margin-right: auto; justify-content: flex-start; }
   .ghost-right-group { margin-left: auto; justify-content: flex-end; }
 
-  /* Число на значке брони выступает на 6 px вправо, а зазор до профиля был 4:
+  /* Зазор между действиями справа (прежде здесь был и значок броней с числом):
      число наезжало на аватар. */
   .site-header:not(.is-leaf) .ghost-right {
     gap: 12px;
   }
-
-  /* Тонкая черта между разделами («Студия», «Ещё») и действиями («Написать»,
-     брони, профиль): без неё обе группы читались одним рядом. На странице
-     работы разделов нет, и черта не нужна. */
-  
 
   /* Две равные части вокруг логотипа: слева аватар и разделы (разделы вплотную к
      логотипу), справа «Студия», «Ещё» и действия (пункты вплотную к логотипу). */
@@ -1395,7 +1276,7 @@
   }
 
   /* Held out of sight on the home page until the hero photograph has
-     scrolled past — see updateAvatarVisibility() in the script. */
+     scrolled past — see watchHero() in the script. */
   .header-avatar.is-hidden {
     opacity: 0;
     transform: scale(0.7);
@@ -1477,43 +1358,23 @@
      по которой выше: прозрачность на `.ghost-right` уносила с собой и
      выпадающую панель. Вошедший — обычное положение дел, поэтому именно это
      правило и делало меню вошедшего полупрозрачным всегда. */
-  .ghost-right .bookings-btn.has-claims,
   .ghost-right .user-btn.logged-in,
-  .ghost-right:hover .bookings-btn.has-claims,
   .ghost-right:hover .user-btn.logged-in,
-  .ghost-right:focus-within .bookings-btn.has-claims,
-  .ghost-right:focus-within .user-btn.logged-in,
-  .site-header.over-plate .ghost-right .bookings-btn.has-claims,
-  .site-header.over-plate .ghost-right .user-btn.logged-in {
+  .ghost-right:focus-within .user-btn.logged-in {
     opacity: 1;
   }
   /* У кнопки с числом или с вошедшим именем приглушена только картинка:
      прозрачность самой кнопки уносила с собой и число на ней, и точку «есть
      новое», и кружок аватара становился бледным, как отключённый. */
-  .ghost-right .bookings-btn.has-claims svg,
   .ghost-right .user-btn.logged-in .user-avatar {
     opacity: 0.85;
     transition: opacity 0.3s ease;
   }
-  .ghost-right:hover .bookings-btn.has-claims svg,
-  .ghost-right:focus-within .bookings-btn.has-claims svg,
   .ghost-right:hover .user-btn.logged-in .user-avatar,
   .ghost-right:focus-within .user-btn.logged-in .user-avatar {
     opacity: 1;
   }
 
-
-  /* «Ещё»: кнопка выглядит как соседние пункты. */
-  
-
-  
-
-  /* copper underline slides in from left */
-  
-
-  /* Кириллица в верхнем регистре с большой разрядкой читается тяжелее
-     латиницы: русским и украинским пунктам разрядка меньше. */
-  
 
   /* ── Brand: theatrical centerpiece ───────────────────────── */
   .brand-triptych {
@@ -1596,10 +1457,11 @@
   /* subtitle: fades out on scroll */
   .brand-sub {
     font-family: var(--font-body);
-    font-size: 10px;
-    letter-spacing: 0.2em;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--color-ink-tertiary);
+    color: var(--color-ink-secondary);
     line-height: 1;
     white-space: nowrap;
     /* scroll transition */
@@ -1644,13 +1506,11 @@
     text-decoration: none;
     text-transform: uppercase;
     white-space: nowrap;
-    opacity: 0.42;
-    transition: opacity 0.3s ease, color 0.25s ease;
+    transition: color 0.25s ease;
   }
 
   .leaf-archive:hover,
   .leaf-archive:focus-visible {
-    opacity: 0.78;
     color: var(--ink);
   }
 
@@ -1666,10 +1526,6 @@
 
   .leaf-archive:hover .leaf-archive-arrow {
     transform: translateX(-2px);
-  }
-
-  .site-header.is-leaf .leaf-archive {
-    opacity: 0.62;
   }
 
   /* ── Work leaf: one copper capsule for every right-hand action ──
@@ -1689,7 +1545,6 @@
   .site-header.is-leaf .header-actions :global(.leaf-tools),
   .site-header.is-leaf .header-actions .contact-anchor,
   .site-header.is-leaf .header-actions .ghost-right,
-  .site-header.is-leaf .header-actions .bookings-anchor,
   .site-header.is-leaf .header-actions .user-anchor {
     display: flex;
     align-items: stretch;
@@ -1700,14 +1555,12 @@
 
   .site-header.is-leaf .ghost-right:hover,
   .site-header.is-leaf .ghost-right:focus-within,
-  .site-header.is-leaf .ghost-right:has(.bookings-btn.has-claims),
   .site-header.is-leaf .ghost-right:has(.user-btn.logged-in) {
     opacity: 1;
   }
 
   .site-header.is-leaf .header-actions :global(.leaf-tool),
   .site-header.is-leaf .header-actions .contact-btn,
-  .site-header.is-leaf .header-actions .bookings-btn,
   .site-header.is-leaf .header-actions .user-btn {
     box-sizing: border-box;
     width: 40px;
@@ -1754,7 +1607,6 @@
 
   .site-header.is-leaf .header-actions :global(.leaf-tool svg),
   .site-header.is-leaf .header-actions .contact-btn svg,
-  .site-header.is-leaf .header-actions .bookings-btn svg,
   .site-header.is-leaf .header-actions .user-btn svg {
     width: 14px;
     height: 14px;
@@ -1767,9 +1619,6 @@
   .site-header.is-leaf .header-actions .contact-btn:hover,
   .site-header.is-leaf .header-actions .contact-btn.is-open,
   .site-header.is-leaf .header-actions .contact-btn:focus-visible,
-  .site-header.is-leaf .header-actions .bookings-btn:hover,
-  .site-header.is-leaf .header-actions .bookings-btn.is-open,
-  .site-header.is-leaf .header-actions .bookings-btn:focus-visible,
   .site-header.is-leaf .header-actions .user-btn:hover,
   .site-header.is-leaf .header-actions .user-btn.is-open,
   .site-header.is-leaf .header-actions .user-btn:focus-visible {
@@ -1779,79 +1628,16 @@
 
   .site-header.is-leaf .header-actions :global(.leaf-tool:focus-visible),
   .site-header.is-leaf .header-actions .contact-btn:focus-visible,
-  .site-header.is-leaf .header-actions .bookings-btn:focus-visible,
   .site-header.is-leaf .header-actions .user-btn:focus-visible {
     outline: 2px solid color-mix(in srgb, #c65f3c 55%, transparent);
     outline-offset: -2px;
-  }
-
-  .site-header.is-leaf .header-actions .badge {
-    top: 4px;
-    right: 4px;
   }
 
   /* ── Mobile controls + nav (hidden on desktop) ───────────── */
   .mobile-controls { display: none; }
   .mobile-nav { display: none; }
 
-  /* ── Bookings button ─────────────────────────────────────── */
-  .bookings-anchor { position: relative; }
-
-  .bookings-btn {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    color: var(--color-ink-tertiary);
-    transition: color 0.25s;
-  }
-
-  .bookings-btn:hover,
-  .bookings-btn.is-open { color: var(--mid); }
-
-  .bookings-btn.has-claims { color: var(--copper); }
-
-  /* Число 10 px на фоне ember-deep: светлые чернила на нём дают больше 6:1;
-     прежние 7.5 px на ember — 3.7:1 и почти не читались. */
-  .badge {
-    position: absolute;
-    top: -5px;
-    right: -6px;
-    min-width: 17px;
-    height: 17px;
-    padding: 0 4px;
-    background: var(--color-ember-deep);
-    color: #fbf6ec;
-    box-shadow: 0 0 0 1.5px var(--color-canvas-base);
-    font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 10px;
-    font-weight: 600;
-    border-radius: 9px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-  }
-
   /* ── Bookings dropdown panel ─────────────────────────────── */
-  .bookings-panel {
-    position: absolute;
-    top: calc(100% + 10px);
-    right: 0;
-    width: 300px;
-    background: #f2e8d9;
-    border: 1px solid #d8c6b1;
-    box-shadow: 0 8px 32px rgba(52, 37, 28, 0.12);
-    z-index: 300;
-    font-family: Georgia, serif;
-    color: #34251c;
-  }
 
   .panel-head {
     display: flex;
@@ -1863,133 +1649,40 @@
 
   .panel-title {
     font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 9px;
-    letter-spacing: 0.18em;
+    font-size: 11px;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: rgba(95, 70, 54, 0.6);
+    color: var(--color-ink-tertiary);
   }
 
+  /* Кнопка закрытия: знак 14 px, область нажатия 44 px за счёт отрицательных
+     отступов — шапка панели не растёт. */
   .panel-close {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin: -12px -14px -12px 0;
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 11px;
-    color: rgba(95, 70, 54, 0.4);
-    padding: 2px 4px;
+    font-size: 14px;
+    color: var(--color-ink-tertiary);
+    padding: 0;
     line-height: 1;
     transition: color 0.2s;
   }
-  .panel-close:hover { color: #c65f3c; }
-
-  .panel-empty {
-    padding: 20px 16px;
-    text-align: center;
-    font-size: 0.8rem;
-    color: rgba(95, 70, 54, 0.5);
-    font-style: italic;
+  .panel-close:hover { color: var(--color-ember-deep); }
+  .panel-close:focus-visible {
+    outline: 2px solid var(--color-ember);
+    outline-offset: -4px;
   }
-
-  .panel-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    max-height: 320px;
-    overflow-y: auto;
-  }
-
-  .panel-item {
-    padding: 10px 16px;
-    border-bottom: 1px solid rgba(52, 37, 28, 0.06);
-  }
-  .panel-item:last-child { border-bottom: none; }
-
-  .panel-item-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 3px;
-  }
-
-  .panel-figurine-name {
-    font-size: 0.82rem;
-    font-weight: 500;
-    color: #34251c;
-    text-decoration: none;
-    line-height: 1.3;
-    flex: 1;
-    transition: color 0.2s;
-  }
-  .panel-figurine-name:hover { color: #c65f3c; }
-
-  .panel-status {
-    flex-shrink: 0;
-    font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 7.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 2px 6px;
-    border-radius: 2px;
-  }
-  .panel-status--pending   { background: #f5e6c8; color: #7a5520; }
-  .panel-status--confirmed { background: #d4e8c8; color: #3a6020; }
-
-  .panel-dates {
-    margin: 0 0 6px;
-    font-size: 0.72rem;
-    color: rgba(95, 70, 54, 0.6);
-    font-style: italic;
-  }
-
-  .panel-cancel-btn {
-    background: none;
-    border: 1px solid rgba(198, 95, 60, 0.4);
-    color: #c65f3c;
-    font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 8px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    padding: 3px 8px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  .panel-cancel-btn:hover:not(:disabled) { background: rgba(198, 95, 60, 0.08); border-color: #c65f3c; }
-  .panel-cancel-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  .panel-err {
-    margin: 4px 0 0;
-    font-size: 0.7rem;
-    color: #a03020;
-    font-style: italic;
-  }
-
-  .panel-footer {
-    padding: 10px 16px;
-    border-top: 1px solid rgba(52, 37, 28, 0.08);
-    text-align: right;
-  }
-
-  .panel-view-all {
-    font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 8.5px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: rgba(95, 70, 54, 0.55);
-    text-decoration: none;
-    transition: color 0.2s;
-  }
-  .panel-view-all:hover { color: #c65f3c; }
-
-  /* ── Keeper loupe ──────────────────────────────────────────
-     Appears only after the in-flow cabinet blotter has left the screen.
-     Opens the same framed note, centered under the header. */
-  
 
   /* ── Contact ("write to the author") button ─────────────────
      Deliberately NOT muted like the bookings/user icons — this is the
      answer to "how do I reach the maker," so it carries a permanent
      copper outline instead of blending in until hovered. Literal colour
-     (not the --copper token, which the .over-plate state repaints) so it
+     (not the --copper token) so it
      reads the same accent on parchment and over a photograph alike. */
   .contact-anchor { position: relative; }
 
@@ -1997,8 +1690,8 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    height: 30px;
-    padding: 0 13px 0 11px;
+    height: 36px;
+    padding: 0 14px 0 12px;
     background: transparent;
     /* Рамка видна только при наведении и в открытом виде: кнопка не должна
        быть самым громким местом шапки. Цвет текста темнее прежнего #c65f3c
@@ -2007,7 +1700,7 @@
     border-radius: 2px;
     color: #a8482a;
     font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -2027,18 +1720,22 @@
     outline-offset: 2px;
   }
 
+  .contact-panel:focus {
+    outline: none;
+  }
+
   .contact-panel {
     position: absolute;
     top: calc(100% + 10px);
     right: 0;
     width: 300px;
     padding: 4px 16px 18px;
-    background: #f2e8d9;
-    border: 1px solid #d8c6b1;
-    box-shadow: 0 8px 32px rgba(52, 37, 28, 0.12);
+    background: var(--color-canvas-sunken);
+    border: 1px solid var(--color-border-default);
+    box-shadow: var(--shadow-md);
     z-index: 300;
     font-family: Georgia, serif;
-    color: #34251c;
+    color: var(--color-ink-primary);
   }
   .contact-panel .panel-head { margin: 0 -16px 14px; }
   .contact-panel-note {
@@ -2058,15 +1755,32 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 36px;
+    height: 36px;
     background: none;
     border: 1px solid transparent;
     border-radius: 50%;
     padding: 0;
     cursor: pointer;
-    color: var(--color-ink-tertiary);
-    transition: color 0.25s, border-color 0.25s;
+    color: var(--color-ink-secondary);
+    transition: color 0.25s, border-color 0.25s, background 0.25s;
+  }
+
+  /* Не вошедший: тёмный круг со светлым знаком. Язык рядом — светлая печать с
+     буквами, и два одинаковых контура подряд читались парой; вход — действие,
+     и выглядеть должен как действие. */
+  .user-btn:not(.logged-in) {
+    background: var(--color-ink-secondary);
+    color: var(--color-canvas-base);
+  }
+  .user-btn:not(.logged-in):hover,
+  .user-btn:not(.logged-in):focus-visible {
+    background: var(--color-ink-primary);
+    color: var(--color-canvas-base);
+  }
+  .user-btn:not(.logged-in) svg {
+    width: 16px;
+    height: 16px;
   }
 
   .user-btn:hover,
@@ -2109,160 +1823,6 @@
     font-size: 13px;
     font-weight: 600;
     line-height: 1;
-  }
-
-  /* ── Меню вошедшего ──────────────────────────────────────────────────
-     Краски — только переменными. Хекс в <style> мимо темы не проходит
-     (`generateHexBridgeCSS` переписывает лишь Tailwind-классы), поэтому
-     прежняя панель на #f2e8d9 / #c65f3c не менялась, когда автор менял
-     палитру в админке. Измерено на её бумаге: прежние «ПРОФИЛЬ →» давали
-     3.51:1, «ВЫЙТИ» — 2.33:1, почта — 2.57:1 при пороге AA 4.5:1. Теперь
-     ink-secondary 8.9:1, ink-tertiary 5.7:1 и ember-deep 5.5:1. */
-  .user-panel {
-    position: absolute;
-    top: calc(100% + 10px);
-    right: 0;
-    width: 244px;
-    background: var(--color-canvas-sunken);
-    border: 1px solid var(--color-border-default);
-    box-shadow: var(--shadow-md);
-    z-index: 300;
-    font-family: var(--font-serif);
-    color: var(--color-ink-primary);
-  }
-
-  .user-panel-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 14px 10px;
-    border-bottom: 1px solid var(--color-border-subtle);
-    text-decoration: none;
-    transition: background 0.15s;
-  }
-  .user-panel-head:hover { background: var(--color-canvas-raised); }
-
-  .user-panel-avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    object-fit: cover;
-    flex-shrink: 0;
-    border: 1px solid var(--color-border-subtle);
-  }
-
-  .user-panel-initial {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: var(--color-canvas-raised);
-    border: 1px solid var(--color-border-subtle);
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-display);
-    font-size: 1rem;
-    color: var(--color-ink-tertiary);
-  }
-
-  .user-panel-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .user-panel-name {
-    font-family: var(--font-display);
-    font-size: 0.88rem;
-    color: var(--color-ink-primary);
-    line-height: 1.2;
-  }
-
-  .user-panel-email {
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    color: var(--color-ink-tertiary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .user-rooms {
-    list-style: none;
-    margin: 0;
-    padding: 4px 0;
-    border-bottom: 1px solid var(--color-border-subtle);
-  }
-
-  .user-room {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 7px 14px;
-    font-family: var(--font-body);
-    font-size: 0.82rem;
-    color: var(--color-ink-secondary);
-    text-decoration: none;
-    transition: background 0.15s, color 0.15s;
-  }
-  .user-room:hover {
-    background: var(--color-canvas-raised);
-    color: var(--color-ember-deep);
-  }
-
-  .user-room-name { white-space: nowrap; }
-
-  .user-room-count {
-    font-size: 0.74rem;
-    font-variant-numeric: tabular-nums;
-    color: var(--color-ink-tertiary);
-  }
-
-  .user-room-new {
-    font-family: var(--font-body);
-    font-size: 0.7rem;
-    font-weight: 500;
-    line-height: 1;
-    background: var(--color-ember);
-    color: var(--color-canvas-raised);
-    border-radius: 999px;
-    padding: 3px 7px;
-  }
-
-  .user-panel-link {
-    display: block;
-    padding: 9px 14px;
-    font-family: var(--font-body);
-    font-size: 0.82rem;
-    color: var(--color-ink-secondary);
-    text-decoration: none;
-    border-bottom: 1px solid var(--color-border-subtle);
-    transition: background 0.15s, color 0.15s;
-  }
-  .user-panel-link:hover {
-    background: var(--color-canvas-raised);
-    color: var(--color-ember-deep);
-  }
-
-  .user-panel-logout {
-    display: block;
-    width: 100%;
-    padding: 9px 14px;
-    background: none;
-    border: none;
-    text-align: left;
-    font-family: var(--font-body);
-    font-size: 0.82rem;
-    color: var(--color-ink-tertiary);
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-  .user-panel-logout:hover {
-    background: var(--color-canvas-raised);
-    color: var(--color-ember-deep);
   }
 
   /* ── Mobile breakpoint ───────────────────────────────────────
@@ -2378,7 +1938,7 @@
     .mobile-controls {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       margin-left: auto;
       flex: 0 0 auto;
       z-index: 2;
@@ -2391,8 +1951,9 @@
       display: none;
     }
 
-    /* Mobile "write" button — copper-outlined like the desktop CTA, sized to sit
-       inline with the account icon. */
+    /* «Написать» на телефоне — как на компьютере: круглая, без рамки, цвет
+       акцента. Прежняя квадратная рамка делала её самым громким местом полосы
+       рядом с круглыми значками. */
     .mobile-contact-anchor {
       position: relative;
       display: flex;
@@ -2400,23 +1961,29 @@
     }
 
     .mobile-contact-btn {
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
       width: 36px;
       height: 36px;
       background: transparent;
-      border: 1px solid #c65f3c;
-      border-radius: 2px;
+      border: 1px solid transparent;
+      border-radius: 50%;
       padding: 0;
       cursor: pointer;
-      color: #c65f3c;
+      color: #a8482a;
       transition: background 0.2s ease, color 0.2s ease;
     }
     .mobile-contact-btn:hover,
     .mobile-contact-btn.is-open {
-      background: #c65f3c;
+      background: #a8482a;
       color: #fff9f0;
+    }
+    .mobile-contact-btn:focus-visible,
+    .mobile-user-btn:focus-visible {
+      outline: 2px solid #a8482a;
+      outline-offset: 2px;
     }
 
     /* The shared .contact-panel is right-anchored to its button; on the mobile bar
@@ -2559,93 +2126,6 @@
     }
   }
 
-  /* ── Notifications ───────────────────────────────────────── */
-  .notif-stack {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    z-index: 500;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    pointer-events: none;
-  }
-
-  .notif {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    width: 280px;
-    padding: 12px 14px;
-    background: #f2e8d9;
-    border: 1px solid #d8c6b1;
-    border-left-width: 3px;
-    box-shadow: 0 4px 18px rgba(52, 37, 28, 0.13);
-    font-family: Georgia, serif;
-    color: #34251c;
-    pointer-events: all;
-  }
-
-  .notif--confirmed { border-left-color: #3a7a40; }
-  .notif--rejected  { border-left-color: #c65f3c; }
-  .notif--cancelled { border-left-color: #9a8070; }
-  .notif--completed { border-left-color: #3a7060; }
-
-  .notif-body { flex: 1; min-width: 0; }
-
-  .notif-name {
-    display: block;
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: #34251c;
-    margin-bottom: 2px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .notif-text {
-    display: block;
-    font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 0.68rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: rgba(95, 70, 54, 0.7);
-  }
-
-  .notif-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-
-  .notif-link {
-    font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 0.62rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #c65f3c;
-    text-decoration: none;
-    white-space: nowrap;
-    transition: opacity 0.15s;
-  }
-  .notif-link:hover { opacity: 0.75; }
-
-  .notif-dismiss {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 10px;
-    color: rgba(95, 70, 54, 0.35);
-    padding: 8px;
-    margin: -8px;
-    line-height: 1;
-    transition: color 0.15s;
-  }
-  .notif-dismiss:hover { color: #c65f3c; }
-
   /* ── Две строки на компьютере ──────────────────────────────────
      Сверху имя дома, поиск и действия; снизу ряд печатей — все семь
      разделов на виду, поэтому «Ещё» на компьютере нет. Прокрутка сводит
@@ -2654,6 +2134,40 @@
      встают в верхнюю строку на место поля поиска, ничего не пересобирая. */
   .search-slot,
   .seal-row {
+    display: none;
+  }
+
+  @keyframes header-settle-a {
+    from { opacity: 0.35; }
+    to   { opacity: 1; }
+  }
+  @keyframes header-settle-b {
+    from { opacity: 0.35; }
+    to   { opacity: 1; }
+  }
+
+  /* Смена вида — короткое проявление содержимого вместо плавной высоты. Две
+     одинаковые анимации с разными именами: смена имени запускает её заново. */
+  @media (min-width: 1025px) and (prefers-reduced-motion: no-preference) {
+    .site-header.is-settling:not(.is-leaf) .header-inner {
+      animation: header-settle-a 0.16s ease-out;
+    }
+    .site-header.is-settling.is-scrolled:not(.is-leaf) .header-inner {
+      animation-name: header-settle-b;
+    }
+  }
+
+  /* Названия не поместились в колонку (`fitRow`): остаются знаки, названия — для
+     чтеца экрана и подсказкой по наведению. */
+  .seal-row:global([data-fit='icons']) .seal-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .seal-row:global([data-fit='icons']) .seal-gap {
     display: none;
   }
 
@@ -2702,19 +2216,9 @@
     .search-field {
       width: 100%;
       max-width: 620px;
-      padding-top: 12px;
     }
     .search-loupe {
       display: none;
-    }
-    .ask-slot {
-      flex: none;
-      margin-left: 14px;
-      padding-top: 12px;
-    }
-    .site-header.is-scrolled .ask-slot {
-      padding-top: 0;
-      margin-left: 4px;
     }
     .site-header.is-scrolled .search-field {
       display: none;
@@ -2728,17 +2232,28 @@
       container: seals / inline-size;
       display: flex;
       align-items: center;
+      /* Четыре главные печати по центру ряда; «Студия» прижата к правому краю
+         и в центровку не входит. */
+      justify-content: safe center;
+      position: relative;
       gap: clamp(18px, 2.6vw, 48px);
       min-width: 0;
       border-top: 1px solid color-mix(in srgb, var(--color-ink-primary) 12%, transparent);
     }
+    .site-header:not(.is-scrolled) .seal-link--minor {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+    }
     .seal-gap {
-      flex: 1 1 0;
-      min-width: 0;
+      display: none;
     }
     .site-header.is-scrolled .seal-row {
       --seal-size: 30px;
-      justify-content: center;
+      /* `safe`: если ряд всё же шире колонки, он прижимается к левому краю, а не
+         вылезает в обе стороны и не ложится на логотип и поиск. */
+      justify-content: safe center;
       gap: clamp(10px, 1.4vw, 22px);
       border-top: 0;
     }
@@ -2752,12 +2267,77 @@
   /* Пункт ряда не сжимается: сжатый пункт обрезал своё название и наезжал
      на соседа. Нехватку места решает ряд целиком (контейнерные запросы ниже). */
   .seal-link {
+    position: relative;
+    isolation: isolate;
     display: flex;
     flex: none;
     align-items: center;
     gap: 12px;
     color: var(--ink);
     text-decoration: none;
+  }
+  /* Текущий раздел: красная линия под пунктом и тёплый свет, поднимающийся от
+     неё. Линия растёт от середины к краям, свет проявляется следом. Оправы и
+     сургучной капли у печати нет: отметка одна. Цвет не единственный признак:
+     название курсивом, у «Игры» и остальных. Движения при смене раздела одно,
+     ни пульсации, ни мерцания. */
+  .seal-link::before,
+  .seal-link::after {
+    content: '';
+    position: absolute;
+    pointer-events: none;
+  }
+  .seal-link::before {
+    z-index: -1;
+    left: -14px;
+    right: -14px;
+    bottom: -6px;
+    height: 78%;
+    background: radial-gradient(
+      ellipse 62% 100% at 50% 100%,
+      color-mix(in srgb, var(--color-ember) 30%, transparent),
+      transparent 72%
+    );
+    opacity: 0;
+    transition: opacity 0.5s ease 0.1s;
+  }
+  .seal-link::after {
+    left: -2px;
+    right: -2px;
+    bottom: -6px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--color-ember);
+    transform: scaleX(0);
+    opacity: 0.55;
+    transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s ease;
+  }
+  .seal-link:hover::after,
+  .seal-link:focus-visible::after {
+    transform: scaleX(0.3);
+  }
+  .seal-link.is-active::before {
+    opacity: 1;
+  }
+  .seal-link.is-active::after {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  .seal-link.is-active :global(.section-icon) {
+    color: var(--color-ember-deep);
+  }
+  .site-header.is-scrolled .seal-link::before,
+  .site-header.is-scrolled .seal-link::after {
+    bottom: -4px;
+  }
+  .site-header.is-scrolled .seal-link::after {
+    height: 3px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .seal-link::before,
+    .seal-link::after {
+      transition: none;
+    }
   }
   .seal-text {
     display: flex;
@@ -2777,18 +2357,27 @@
   .seal-link:hover .seal-name {
     text-decoration-color: color-mix(in srgb, var(--color-ink-primary) 35%, transparent);
   }
+  /* Подпись второй строки: 11 px и вес 500 вместо 10 px и 400 — при тех же
+     6.2:1 тонкий мелкий капслок с широкой разрядкой читался бледнее своего цвета.
+     Цвет — ink-secondary (10:1). Высота держится и у пустой строки. */
   .seal-num {
     font-family: var(--font-body);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.2em;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.2;
+    min-height: 1.2em;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--color-ink-tertiary);
+    color: var(--color-ink-secondary);
     white-space: nowrap;
+  }
+  .seal-num--empty {
+    visibility: hidden;
   }
   .seal-num em {
     margin-left: 8px;
     font-style: normal;
+    font-weight: 600;
     color: var(--color-ember-deep);
   }
   .seal-link.is-active .seal-name {
@@ -2800,11 +2389,11 @@
   }
   .seal-link--minor .seal-name {
     font-family: var(--font-body);
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--color-ink-tertiary);
+    color: var(--color-ink-secondary);
   }
   .seal-link--minor.is-active .seal-name {
     font-style: normal;
@@ -2834,6 +2423,14 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+  /* Вторая строка «Игры» («Этюды и карты») шире прежнего «Игра»: у самого узкого
+     окна компьютера ряд выходил за колонку на 4 px, потому что промежутки между
+     печатями ещё росли от ширины окна. */
+  @media (min-width: 1025px) and (max-width: 1120px) {
+    .site-header:not(.is-scrolled) .seal-row {
+      gap: 16px;
+    }
   }
   @media (min-width: 1025px) and (max-width: 1359px) {
     .seal-link--minor .seal-text {
@@ -2978,68 +2575,7 @@
     }
   }
 
-  /* ── Свёрнутая шапка: печать «Ещё», черта, язык буквами ───────────── */
-  .seal-more {
-    display: none;
-    flex: none;
-    position: relative;
-  }
-  .seal-more-btn {
-    border: 0;
-    padding: 0;
-    background: none;
-    font: inherit;
-    cursor: pointer;
-  }
-  .seal-more-list {
-    position: absolute;
-    top: calc(100% + 12px);
-    left: 50%;
-    z-index: 30;
-    min-width: 210px;
-    margin: 0;
-    padding: 8px;
-    list-style: none;
-    transform: translateX(-50%) rotate(-1deg);
-    background: var(--color-canvas-raised, #fdfaf5);
-    box-shadow:
-      0 0 0 1px #b9a184,
-      0 0 0 4px var(--color-canvas-raised, #fdfaf5),
-      0 0 0 5px color-mix(in srgb, var(--color-ink-primary) 14%, transparent),
-      0 18px 34px -16px rgba(60, 30, 15, 0.4);
-  }
-  .seal-more-link {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 10px 6px 4px;
-    font-family: var(--font-title);
-    font-size: 16px;
-    color: var(--ink);
-    text-decoration: none;
-    border-radius: 6px;
-  }
-  .seal-more-link:hover,
-  .seal-more-link:focus-visible {
-    background: color-mix(in srgb, var(--color-ink-primary) 6%, transparent);
-    outline: none;
-  }
-  .seal-more-link.is-active span {
-    font-style: italic;
-    color: var(--color-ember-deep);
-  }
-
   @media (min-width: 1025px) {
-    .site-header.is-scrolled .seal-link--minor {
-      display: none;
-    }
-    .site-header.is-scrolled .seal-more {
-      display: block;
-    }
-    .site-header.is-scrolled .seal-more-btn.is-active .seal-name {
-      font-style: italic;
-      color: var(--color-ember-deep);
-    }
 
     /* Черта между разделами и действиями: слева «куда идти», справа «что сделать». */
     .site-header.is-scrolled .search-slot {
@@ -3108,13 +2644,25 @@
     display: grid;
   }
 
-  /* Уведомление стоит над нижней панелью разделов, а не под ней. */
-  @media (max-width: 1024px) {
-    .notif-stack { bottom: calc(var(--section-bar-h, 0px) + 12px); }
+  /* Область нажатия 44 px без изменения вида: на телефоне и на экранах с
+     пальцем (планшет с шапкой компьютера) кнопки шапки были 30–36 px. */
+  .contact-btn,
+  .mobile-contact-btn {
+    position: relative;
+  }
+  @media (max-width: 1024px), (pointer: coarse) {
+    .contact-btn::after,
+  .user-btn::after,
+  .mobile-contact-btn::after,
+  .mobile-user-btn::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
   }
 
-  @media (max-width: 720px) {
-    .notif-stack { right: 12px; bottom: calc(var(--section-bar-h, 0px) + 12px); }
-    .notif { width: calc(100vw - 24px); max-width: 280px; }
-  }
 </style>

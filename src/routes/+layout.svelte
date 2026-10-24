@@ -10,13 +10,13 @@
   import { currentWork } from '$lib/stores/current-work.svelte';
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
   import { injectStyle } from '$lib/inject-style';
-  import { setCopyOverrides, lang } from '$lib/i18n';
+  import { setCopyOverrides, lang, suggestLangByCountry, t } from '$lib/i18n';
   import { pageTurn } from '$lib/stores/page-turn.svelte';
   import { roomGesture } from '$lib/house-rooms';
   import { loadSiteFonts } from '$lib/load-fonts';
   import { api } from '$lib/api';
   import { matchChrome } from '$lib/stores/match-chrome.svelte';
-  import { enterRoom, leaveRoom, noteNavigation, installErrorReporting, startVitals } from '$lib/analytics';
+  import { enterRoom, leaveRoom, noteNavigation, installErrorReporting, startVitals, interact } from '$lib/analytics';
   import type { Lang } from '$lib/i18n';
 
   type ViewTransition = { finished: Promise<void>; ready: Promise<void> };
@@ -104,6 +104,16 @@
   // which already inject this way.
   $effect(() => injectStyle('theme-override', $themeCSS));
 
+  // Ссылка «К содержимому»: хеш-переход сам фокус не переносит, а Tab после него
+  // должен идти от начала содержимого, а не из шапки.
+  function skipToMain(e: MouseEvent) {
+    const main = document.getElementById('main');
+    if (!main) return;
+    e.preventDefault();
+    main.focus({ preventScroll: true });
+    main.scrollIntoView({ block: 'start' });
+  }
+
   let stopPreviewListener: (() => void) | null = null;
   let removeMessageListener: (() => void) | null = null;
 
@@ -152,6 +162,15 @@
       if (themeData) themeConfig.set(themeData);
       if (copyData) setCopyOverrides(copyData as Record<Lang, Record<string, string>>);
     });
+
+    // A first-time reader whose browser says only "English" gets the language of
+    // their country (a German address → Deutsch). Never the admin desk, and never
+    // over a language the reader chose or the browser asked for.
+    if (!page.url.pathname.startsWith('/admin')) {
+      void suggestLangByCountry(() => api.getSiteLocale()).then((l) => {
+        if (l) interact('lang_by_country', l);
+      });
+    }
 
     if (!page.url.pathname.startsWith('/admin')) {
       // BroadcastChannel — receives updates from other tabs AND from the parent admin frame
@@ -297,6 +316,9 @@
   style:--section-bar-h={showSectionBar ? 'calc(64px + env(safe-area-inset-bottom, 0px))' : '0px'}
 >
   {#if showSiteHeader}
+    <!-- Первая остановка Tab: без неё до содержимого страницы тринадцать остановок
+         в шапке. Видна только по фокусу. -->
+    <a class="skip-link" href="#main" onclick={skipToMain}>{$t('skipToContent')}</a>
     <SiteHeader />
   {/if}
 
@@ -305,7 +327,7 @@
     <div class="house-descent" aria-hidden="true"></div>
   {/if}
 
-  <main class="min-h-screen" class:with-site-header={hasHeaderOffset}>
+  <main id="main" tabindex="-1" class="min-h-screen" class:with-site-header={hasHeaderOffset}>
     {@render children()}
   </main>
 
@@ -325,6 +347,30 @@
 </div>
 
 <style>
+  .skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 1000;
+    padding: 10px 16px;
+    background: var(--color-ink-primary);
+    color: var(--color-canvas-base);
+    font-family: var(--font-body);
+    font-size: 14px;
+    text-decoration: none;
+    border-radius: 4px;
+    transform: translateY(-200%);
+  }
+  .skip-link:focus {
+    transform: none;
+    outline: 2px solid var(--color-ember);
+    outline-offset: 2px;
+  }
+
+  main:focus {
+    outline: none;
+  }
+
   .with-site-header {
     padding-top: var(--site-header-height);
   }

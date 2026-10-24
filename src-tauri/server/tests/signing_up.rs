@@ -55,6 +55,7 @@ async fn spawn_with_mail(pool: PgPool, mail: bool) -> String {
         telegram_login_bot_username: None,
         telegram_webhook_secret: None,
         telegram_channel_id: None,
+        telegram_channel_extra: vec![],
         // Отправить всё равно не удастся — сервера нет, — но письма уходят
         // вдогонку, а порядок двери выбирается именно по наличию настроек.
         smtp_host: mail.then(|| "smtp.example.test".to_string()),

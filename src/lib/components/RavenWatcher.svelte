@@ -18,20 +18,41 @@
 
   $effect(() => { ravenCircleEl.set(circleEl); });
 
-  function onScroll() {
-    scrollY = window.scrollY;
+  // Высота страницы читается при изменении размера, а не на каждом событии
+  // прокрутки: `scrollHeight` — принудительный расчёт раскладки.
+  function measure() {
     maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
   }
 
+  let frame = 0;
+  function onScroll() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      scrollY = window.scrollY;
+    });
+  }
+
+  let sizeWatch: ResizeObserver | null = null;
+
   onMount(() => {
-    maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+    measure();
+    scrollY = window.scrollY;
     window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', measure, { passive: true });
+    sizeWatch = new ResizeObserver(measure);
+    sizeWatch.observe(document.body);
     stopFrames = afterLoadIdle(() => { framesReady = true; });
   });
 
   onDestroy(() => {
     stopFrames?.();
-    if (typeof window !== 'undefined') window.removeEventListener('scroll', onScroll);
+    sizeWatch?.disconnect();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', measure);
+      cancelAnimationFrame(frame);
+    }
     ravenCircleEl.set(null);
   });
 </script>
@@ -52,7 +73,17 @@
       {/each}
     {/if}
   </div>
-  <img class="raven-frame" src="/images/raven-frame.webp" alt="" draggable="false" decoding="async" />
+  <!-- Рамка показывается шириной 70–85 px; полноразмерная картинка (520 px, 82 КБ) нужна
+       только экрану с плотностью 3 и выше. Копия 200 px весит 16 КБ. -->
+  <img
+    class="raven-frame"
+    src="/images/raven-frame.webp"
+    srcset="/images/raven-frame-200.webp 200w, /images/raven-frame.webp 520w"
+    sizes="90px"
+    alt=""
+    draggable="false"
+    decoding="async"
+  />
 </div>
 
 <style>

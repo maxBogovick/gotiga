@@ -31,6 +31,7 @@ fn config() -> Config {
         telegram_login_bot_username: None,
         telegram_webhook_secret: None,
         telegram_channel_id: Some("@ritunia_tales".into()),
+        telegram_channel_extra: vec![],
         telegram_chat_id: None,
         smtp_host: None,
         smtp_port: None,
@@ -433,7 +434,7 @@ async fn the_order_of_the_keepers_hands_does_not_lose_a_letter(pool: PgPool) {
 /// всегда — оно печатается в журнал.
 #[sqlx::test]
 async fn the_doors_name_the_channel_by_its_name(pool: PgPool) {
-    let doors = service(&pool).tale_doors().await;
+    let doors = service(&pool).tale_doors(gotiga_server::lang::Lang::En).await;
     assert!(doors.letters);
     assert_eq!(doors.telegram.as_deref(), Some("https://t.me/ritunia_tales"));
 }

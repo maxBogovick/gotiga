@@ -12,7 +12,7 @@
 import { leafCopy } from '$lib/gazette';
 import { normalizeQuery } from '$lib/keeper-search';
 import { localized, type Lang } from '$lib/i18n';
-import type { BattleCard, FigurineListItem, FigurineText, GazetteLeaf } from '$lib/types/api';
+import type { BattleCard, FigurineListItem, FigurineText, GazetteLeaf, SiteHit } from '$lib/types/api';
 
 export interface SiteIndex {
   works: FigurineListItem[];
@@ -295,6 +295,44 @@ export function searchSite(
   }
 
   return { works, tales, gazette, cards, words };
+}
+
+/**
+ * Результат по оценке сервера (`GET /search/site`): все виды вещей стоят в том
+ * порядке, который назвал сервер, и разложены по своим разделам. Слова,
+ * найденные в самом браузере (`local`), подсказывают, **почему** вещь найдена и
+ * что подчёркнуть; вещь, которую нашёл только смысл, помечена словами «близко по
+ * смыслу». Вещи, которой нет в указателе (скрыли после загрузки), пропускаются.
+ */
+export function rankFound(index: SiteIndex, hits: SiteHit[], local: SiteFound | null): SiteFound {
+  const why = new Map<string, FoundWhy>();
+  for (const list of [local?.works, local?.tales, local?.gazette, local?.cards]) {
+    for (const f of (list ?? []) as Found<{ id: string }>[]) why.set(f.item.id, f.why);
+  }
+  const byId = {
+    work: new Map(index.works.map((w) => [w.id, w])),
+    tale: new Map(index.tales.map((l) => [l.id, l])),
+    leaf: new Map(index.gazette.map((l) => [l.id, l])),
+    card: new Map(index.cards.map((c) => [c.id, c])),
+  };
+  const out: SiteFound = { works: [], tales: [], gazette: [], cards: [], words: local?.words ?? [] };
+  for (const h of hits) {
+    const w: FoundWhy = why.get(h.id) ?? { kind: 'meaning' };
+    if (h.kind === 'work') {
+      const item = byId.work.get(h.id);
+      if (item) out.works.push({ item, why: w });
+    } else if (h.kind === 'tale') {
+      const item = byId.tale.get(h.id);
+      if (item) out.tales.push({ item, why: w });
+    } else if (h.kind === 'leaf') {
+      const item = byId.leaf.get(h.id);
+      if (item) out.gazette.push({ item, why: w });
+    } else {
+      const item = byId.card.get(h.id);
+      if (item) out.cards.push({ item, why: w });
+    }
+  }
+  return out;
 }
 
 export function foundTotal(f: SiteFound, scope: SearchScope = 'all'): number {

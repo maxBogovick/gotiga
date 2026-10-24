@@ -70,6 +70,37 @@ impl SearchRecord {
         }
     }
 
+    /// Дописать название и описание на других языках: поиск по словам находит
+    /// вещь на любом из них, а не только на том, что лежит в основных полях.
+    pub fn with_extra(mut self, name: &str, body: &str) -> Self {
+        if !name.trim().is_empty() {
+            self.name = format!("{} {}", self.name, name);
+        }
+        if !body.trim().is_empty() {
+            self.full_description = Some(match self.full_description.take() {
+                Some(d) => format!("{d} {body}"),
+                None => body.to_string(),
+            });
+        }
+        self
+    }
+
+    /// Запись из произвольного текста (каталог «Спросить сайт»): первая
+    /// формулировка идёт в имя, остальные — в тело.
+    pub fn from_text(id: &str, name: &str, body: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            short_text: None,
+            full_description: Some(body.to_string()),
+            dimensions: None,
+            material: None,
+            technique: None,
+            visual_caption: None,
+            pinterest_description: None,
+        }
+    }
+
     fn fields(&self) -> [(&str, f32); 8] {
         [
             (self.name.as_str(), W_NAME),
@@ -114,6 +145,100 @@ pub fn hybrid_search(
     let vector_ids = cluster_vector(vector_scores);
 
     rrf_merge(&[&vector_ids, &word_ids, &tri_ids], limit.clamp(1, 200))
+}
+
+/// Поправки к оценке гибрида для поиска по всему сайту (`site_search`).
+///
+/// RRF смотрит только на места в трёх списках, поэтому точное совпадение слов
+/// запроса с названием (то, что ищущий и имеет в виду, когда набирает имя) не
+/// отличается от случайной близости по вектору. Бонус за покрытие возвращает это
+/// различие. Значения подобраны замером (`examples/search_probe.rs`).
+#[derive(Clone, Copy, Debug)]
+pub struct SiteBoost {
+    /// Все содержательные слова запроса нашлись в названии вещи.
+    pub name: f32,
+    /// Все содержательные слова запроса нашлись хоть в одном поле вещи.
+    pub any: f32,
+    /// Слово, которое стоит у такой доли вещей и больше, ничего не отличает
+    /// («with», «doll», «the») и в покрытие не входит.
+    pub common: f32,
+}
+
+impl SiteBoost {
+    pub const NONE: SiteBoost = SiteBoost { name: 0.0, any: 0.0, common: 1.0 };
+}
+
+/// Содержательные слова запроса, каждое со своими написаниями (латинская форма
+/// и, если `fuzzy`, опечатки). Пусто — запрос из одних общих слов.
+fn content_groups(q: &str, records: &[SearchRecord], vocab: &HashSet<String>, common: f32, fuzzy: bool) -> Vec<Vec<String>> {
+    let docs: Vec<HashSet<String>> = records
+        .iter()
+        .map(|r| r.analyzed().into_iter().flat_map(|f| f.keys).collect())
+        .collect();
+    let n = records.len().max(1) as f32;
+    let mut groups = Vec::new();
+    for tok in tokens(q) {
+        let mut forms: Vec<String> = Vec::new();
+        for form in token_forms(&tok) {
+            let variants = if fuzzy { expand_term(&form, vocab) } else { vec![form] };
+            for e in variants {
+                if !forms.contains(&e) {
+                    forms.push(e);
+                }
+            }
+        }
+        let seen = docs.iter().filter(|d| forms.iter().any(|f| d.contains(f))).count() as f32;
+        if seen / n >= common {
+            continue;
+        }
+        groups.push(forms);
+    }
+    groups
+}
+
+/// Гибрид по всем видам вещей с бонусом за покрытие слов. Возвращает все вещи,
+/// у которых есть оценка, по убыванию (`limit` обрезает).
+pub fn site_search(
+    query: &str,
+    records: &[SearchRecord],
+    vector_scores: &[(String, f32)],
+    limit: usize,
+    boost: SiteBoost,
+) -> Vec<SemanticHit> {
+    let mut hits = hybrid_search(query, records, vector_scores, records.len().max(1));
+    if hits.is_empty() || (boost.name == 0.0 && boost.any == 0.0) {
+        hits.truncate(limit);
+        return hits;
+    }
+    let q = fold_in_script(query);
+    let vocab = cabinet_vocab(records);
+    // Название принимает опечатки («frankenshtein»); «в каком-то поле» — только
+    // точное слово: неточное совпадение с одним словом длинного текста делало
+    // из «dragon» находку.
+    let groups = content_groups(&q, records, &vocab, boost.common, true);
+    let exact = content_groups(&q, records, &vocab, boost.common, false);
+    if !groups.is_empty() {
+        let by_id: HashMap<&str, &SearchRecord> = records.iter().map(|r| (r.id.as_str(), r)).collect();
+        for h in hits.iter_mut() {
+            let Some(rec) = by_id.get(h.id.as_str()) else { continue };
+            let fields = rec.analyzed();
+            let name_keys: HashSet<&String> = fields[0].keys.iter().collect();
+            let any_keys: HashSet<&String> = fields.iter().flat_map(|f| f.keys.iter()).collect();
+            if groups.iter().all(|g| g.iter().any(|f| name_keys.contains(f))) {
+                h.score += boost.name;
+            } else if !exact.is_empty() && exact.iter().all(|g| g.iter().any(|f| any_keys.contains(f))) {
+                h.score += boost.any;
+            }
+        }
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+    }
+    hits.truncate(limit);
+    hits
 }
 
 pub fn records_from_figurines(figs: &[Figurine]) -> Vec<SearchRecord> {
@@ -605,5 +730,56 @@ mod tests {
             jac_would_be_low < WORD_SIM_FLOOR,
             "document Jaccard would reject the same stem; word_similarity must not"
         );
+    }
+
+    #[test]
+    fn site_search_prefers_words_found_in_the_name() {
+        // Вектора нет: оценку даёт только лексика, поэтому бонус виден чище.
+        let records = vec![
+            rec("a", "Gnome with axe", "small doll made of clay"),
+            rec("b", "Cooking gnome", "gnome with a pot and an axe on the wall"),
+            rec("c", "Witch", "witch with broom"),
+        ];
+        let boost = SiteBoost { name: 0.05, any: 0.01, common: 0.9 };
+        let hits = site_search("gnome axe", &records, &[], 10, boost);
+        assert_eq!(hits.first().map(|h| h.id.as_str()), Some("a"), "{hits:?}");
+        let plain = site_search("gnome axe", &records, &[], 10, SiteBoost::NONE);
+        let gap = |hs: &[SemanticHit]| {
+            let s = |id: &str| hs.iter().find(|h| h.id == id).map(|h| h.score).unwrap_or(0.0);
+            s("a") - s("b")
+        };
+        assert!(gap(&hits) > gap(&plain), "бонус должен разводить название и текст");
+    }
+
+    #[test]
+    fn site_search_ignores_words_that_every_item_has() {
+        // «doll» стоит почти у каждой вещи и запрос «doll witch» ничем не сужает:
+        // покрытием считается только «witch».
+        let records = vec![
+            rec("a", "Small doll Witch", ""),
+            rec("b", "Small doll Gnome", ""),
+            rec("c", "Small doll Granny", ""),
+            rec("d", "Small doll Vampire", ""),
+        ];
+        let boost = SiteBoost { name: 0.05, any: 0.0, common: 0.5 };
+        let hits = site_search("doll witch", &records, &[], 10, boost);
+        assert_eq!(hits.first().map(|h| h.id.as_str()), Some("a"));
+        assert!(hits.first().unwrap().score > 0.05, "название покрыто — бонус выдан");
+    }
+
+    #[test]
+    fn site_search_without_boost_is_plain_hybrid() {
+        let records = vec![rec("a", "Gnome with axe", ""), rec("b", "Witch", "")];
+        let a = site_search("gnome", &records, &[], 10, SiteBoost::NONE);
+        let b = hybrid_search("gnome", &records, &[], records.len());
+        assert_eq!(a.iter().map(|h| &h.id).collect::<Vec<_>>(), b.iter().map(|h| &h.id).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn with_extra_adds_other_languages_to_the_lexical_side() {
+        let r = rec("a", "Forester", "").with_extra("Лесник", "лесник с белками");
+        let records = vec![r, rec("b", "Witch", "")];
+        let hits = site_search("лесник", &records, &[], 10, SiteBoost::NONE);
+        assert_eq!(hits.first().map(|h| h.id.as_str()), Some("a"));
     }
 }

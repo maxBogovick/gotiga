@@ -7,7 +7,7 @@
 //! has to write something for it — instead of a `bool` that quietly says
 //! "Russian, or else English".
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Lang {
     #[default]
     En,

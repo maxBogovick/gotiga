@@ -8,20 +8,52 @@
   // Печать раздела. Без краски — оттиск в бумаге (слепое тиснение); у текущего
   // раздела — сургучная капля. Цвет в ряду печатей один, и он говорит, где
   // человек. Знак внутри — силуэт из `SectionIcon`.
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import SectionIcon, { type SectionIconName } from '$lib/components/SectionIcon.svelte';
+  import AppImage from '$lib/components/AppImage.svelte';
 
   let {
     icon,
     size = 46,
     wax = false,
+    photo = null,
+    piece,
+    art = '',
+    artSet = '',
+    artStyle = 'free',
+    shape = 'round',
+    ratio = 0.7,
   }: {
     icon: SectionIconName;
     /** Поперечник оттиска; капля на 8 px шире — сургуч растекается.
      *  Снаружи его можно сменить переменной `--seal-size`. */
     size?: number;
     wax?: boolean;
+    /** Фото вместо знака. У такой печати текущий раздел отмечен красной оправой,
+     *  а не каплей: капля закрыла бы фото. Пока фото нет, стоит знак и капля. */
+    photo?: { src: string; thumbUrl?: string | null } | null;
+    /** Предмет вместо знака: книга или карта, целиком и без наклона. */
+    piece?: Snippet;
+    /** Готовая картинка-медальон с прозрачным фоном (путь от корня сайта). Печать
+     *  без бумажного круга: у медальона своя рамка, и круг под ней был бы второй. */
+    art?: string;
+    /** `srcset` картинки: малая копия для обычного экрана, крупная для плотных. */
+    artSet?: string;
+    /** `free` — картинка как есть, без бумажного круга; `circle` — фото в круге
+     *  печати. В прямоугольной печати картинка всегда заполняет её целиком. */
+    artStyle?: 'free' | 'circle';
+    /** `rect` — печать-прямоугольник под книгу или карту: круг обрезал бы карту, а
+     *  без рамки карта не карта. Форма задана заранее, а не когда пришёл предмет:
+     *  иначе пункт менял бы ширину на глазах и ряд, стоящий по центру, дёргался.
+     *  У такой печати текущий раздел отмечен оправой, а не каплей. */
+    shape?: 'round' | 'rect';
+    /** Ширина прямоугольника к высоте. */
+    ratio?: number;
   } = $props();
+
+  let rect = $derived(shape === 'rect');
+  let ring = $derived(wax && (rect || Boolean(photo) || Boolean(art)));
+  let dropWanted = $derived(wax && !rect && !photo && !art);
 
   // Уникальный id градиента: печатей на странице много, а id — глобальный.
   const gid = `wax-${Math.random().toString(36).slice(2, 8)}`;
@@ -31,10 +63,10 @@
   // каждой страницы их двенадцать, и ни одна из десяти негорящих не показывает её.
   // `lit` включается на кадр позже `armed`, чтобы капля, появившаяся при смене
   // раздела, проявлялась переходом, а не возникала сразу.
-  let armed = $state(untrack(() => wax));
-  let lit = $state(untrack(() => wax));
+  let armed = $state(untrack(() => dropWanted));
+  let lit = $state(untrack(() => dropWanted));
   $effect(() => {
-    if (!wax) {
+    if (!dropWanted) {
       lit = false;
       return;
     }
@@ -43,12 +75,58 @@
       return;
     }
     armed = true;
-    requestAnimationFrame(() => requestAnimationFrame(() => (lit = wax)));
+    requestAnimationFrame(() => requestAnimationFrame(() => (lit = dropWanted)));
+  });
+
+  // Картинка сменяется плавно: новая проявляется поверх прежней, и когда она
+  // проявилась, прежняя убирается. Первая картинка тоже проявляется, а не
+  // выскакивает: она приходит после загрузки страницы.
+  type Layer = { key: number; src: string; set: string };
+  let layers = $state<Layer[]>([]);
+  let layerKey = 0;
+  let dropTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const src = art;
+    const set = artSet;
+    untrack(() => {
+      clearTimeout(dropTimer);
+      if (!src) {
+        layers = [];
+        return;
+      }
+      if (layers.length && layers[layers.length - 1].src === src) return;
+      layers = [...layers.slice(-1), { key: ++layerKey, src, set }];
+      if (layers.length > 1) {
+        dropTimer = setTimeout(() => (layers = layers.slice(-1)), 1000);
+      }
+    });
+    return () => clearTimeout(dropTimer);
   });
 </script>
 
-<span class="seal" class:seal--wax={lit} style:--seal-base={`${size}px`} aria-hidden="true">
-  <span class="blind"><SectionIcon name={icon} size={size} /></span>
+<span class="seal" class:seal--wax={lit} class:seal--ring={ring} class:seal--rect={rect} class:seal--piece={Boolean(piece)} class:seal--art={Boolean(art) && artStyle === 'free'} class:seal--art-circle={Boolean(art) && artStyle === 'circle'} style:--seal-base={`${size}px`} style:--piece-ratio={ratio} aria-hidden="true">
+  <span class="blind">
+    <SectionIcon name={icon} size={size} />
+    {#if piece}
+      <span class="piece">{@render piece()}</span>
+    {/if}
+    {#each layers as layer (layer.key)}
+      <img
+        class="art"
+        src={layer.src}
+        srcset={layer.set || undefined}
+        sizes={layer.set ? '64px' : undefined}
+        alt=""
+        decoding="async"
+      />
+    {/each}
+    {#if photo}
+      <span class="photo">
+        <AppImage src={photo.src} thumbUrl={photo.thumbUrl} alt="" class="photo-img" sizes="64px" loading="eager" />
+      </span>
+    {/if}
+  </span>
+  <span class="rim"></span>
   {#if armed}
   <span class="drop">
     <svg viewBox="0 0 52 52">
@@ -92,32 +170,24 @@
     border-radius: 50%;
     background: var(--seal-paper, var(--color-canvas-base, #f8f1e7));
     box-shadow:
-      inset 1.5px 2px 2px rgba(111, 59, 36, 0.22),
-      inset -1.5px -1.5px 1.5px rgba(255, 255, 255, 0.95),
-      0 0 0 1px rgba(156, 125, 93, 0.28);
+      inset 1px 1.5px 1.5px rgba(111, 59, 36, 0.16),
+      inset -1px -1px 1px rgba(255, 255, 255, 0.9),
+      0 0 0 1px rgba(156, 125, 93, 0.4);
     transition: box-shadow 0.25s ease, opacity 0.25s ease, width 0.3s ease, height 0.3s ease;
-  }
-  .blind::before {
-    content: '';
-    position: absolute;
-    inset: 4px;
-    border-radius: 50%;
-    box-shadow:
-      inset 0 0 0 0.75px rgba(156, 125, 93, 0.45),
-      0 0.75px 0 rgba(255, 255, 255, 0.8);
   }
   .blind :global(.section-icon),
   .drop-icon :global(.section-icon) {
-    width: calc(var(--seal) * 0.54);
-    height: calc(var(--seal) * 0.54);
+    width: calc(var(--seal) * 0.62);
+    height: calc(var(--seal) * 0.62);
     transition: width 0.3s ease, height 0.3s ease;
   }
   .blind :global(.section-icon) {
     position: relative;
-    color: #8f6f52;
+    /* ink-secondary на бумаге 10:1; прежние #8f6f52 давали 4.1:1 и тонули в оттиске. */
+    color: var(--color-ink-secondary, #5a3420);
     --ib: var(--seal-paper, var(--color-canvas-base, #f8f1e7));
-    --em: #8f6f52;
-    filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.95)) drop-shadow(0 -0.6px 0 rgba(90, 52, 32, 0.35));
+    --em: var(--color-ink-secondary, #5a3420);
+    filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.9));
     transition: color 0.25s ease, width 0.3s ease, height 0.3s ease;
   }
 
@@ -125,13 +195,13 @@
   :global(.seal-host:hover) .blind,
   :global(.seal-host:focus-visible) .blind {
     box-shadow:
-      inset 2px 2.5px 3px rgba(111, 59, 36, 0.32),
-      inset -1.5px -1.5px 1.5px rgba(255, 255, 255, 1),
-      0 0 0 1px rgba(111, 59, 36, 0.45);
+      inset 1.5px 2px 2.5px rgba(111, 59, 36, 0.26),
+      inset -1px -1px 1px rgba(255, 255, 255, 1),
+      0 0 0 1px rgba(111, 59, 36, 0.55);
   }
   :global(.seal-host:hover) .blind :global(.section-icon),
   :global(.seal-host:focus-visible) .blind :global(.section-icon) {
-    color: #7a5035;
+    color: var(--color-ink-primary, #2c1710);
   }
 
   .drop {
@@ -161,6 +231,152 @@
     filter: drop-shadow(0 1px 0 rgba(240, 170, 140, 0.35));
   }
 
+  /* Фото в круге оттиска: закрывает знак, который стоял под ним до загрузки.
+     Объём оттиска возвращает внутренняя тень поверх фото. */
+  .photo {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    border-radius: 50%;
+  }
+  .photo :global(.photo-img) {
+    width: 100%;
+    height: 100%;
+  }
+  .photo :global(.app-image-main),
+  .photo :global(.app-image-thumb) {
+    object-position: 50% 28%;
+  }
+  .photo::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+      inset 1px 2px 4px rgba(60, 30, 15, 0.3);
+    pointer-events: none;
+  }
+
+  /* Медальон: картинка на прозрачном фоне чуть больше печати (острия рамки
+     выходят за круг оправы так же, как на самой картинке); бумажного круга под
+     ней нет. Знак под картинкой гаснет. */
+  .seal--art .blind {
+    box-shadow: none !important;
+    background: transparent;
+    overflow: visible;
+  }
+  .seal--art .blind :global(.section-icon) {
+    opacity: 0;
+  }
+  @keyframes seal-art-in {
+    from {
+      opacity: 0;
+    }
+  }
+  .art {
+    animation: seal-art-in 0.8s ease both;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: calc(var(--seal) * 1.08);
+    height: calc(var(--seal) * 1.08);
+    transform: translate(-50%, -50%);
+    object-fit: contain;
+    filter: drop-shadow(0 1px 1.5px rgba(50, 25, 12, 0.45));
+    transition: transform 0.25s ease, width 0.3s ease, height 0.3s ease;
+    pointer-events: none;
+  }
+  :global(.seal-host:hover) .art,
+  :global(.seal-host:focus-visible) .art {
+    transform: translate(-50%, -50%) scale(1.06);
+  }
+
+  /* Фото в круге печати: бумажный круг остаётся, картинка заполняет его. */
+  .seal--art-circle .blind :global(.section-icon) {
+    opacity: 0;
+  }
+  .seal--art-circle .art {
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    transform: none;
+    border-radius: 50%;
+    object-fit: cover;
+    object-position: 50% 28%;
+    filter: none;
+  }
+  :global(.seal-host:hover) .seal--art-circle .art,
+  :global(.seal-host:focus-visible) .seal--art-circle .art {
+    transform: none;
+  }
+
+  /* Готовая картинка в прямоугольной печати (карта «Игры»): заполняет её целиком,
+     углы скруглены под оправу. */
+  .seal--rect .art {
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    transform: none;
+    object-fit: contain;
+    border-radius: 4px;
+  }
+  :global(.seal-host:hover) .seal--rect .art,
+  :global(.seal-host:focus-visible) .seal--rect .art {
+    transform: scale(1.05);
+  }
+
+  /* Печать-прямоугольник: пункт уже на ширину прямоугольника, а не круга. Пока
+     предмета нет, стоит бумажная плашка с знаком; предмет закрывает её целиком. */
+  .seal--rect {
+    width: calc(var(--seal) * var(--piece-ratio, 0.7) + 8px);
+  }
+  .seal--rect .blind {
+    width: calc(var(--seal) * var(--piece-ratio, 0.7));
+    border-radius: 4px;
+  }
+  .piece {
+    position: absolute;
+    inset: 0;
+    filter: drop-shadow(0 1px 1.5px rgba(50, 25, 12, 0.5));
+    transition: transform 0.25s ease;
+    pointer-events: none;
+  }
+  :global(.seal-host:hover) .piece,
+  :global(.seal-host:focus-visible) .piece {
+    transform: scale(1.05);
+  }
+  .seal--piece .blind {
+    box-shadow: none !important;
+    background: transparent;
+  }
+  .seal--piece .blind :global(.section-icon) {
+    opacity: 0;
+  }
+
+  /* Красная оправа текущего раздела: круг шире оттиска на 4 px с каждой
+     стороны, между фото и оправой 2 px бумаги. Помещается в те же +8 px,
+     что занимает капля, поэтому ряд не сдвигается. */
+  .rim {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid var(--color-ember, #c65f3c);
+    opacity: 0;
+    transform: scale(0.92);
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.34, 1.4, 0.64, 1);
+  }
+  .seal--ring .rim {
+    opacity: 1;
+    transform: none;
+  }
+  .seal--rect .rim {
+    border-radius: 7px;
+  }
+
   .seal--wax .blind {
     opacity: 0;
   }
@@ -170,7 +386,11 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .drop {
+    .art {
+      animation: none;
+    }
+    .drop,
+    .rim {
       transition: none;
     }
   }

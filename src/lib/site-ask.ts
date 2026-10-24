@@ -17,7 +17,7 @@ import { leafCopy } from '$lib/gazette';
 import { readingMinutes } from '$lib/tales';
 import { cardRace, cardTitle, searchSite } from '$lib/site-search';
 import type { AskIndex } from '$lib/site-index';
-import type { BattleCard, FigurineListItem } from '$lib/types/api';
+import type { AskHandler, AskRouteReply, BattleCard, FigurineListItem } from '$lib/types/api';
 import {
   say, amount, joinList, quote, short_min, n_works, n_tales, n_leaves, n_cards, n_etudes, n_minutes,
   workName, leafTitle, etudeTitle, newest, heroCards, etudesInOrder, talesNewest,
@@ -71,6 +71,8 @@ export interface AskParsed {
   price?: boolean;
   /** Команда: куда перейти или что переключить. */
   go?: GoSpec;
+  /** Приветствие или «спасибо» (`chat`). */
+  chat?: 'hello' | 'thanks';
 }
 
 const ABOUT_PHRASES: [AboutKey, string[]][] = [
@@ -123,6 +125,32 @@ const EARLIEST = ['самая ранн', 'самая стар', 'самая пе
   'más antigua', 'mas antigua', 'primera obra', 'desde cuándo', 'desde cuando', 'früheste', 'frueheste', 'älteste', 'erstes werk', 'seit wann', 'più antica', 'piu antica', 'prima opera', 'da quando'];
 
 
+// Приветствие и «спасибо» разбирают правила, а не каталог: фраза в одно слово
+// не несёт смысла, по которому её можно сравнить с записями.
+const GREETINGS = ['привет', 'здравствуй', 'здравствуйте', 'добрый день', 'добрый вечер', 'доброе утро', 'приветствую', 'привіт', 'вітаю', 'добрий день', 'добрий вечір', 'доброго дня',
+  'hello', 'hi', 'hey', 'good morning', 'good evening', 'good afternoon', 'hola', 'buenos días', 'buenas tardes', 'hallo', 'guten tag', 'guten morgen', 'servus', 'ciao', 'buongiorno', 'buonasera'];
+const THANKS = ['спасибо', 'благодарю', 'дякую', 'дякуємо', 'thanks', 'thank you', 'thx', 'gracias', 'danke', 'grazie', 'merci'];
+/** Что ещё может стоять в такой фразе, кроме самого приветствия или «спасибо». */
+const CHAT_REST = new Set(['большое', 'вам', 'тебе', 'вас', 'за', 'всё', 'все', 'ответ', 'понятно', 'ясно', 'хорошо', 'отлично', 'всем', 'там', 'дуже', 'велике', 'вам', 'тобі', 'дякую', 'there', 'you', 'a', 'lot', 'very', 'much', 'so', 'all', 'ok', 'okay', 'everyone', 'muchas', 'sehr', 'schön', 'mille', 'molte', 'vielen', 'tante', 'todos', 'allen', 'tutti', 'und', 'e', 'y', 'bien', 'gut']);
+
+/** Это приветствие или «спасибо» и больше ничего. */
+export function smalltalkOf(q: string): 'hello' | 'thanks' | null {
+  let text = ` ${q.replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim()} `;
+  if (text.trim() === '') return null;
+  let kind: 'hello' | 'thanks' | null = null;
+  for (const [list, which] of [[GREETINGS, 'hello'], [THANKS, 'thanks']] as const) {
+    for (const w of list) {
+      if (text.includes(` ${w} `)) {
+        kind ??= which;
+        text = text.replace(` ${w} `, ' ');
+      }
+    }
+  }
+  if (!kind) return null;
+  const rest = text.trim().split(' ').filter(Boolean);
+  return rest.length <= 3 && rest.every((t) => CHAT_REST.has(t)) ? kind : null;
+}
+
 export function parseAsk(query: string): AskParsed {
   const q = normalizeQuery(query);
   const tokens = tokensOf(q);
@@ -137,6 +165,8 @@ export function parseAsk(query: string): AskParsed {
       .join(' ');
 
   if (!q) return { intent: 'none', topic: '', minutes };
+  const chat = smalltalkOf(q);
+  if (chat) return { intent: 'chat', topic: '', minutes, chat };
   if (wantsPage(query)) return { intent: 'page', topic: '', minutes };
   if (has(SUMMARY_PHRASES)) return { intent: 'summary', topic: '', minutes };
   if (wantsMatch(query)) return { intent: 'match', topic: '', minutes };
@@ -178,6 +208,42 @@ export function parseAsk(query: string): AskParsed {
   }
   const topic = topicWithout([]);
   return { intent: topic ? 'search' : 'none', topic, minutes };
+}
+
+// ── Что в поле: слово для поиска, вопрос или команда ──────────────────────
+
+/** Первое слово фразы, с которого начинается вопрос (шесть языков). Основа без
+ *  окончания: «какие», «какой» и «как» ловятся одним началом. */
+const QUESTION_OPENERS = [
+  'как', 'что ', 'что?', 'где', 'когда', 'сколько', 'почему', 'зачем', 'какой', 'какая', 'какие', 'какое', 'можно', 'есть ли', 'чем ', 'кто', 'куда', 'откуда', 'на что',
+  'як', 'що ', 'де ', 'коли', 'скільки', 'чому', 'навіщо', 'який', 'яка', 'які', 'чи ', 'хто', 'куди', 'звідки',
+  'how', 'what', 'where', 'when', 'why', 'who', 'which', 'can ', 'could', 'do ', 'does', 'is ', 'are ', 'will ', 'should',
+  'cómo', 'como ', 'qué', 'dónde', 'donde ', 'cuándo', 'cuando ', 'cuánto', 'cuanto', 'cuántos', 'por qué', 'quién', 'quien ', 'cuál', 'cual ', 'puedo', 'hay ',
+  'wie', 'was ', 'wo ', 'wann', 'warum', 'wer ', 'welche', 'kann', 'gibt', 'womit', 'woher',
+  'come ', 'cosa ', 'dove', 'quando', 'perché', 'perche ', 'chi ', 'quale', 'quanto', 'posso', 'c’è', "c'è",
+];
+
+/** Что человек, судя по строке, делает: ищет вещь, спрашивает или командует. */
+export type AskShape = 'search' | 'question' | 'command';
+
+/** Решение «это вопрос» принимается локально и до сервера. Ответ каталога верен
+ *  не всегда (по замеру — примерно в пяти из шести случаев), и если бы он
+ *  выскакивал на каждое слово, ошибка стояла бы на виду. Поэтому одно слово
+ *  вопросом не считается никогда, а фраза без вопросительного слова — только
+ *  когда правила узнали в ней точный вид («как играть», «о чём страница»). */
+export function askShape(query: string): AskShape {
+  const q = normalizeQuery(query);
+  if (!q) return 'search';
+  const parsed = parseAsk(query);
+  if (parsed.intent === 'go' || parsed.intent === 'chat') return 'command';
+  const words = tokensOf(q).length;
+  const mark = query.includes('?');
+  if (words < 2 && !mark) return 'search';
+  const opener = QUESTION_OPENERS.some((o) => (q + ' ').startsWith(o));
+  if (mark || opener) return 'question';
+  // Виды, у которых точные приметы в самих фразах.
+  if (['about', 'start', 'page', 'match', 'summary'].includes(parsed.intent)) return 'question';
+  return 'search';
 }
 
 // ── Ответы ─────────────────────────────────────────────────────────────────
@@ -436,6 +502,14 @@ function examples(lang: Lang): string[] {
   ];
 }
 
+/** Тот же вопрос, что и спрошенный: без регистра и знаков препинания. Предлагать
+ *  человеку вопрос, который он только что задал, значит отвечать ему его же словами. */
+function sameQuestion(asked: string): (other: string) => boolean {
+  const fold = (text: string) => tokensOf(normalizeQuery(text)).join(' ');
+  const own = fold(asked);
+  return (other) => !!own && fold(other) === own;
+}
+
 /** Три вопроса из тех, что сайт умеет, ближайшие к сказанному по началам слов. */
 function nearestQuestions(lang: Lang, query: string): AskLink[] {
   const stems = (text: string) =>
@@ -445,6 +519,7 @@ function nearestQuestions(lang: Lang, query: string): AskLink[] {
         .map((t) => t.slice(0, 4)),
     );
   const asked = stems(query);
+  const again = sameQuestion(query);
   const ranked = examples(lang)
     .map((q, i) => {
       const own = stems(q);
@@ -452,6 +527,7 @@ function nearestQuestions(lang: Lang, query: string): AskLink[] {
       for (const w of own) if (asked.has(w)) hits += 1;
       return { q, i, hits };
     })
+    .filter((x) => !again(x.q))
     .sort((a, b) => b.hits - a.hits || a.i - b.i);
   const picked = ranked.filter((x) => x.hits > 0).slice(0, 3);
   // Совпадений нет — три самых обычных вопроса.
@@ -487,6 +563,15 @@ function noneReply(lang: Lang, topic: string, query: string): AskReply {
 }
 
 type SearchScopeAsk = 'all' | 'tales' | 'cards';
+
+/** Вопрос, на который нечего ответить, не «запрос»: слова, оставшиеся после «как» и
+ *  «что» («выиграть»), не тема, и «по запросу „выиграть“ ничего не нашлось»
+ *  отвечало бы на вопрос, которого человек не задавал. */
+function asQuestion(reply: AskReply, lang: Lang, query: string): AskReply {
+  // «Близко по смыслу» с работами — не пустой ответ, его оставляем.
+  const empty = !reply.links.some((l) => l.kind !== 'question');
+  return reply.missed && empty && askShape(query) === 'question' ? { ...noneReply(lang, '', query), intent: reply.intent } : reply;
+}
 
 function searchReply(
   index: AskIndex,
@@ -825,6 +910,104 @@ function countReply(index: AskIndex, lang: Lang, facts: FactKey[], gazetteTotal:
   return { intent: 'count', paragraphs, links: links.slice(0, LINKS_MAX) };
 }
 
+// ── Каталог ответов на сервере ──────────────────────────────────────────────
+//
+// Порядок такой: правила, которым нельзя ошибиться (страница, команда, подбор,
+// приветствие), идут первыми; затем вопрос сравнивается по смыслу с каталогом
+// (`POST /ask/route`); и только если каталог не уверен, отвечают прежние правила
+// по словам. Когда у каталога нет уверенного ответа, он предлагает три
+// ближайших вопроса кнопками.
+
+/** Вопросы, которые разбирают правила и каталога не спрашивают: у них точные
+ *  приметы, а смысловое сходство для них не нужно. */
+export function ownedByRules(intent: AskIntent): boolean {
+  return intent === 'page' || intent === 'go' || intent === 'match' || intent === 'chat';
+}
+
+/** Виды ответа по словам, которые срабатывают на одно слово и поэтому ошибаются
+ *  чаще прочих («сколько делается работа» — это не «сколько работ»). Под таким
+ *  ответом каталог дописывает свои предложения. */
+const LOOSE: AskIntent[] = ['summary', 'count', 'new', 'tale', 'play'];
+
+export function isLoose(intent: AskIntent): boolean {
+  return LOOSE.includes(intent);
+}
+
+/** Ответ из данных сайта по записи каталога без текста. */
+export function dataReply(index: AskIndex, lang: Lang, handler: AskHandler, question: string, gazetteTotal: number | null): AskReply {
+  const parsed = parseAsk(question);
+  switch (handler) {
+    case 'count':
+      return countReply(index, lang, parsed.intent === 'count' ? parsed.facts ?? [] : [], gazetteTotal);
+    case 'new':
+      return newReply(index, lang);
+    case 'read':
+      return taleReply(index, lang, parsed.minutes);
+    case 'start':
+      return startReply(index, lang);
+  }
+}
+
+/** Ответ из готового текста записи каталога. */
+export function textReply(route: NonNullable<AskRouteReply['answer']>): AskReply | null {
+  const paragraphs = route.text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  if (!paragraphs.length) return null;
+  const links: AskLink[] = route.links.map((l) => ({ kind: 'section', label: l.label, href: l.href }));
+  return { intent: 'catalog', paragraphs, links: links.slice(0, LINKS_MAX) };
+}
+
+/** Предложенные каталогом вопросы кнопками. */
+export function suggestionLinks(route: AskRouteReply | null, asked = ''): AskLink[] {
+  const same = sameQuestion(asked);
+  return (route?.candidates ?? [])
+    .filter((c) => !same(c.question))
+    .map((c) => ({ kind: 'question' as const, label: c.question, href: '' }));
+}
+
+/** Вопрос узнан, но записи каталога ещё нечего сказать. Честнее сказать об этом,
+ *  чем отдать вопрос соседней записи. Помечен `missed`: такие вопросы и показывают,
+ *  какие ответы пора написать. */
+export function unansweredReply(lang: Lang): AskReply {
+  return {
+    intent: 'catalog',
+    missed: true,
+    paragraphs: [
+      say(
+        lang,
+        'Об этом на сайте пока не написано. Лучше спросить мастера напрямую: кнопка «Написать» в шапке.',
+        'Про це на сайті поки не написано. Краще запитати майстра напряму: кнопка «Написати» в шапці.',
+        'This is not written on the site yet. It is better to ask the master directly: the “Write” button in the header.',
+        'Esto aún no está escrito en el sitio. Mejor preguntar directamente a la autora: el botón «Escribir» de la cabecera.',
+        'Das steht noch nicht auf der Seite. Am besten fragst du die Autorin direkt: Schaltfläche „Schreiben“ in der Kopfzeile.',
+        'Questo non è ancora scritto sul sito. Meglio chiedere direttamente all’autrice: il pulsante «Scrivi» nell’intestazione.',
+      ),
+    ],
+    links: [{ kind: 'section', label: say(lang, 'Об авторе', 'Про автора', 'About the author', 'Sobre la autora', 'Über die Autorin', 'L’autrice'), href: '/author' }],
+  };
+}
+
+function chatReply(lang: Lang, kind: 'hello' | 'thanks'): AskReply {
+  const hello = say(
+    lang,
+    'Здравствуйте! Спросите о работах, небылицах или игре — или выберите вопрос ниже.',
+    'Вітаю! Запитайте про роботи, небилиці чи гру — або оберіть запитання нижче.',
+    'Hello! Ask about the works, the tales or the game — or pick a question below.',
+    '¡Hola! Pregunta por las obras, los cuentos o el juego, o elige una pregunta abajo.',
+    'Hallo! Frag nach den Werken, den Geschichten oder dem Spiel – oder wähle unten eine Frage.',
+    'Ciao! Chiedi delle opere, dei racconti o del gioco, oppure scegli una domanda qui sotto.',
+  );
+  const thanks = say(
+    lang,
+    'Пожалуйста. Если есть ещё вопрос — спрашивайте.',
+    'Будь ласка. Якщо є ще запитання — питайте.',
+    'You are welcome. If you have another question, ask.',
+    'De nada. Si tienes otra pregunta, adelante.',
+    'Gern geschehen. Wenn du noch eine Frage hast, frag einfach.',
+    'Prego. Se hai un’altra domanda, chiedi pure.',
+  );
+  return { intent: 'chat', paragraphs: [kind === 'hello' ? hello : thanks], links: kind === 'hello' ? nearestQuestions(lang, '') : [] };
+}
+
 // ── Вход ───────────────────────────────────────────────────────────────────
 
 /** Нужен ли смысловой поиск сервера: только когда ищется тема среди работ. */
@@ -857,16 +1040,18 @@ export function answer(index: AskIndex, query: string, lang: Lang, ctx: AskConte
       return newReply(index, lang);
     case 'tale':
       return parsed.topic
-        ? searchReply(index, lang, parsed.topic, null, 'tales', 'tale')
+        ? asQuestion(searchReply(index, lang, parsed.topic, null, 'tales', 'tale'), lang, query)
         : taleReply(index, lang, parsed.minutes);
     case 'play':
       return parsed.topic
-        ? searchReply(index, lang, parsed.topic, null, 'cards', 'play')
+        ? asQuestion(searchReply(index, lang, parsed.topic, null, 'cards', 'play'), lang, query)
         : playReply(index, lang);
     case 'match':
       return matchStart(lang);
     case 'go':
       return goReply(index, lang, parsed.go as GoSpec);
+    case 'chat':
+      return chatReply(lang, parsed.chat ?? 'hello');
     case 'page':
       return pageReply(index, lang, ctx.page, ctx.text);
     case 'about':
@@ -874,7 +1059,7 @@ export function answer(index: AskIndex, query: string, lang: Lang, ctx: AskConte
     case 'count':
       return countReply(index, lang, parsed.facts ?? [], ctx.gazetteTotal);
     case 'search':
-      return searchReply(index, lang, parsed.topic, ctx.meaning, 'all', 'search');
+      return asQuestion(searchReply(index, lang, parsed.topic, ctx.meaning, 'all', 'search'), lang, query);
     default:
       return noneReply(lang, '', query);
   }

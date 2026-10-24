@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChannelRepost from '$lib/components/admin/ChannelRepost.svelte';
   import { adminReadiness } from '$lib/stores/admin-readiness.svelte';
   // The writing desk.
   //
@@ -8,7 +9,7 @@
   // face it will be read in, the body in the measure it will be read at, and
   // the work stands in the margin exactly where the visitor will meet it.
   import { onMount, onDestroy, tick } from 'svelte';
-  import { api, ApiError } from '$lib/api';
+  import { api, ApiError, resolveMediaUrl } from '$lib/api';
   import { t, lang, LANGS, LANG_META, localized, pick, type Lang } from '$lib/i18n';
   import { TITLE_MAX, DEK_MAX, BODY_MAX, AUTHOR_MAX, workFrameUrls, leafHref } from '$lib/gazette';
   import { ORNAMENT, readingMinutes, minutesKey, renderTale } from '$lib/tales';
@@ -17,12 +18,14 @@
   import TalePollDesk from './TalePollDesk.svelte';
   import TaleSceneEditor from './TaleSceneEditor.svelte';
   import TaleShelfPicker from './TaleShelfPicker.svelte';
+  import TaleCoverDesk from './TaleCoverDesk.svelte';
   import WorkPicker from './WorkPicker.svelte';
   import type {
     AdminSequelWish,
     AdminTaleCommentDto,
     AdminTaleStat,
     TaleNoticeStatus,
+    BookCoverText,
     Figurine,
     FigurineListItem,
     GazetteLeaf,
@@ -88,6 +91,12 @@
   let sceneMode = $state(false);
   let sealed = $state(false);
   let uploading = $state(false);
+  // Обложка книги пишется своей ручкой, а не полем формы: автосохранение её не трогает.
+  let bookCover = $state('');
+  let bookCoverBusy = $state(false);
+  // Надписи на обложке — тоже своей ручкой, из окна `TaleCoverDesk`.
+  let bookCoverText = $state<BookCoverText | null>(null);
+  let coverDeskOpen = $state(false);
 
   let restorable = $state<Record<string, unknown> | null>(null);
   // Full figurine detail, fetched for its photo gallery — the list row only
@@ -373,6 +382,9 @@
     bodyIt = '';
     figurineId = '';
     author = '';
+    bookCover = '';
+    bookCoverText = null;
+    coverDeskOpen = false;
     imageUrls = [];
     slug = '';
     status = 'draft';
@@ -416,6 +428,8 @@
     bodyIt = leaf.bodyIt ?? '';
     figurineId = leaf.figurineId ?? '';
     author = leaf.author ?? '';
+    bookCover = leaf.bookCover ?? '';
+    bookCoverText = leaf.bookCoverText ?? null;
     imageUrls = leaf.imageUrls?.length ? leaf.imageUrls.filter(Boolean) : leaf.imageUrl ? [leaf.imageUrl] : [];
     slug = leaf.slug;
     status = leaf.status;
@@ -929,6 +943,63 @@
   }
 
   /**
+   * Готовая обложка книги. Адрес пишется на склад-путь (`/static/…`), а не в
+   * абсолютный: сервер принимает только свой склад или https, а в dev
+   * браузерный адрес указывает на другой порт.
+   */
+  async function setBookCover(url: string | null) {
+    if (!selectedId) return;
+    let stored = url;
+    if (url) {
+      try {
+        const parsed = new URL(url, window.location.origin);
+        if (parsed.pathname.startsWith('/static/')) stored = parsed.pathname;
+      } catch {
+        // оставляем как есть: сервер сам откажет, если адрес не годится
+      }
+    }
+    bookCoverBusy = true;
+    try {
+      await api.adminSetTaleBookCover(selectedId, stored);
+      bookCover = stored ?? '';
+      tales = tales.map((tale) => (tale.id === selectedId ? { ...tale, bookCover: stored } : tale));
+      if (!stored) coverDeskOpen = false;
+      flash($t(stored ? 'adminTalesBookCoverSaved' : 'adminTalesBookCoverCleared'));
+    } catch (e) {
+      flash(String(e), 6000);
+    } finally {
+      bookCoverBusy = false;
+    }
+  }
+
+  function coverTextSaved(text: BookCoverText | null) {
+    bookCoverText = text;
+    tales = tales.map((tale) => (tale.id === selectedId ? { ...tale, bookCoverText: text } : tale));
+    flash($t('adminTalesCoverSaved'));
+  }
+
+  function uploadBookCover() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      bookCoverBusy = true;
+      try {
+        const imported = await api.importMediaWithVariants(file, 'images', `${titleEn || titleRu || 'tale'} book cover`);
+        bookCoverBusy = false;
+        await setBookCover(imported.url);
+      } catch (e) {
+        flash(String(e), 6000);
+      } finally {
+        bookCoverBusy = false;
+      }
+    };
+    input.click();
+  }
+
+  /**
    * ISO-время в значение `datetime-local`. Срез `slice(0, 16)` давал время по
    * Гринвичу, а поле читает его как местное: запланированная на 12:00 байка
    * показывалась на 9:00 и при следующей правке уезжала на три часа.
@@ -1365,6 +1436,39 @@
               {/if}
             </section>
 
+            <!-- Обложка книги: готовая картинка всей обложки. Если загружена, на
+                 полке небылиц стоит она, а не арка с фото работы. -->
+            <section class="blk">
+              <h4>{$t('adminTalesBookCover')}</h4>
+              {#if !selectedId}
+                <p class="sub-h">{$t('adminTalesBookCoverNeedsSave')}</p>
+              {:else}
+                <div class="cover">
+                  {#if bookCover}
+                    <img class="cover-img cover-img--book" src={resolveMediaUrl(bookCover) ?? bookCover} alt="" />
+                  {:else}
+                    <div class="cover-img cover-img--book cover-img--none">{$t('adminTalesBookCoverEmpty')}</div>
+                  {/if}
+                  <div class="cover-acts">
+                    <button class="link" onclick={uploadBookCover} disabled={bookCoverBusy}>
+                      {bookCoverBusy ? '…' : $t('adminTalesUpload')}
+                    </button>
+                    {#if bookCover}
+                      <button class="link link--danger" onclick={() => setBookCover(null)} disabled={bookCoverBusy}>
+                        {$t('adminTalesBookCoverDrop')}
+                      </button>
+                    {/if}
+                  </div>
+                </div>
+                <p class="sub-h">{$t('adminTalesBookCoverHint')}</p>
+                {#if bookCover}
+                  <button class="link" onclick={() => (coverDeskOpen = true)}>
+                    ✎ {$t('adminTalesCoverOpen')}
+                  </button>
+                {/if}
+              {/if}
+            </section>
+
             <!-- Продолжение: кто просил продолжение начала, получит письмо, когда
                  эта байка выйдет. Только у сохранённой байки — у несохранённой
                  нет id, на который сослаться. -->
@@ -1462,6 +1566,7 @@
           <span class="seal">{$t('adminTalesPublishedSeal')}</span>
         {/if}
         {#if selectedId}
+          <ChannelRepost kind="leaf" id={selectedId} disabled={!onDisplay} />
           <button onclick={destroy} class="link link--danger">{$t('adminTalesDelete')}</button>
         {/if}
         <button
@@ -1477,6 +1582,18 @@
     <p class="message">{message}</p>
   {/if}
 </div>
+
+{#if coverDeskOpen && selectedId && bookCover}
+  <TaleCoverDesk
+    taleId={selectedId}
+    {bookCover}
+    title={getTitle(editLang) || getTitle('en') || getTitle('ru')}
+    {author}
+    value={bookCoverText}
+    onsaved={coverTextSaved}
+    onclose={() => (coverDeskOpen = false)}
+  />
+{/if}
 
 <style>
 
@@ -1737,6 +1854,7 @@
     text-align: center;
     color: #8a6a55;
   }
+  .cover-img--book { aspect-ratio: 3 / 4; }
   .cover-acts { display: grid; gap: 10px; padding-top: 2px; }
 
   .sub-h { margin: 16px 0 8px; font: 400 11px/1.2 Inter, system-ui, sans-serif; color: #8a6a55; }

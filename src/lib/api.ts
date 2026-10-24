@@ -148,6 +148,8 @@ import type {
     HeaderDecor,
     HeaderPortrait,
     HeaderPortraitShown,
+    NavSealImage,
+    NavSeals,
     DisplayConfigPreset,
     CommissionRequest,
     CommissionDto,
@@ -157,6 +159,7 @@ import type {
     AttachmentInput,
     DepthGenSummary,
     SemanticHit,
+    SiteHit,
     EmbedIndexSummary,
     BulkOpResult,
     AdminFigurineAnalyticsListPage,
@@ -168,6 +171,7 @@ import type {
     LifeOfHouseTrend,
     BackfillAnalyticsRequest,
     BackfillAnalyticsResponse,
+    CutoutStatus,
     AdminAnalyticsQuery,
     AnalyticsEventPayload,
     GazetteKind,
@@ -175,6 +179,7 @@ import type {
     GazetteLeaf,
     GazetteLeavesPage,
     SectionCounts,
+    SiteLocale,
     GazetteHome,
     GazetteRoom,
     GazetteCutting,
@@ -683,6 +688,16 @@ export const api = {
         return webFetch(`/admin/logs${qs}`, { headers: authHeaders() });
     },
 
+    /** Вырезание фигурок (CLAUDE.md § 21). Ручки есть только у локального
+     *  сервера: на рабочем это 404, и админка блок не показывает. */
+    async getCutoutStatus(): Promise<CutoutStatus> {
+        return webFetch('/admin/cutout', { headers: authHeaders() });
+    },
+
+    async startCutout(): Promise<CutoutStatus> {
+        return webFetch('/admin/cutout/start', { method: 'POST', headers: authHeaders() });
+    },
+
     async backfillAnalytics(req?: BackfillAnalyticsRequest): Promise<BackfillAnalyticsResponse> {
         return webFetch('/admin/analytics/backfill', {
             method: 'POST',
@@ -972,6 +987,114 @@ export const api = {
         const q = query.trim();
         if (!q) return [];
         return webFetch(`/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+    },
+
+    /**
+     * Поиск по всему сайту — работы, небылицы, листы вестника и карты — одним
+     * списком, ближайшее первым. Пусто: запрос пуст или не про сайт. Упал сервер —
+     * `null`: поиск остаётся на словах, найденных в самом браузере.
+     */
+    async siteSearch(query: string, limit = 30): Promise<SiteHit[] | null> {
+        const q = query.trim();
+        if (!q) return [];
+        try {
+            return await webFetch<SiteHit[]>(`/search/site?q=${encodeURIComponent(q)}&limit=${limit}`);
+        } catch {
+            return null;
+        }
+    },
+
+    /**
+     * «Спросить сайт»: какая запись каталога отвечает на вопрос. Подбор на сервере
+     * идёт по смыслу; текст вопроса там не сохраняется. Не ответил за 2,5 с или
+     * упал — `null`: окно отвечает само, по словам.
+     */
+    async askRoute(question: string, lang: string): Promise<import('./types/api').AskRouteReply | null> {
+        try {
+            return await webFetch<import('./types/api').AskRouteReply>('/ask/route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question, lang }),
+                signal: AbortSignal.timeout(2500),
+            });
+        } catch {
+            return null;
+        }
+    },
+
+    /** Вопросы окна «Спросить сайт» с темами и страницами. Не ответил — пустой список:
+     *  окно покажет прежние вопросы. */
+    async askQuestions(lang: string): Promise<import('./types/api').AskQuestion[]> {
+        try {
+            return await webFetch<import('./types/api').AskQuestion[]>(`/ask/questions?lang=${encodeURIComponent(lang)}`, {
+                signal: AbortSignal.timeout(4000),
+            });
+        } catch {
+            return [];
+        }
+    },
+
+    /** Admin: каталог ответов «Спросить сайт», и выключенные тоже. */
+    async adminListAskAnswers(): Promise<import('./types/api').AskAnswerEntry[]> {
+        return webFetch('/admin/ask/answers', { headers: authHeaders(), cache: 'no-store' });
+    },
+
+    /** Admin: записать запись каталога (без `id` — новая); сервер приводит её в порядок. */
+    async adminSaveAskAnswer(entry: import('./types/api').AskAnswerEntry): Promise<import('./types/api').AskAnswerEntry> {
+        return webFetch('/admin/ask/answers', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(entry),
+        });
+    },
+
+    async adminDeleteAskAnswer(id: string): Promise<void> {
+        await webFetch(`/admin/ask/answers/${id}`, { method: 'DELETE', headers: authHeaders() });
+    },
+
+    /** Admin: каналы по языкам и черновик поста о релизе. */
+    async adminChannelOverview(): Promise<import('./types/api').AdminChannelOverview> {
+        return webFetch('/admin/channel', { headers: authHeaders(), cache: 'no-store' });
+    },
+
+    /** Admin: выпустить работу, байку или карту во все каналы ещё раз. */
+    async adminChannelRepost(
+        kind: 'work' | 'leaf' | 'card',
+        id: string,
+    ): Promise<import('./types/api').ChannelRepostResult> {
+        return webFetch('/admin/channel/repost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ kind, id }),
+        });
+    },
+
+    /** Admin: сохранить пункты черновика (сервер приводит их в порядок). */
+    async adminSaveReleaseNotes(
+        id: string,
+        notes: Record<string, import('./types/api').ReleaseLangNotes>,
+    ): Promise<import('./types/api').AdminChannelOverview> {
+        return webFetch(`/admin/channel/release/${encodeURIComponent(id)}/notes`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ notes }),
+        });
+    },
+
+    /** Admin: отправить пост о релизе; `langs` пуст — во все, куда ещё не ушло. */
+    async adminSendRelease(id: string, langs: string[] = []): Promise<import('./types/api').AdminChannelOverview> {
+        return webFetch(`/admin/channel/release/${encodeURIComponent(id)}/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ langs }),
+        });
+    },
+
+    async adminDismissRelease(id: string): Promise<import('./types/api').AdminChannelOverview> {
+        return webFetch(`/admin/channel/release/${encodeURIComponent(id)}/dismiss`, {
+            method: 'POST',
+            headers: authHeaders(),
+        });
     },
 
     /** Admin: что у работ и байек не доделано (помощник админки). */
@@ -2324,10 +2447,12 @@ export const api = {
      *  Одно и то же для всех страниц и меняется только с настройками почты
      *  или канала, поэтому спрашивается раз в пять минут, а не на каждой
      *  байке: переход по полке иначе стоил бы лишнего запроса на страницу. */
-    async getTaleDoors(): Promise<import('./types/api').TaleDoors> {
+    async getTaleDoors(lang?: string): Promise<import('./types/api').TaleDoors> {
         try {
-            return await dedupeRead('tales:doors', 5 * 60_000, () =>
-                webFetch<import('./types/api').TaleDoors>('/tales/doors'),
+            // Канал у каждого языка свой, поэтому и ответ запоминается по языку.
+            const q = lang ? `?lang=${encodeURIComponent(lang)}` : '';
+            return await dedupeRead(`tales:doors${q}`, 5 * 60_000, () =>
+                webFetch<import('./types/api').TaleDoors>(`/tales/doors${q}`),
             );
         } catch {
             return { letters: false, telegram: null, telegramNotes: false };
@@ -2408,6 +2533,24 @@ export const api = {
     /** Сколько писем и записок уйдёт, если выложить байку сейчас. */
     async adminTaleLettersForecast(taleId: string): Promise<import('./types/api').TaleLettersForecast> {
         return webFetch(`/admin/tales/${taleId}/letters`, { headers: authHeaders() });
+    },
+
+    /** Готовая обложка книги небылицы; `null` снимает её. */
+    async adminSetTaleBookCover(taleId: string, url: string | null): Promise<void> {
+        await webFetch(`/admin/tales/${taleId}/book-cover`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ url }),
+        });
+    },
+
+    /** Надписи на обложке книги; `null` снимает все. */
+    async adminSetTaleBookCoverText(taleId: string, text: import('./types/api').BookCoverText | null): Promise<void> {
+        await webFetch(`/admin/tales/${taleId}/book-cover-text`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ text }),
+        });
     },
 
     /** Какую байку продолжает эта; `null` — никакую. */
@@ -2581,6 +2724,33 @@ export const api = {
         });
     },
 
+    // === MENU SEALS ===
+
+    async getNavSeals(): Promise<NavSeals> {
+        return webFetch('/settings/nav-seals');
+    },
+
+    async saveNavSeals(body: NavSeals): Promise<NavSeals> {
+        return webFetch('/admin/settings/nav-seals', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(body),
+        });
+    },
+
+    /** Загрузка картинки печати: сервер сам уменьшает её до двух размеров. */
+    async adminUploadNavSeal(file: File): Promise<NavSealImage> {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch(`${webApiBase()}/admin/nav-seals/art`, {
+            method: 'POST',
+            headers: authHeaders(),
+            body: form,
+        });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        return res.json();
+    },
+
     // === REEL THEME ===
 
     async getReelTheme(): Promise<ReelTheme> {
@@ -2704,6 +2874,12 @@ export const api = {
      * deploy. That is exactly what shipped. A caller that can honestly carry on
      * without the shelf catches it itself.
      */
+    /** Язык, который сайт предлагает по стране посетителя. Адрес разбирается на
+     *  сервере по локальной базе; в ответ он не попадает и нигде не хранится. */
+    async getSiteLocale(): Promise<SiteLocale> {
+        return webFetch('/site/locale', { cache: 'no-store' });
+    },
+
     /** Числа для шапки. `since` — метки «когда смотрел»; без метки новых не считается. */
     async getSectionCounts(
         since: { works?: string; gazette?: string; tales?: string } = {},

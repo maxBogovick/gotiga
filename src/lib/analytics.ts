@@ -1084,6 +1084,11 @@ export function startVitals(): void {
     const connection = (navigator as unknown as { connection?: { effectiveType?: string } }).connection;
 
     let lastSent = '';
+    // innerWidth is 0 in a hidden or detached frame; the server takes 1..20000.
+    const viewportWidth = () => {
+        const w = Math.round(window.innerWidth);
+        return w >= 1 && w <= 20_000 ? w : null;
+    };
     const flush = () => {
         const payload = {
             vitalLcp: lcp === null ? null : Math.min(120_000, Math.round(lcp)),
@@ -1102,7 +1107,7 @@ export function startVitals(): void {
             eventType: 'web_vitals',
             ...payload,
             conn: connection?.effectiveType ?? null,
-            viewportW: Math.round(window.innerWidth),
+            viewportW: viewportWidth(),
         });
     };
     document.addEventListener('visibilitychange', () => {

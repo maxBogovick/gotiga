@@ -253,8 +253,8 @@
     position: relative;
     display: grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
+    width: 36px;
+    height: 36px;
     padding: 0;
     border-radius: 50%;
     color: var(--ls-accent);
@@ -272,6 +272,17 @@
       transform 0.35s var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
       box-shadow 0.3s ease,
       color 0.25s ease;
+  }
+  @media (max-width: 1024px), (pointer: coarse) {
+    .seal::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 44px;
+      height: 44px;
+      transform: translate(-50%, -50%);
+    }
   }
   .seal:hover,
   .ls--open .seal {

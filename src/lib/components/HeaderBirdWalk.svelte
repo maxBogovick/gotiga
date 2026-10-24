@@ -120,12 +120,21 @@
 
     // Center the travel canvas on the circle center
     const startX = rect.left + rect.width / 2 - W / 2;
-    const startY = rect.top + rect.height / 2 - H / 2;
     const endX = window.innerWidth - W - 16;
 
     posX = startX;
-    posY = startY;
     flipped = false;
+    // Высота пересчитывается, пока птица идёт: шапка сворачивается от прокрутки,
+    // и ворон в ней переезжает. С высотой, взятой один раз при старте, птица
+    // оставалась на прежнем месте над другим рядом.
+    const followRaven = () => {
+      const r = circleEl.getBoundingClientRect();
+      posY = r.top + r.height / 2 - H / 2;
+    };
+    followRaven();
+    const followSize = new ResizeObserver(followRaven);
+    followSize.observe(circleEl);
+    window.addEventListener('scroll', followRaven, { passive: true });
     visible = true;
     birdWalking.set(true);
 
@@ -144,6 +153,8 @@
     await animateLeg(endX, startX);
 
     // Arrive — hide video, reveal circle
+    followSize.disconnect();
+    window.removeEventListener('scroll', followRaven);
     visible = false;
     flipped = false;
     birdWalking.set(false);

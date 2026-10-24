@@ -698,6 +698,42 @@ mod tests {
 
         fs::remove_dir_all(&dir).await.ok();
     }
+
+    fn png_of(img: &image::RgbaImage) -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    /// Картинка печати: длинная сторона крупной копии 192, малой 96, пропорции
+    /// сохраняются, прозрачность остаётся.
+    #[test]
+    fn seal_images_are_scaled_to_two_sizes() {
+        let mut img = image::RgbaImage::from_pixel(1000, 800, image::Rgba([180, 120, 60, 255]));
+        for x in 0..200 {
+            for y in 0..800 {
+                img.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
+            }
+        }
+        let seal = build_seal_images(&png_of(&img)).unwrap();
+        assert_eq!((seal.width, seal.height), (192, 154));
+        assert_eq!(seal.width_small, 96);
+        let large = image::load_from_memory(&seal.large).unwrap().to_rgba8();
+        let small = image::load_from_memory(&seal.small).unwrap().to_rgba8();
+        assert_eq!((large.width(), large.height()), (192, 154));
+        assert_eq!((small.width(), small.height()), (96, 77));
+        assert_eq!(large.get_pixel(5, 70).0[3], 0, "the transparent edge stays transparent");
+        assert_eq!(large.get_pixel(150, 70).0[3], 255);
+        assert!(seal.large.len() < 20_000, "{} bytes", seal.large.len());
+    }
+
+    /// Картинка меньше нужного размера не растягивается.
+    #[test]
+    fn seal_images_are_never_enlarged() {
+        let img = image::RgbaImage::from_pixel(80, 60, image::Rgba([10, 20, 30, 255]));
+        let seal = build_seal_images(&png_of(&img)).unwrap();
+        assert_eq!((seal.width, seal.height, seal.width_small), (80, 60, 80));
+    }
 }
 
 // === PUBLIC READ-ONLY HANDLERS ===
@@ -1134,6 +1170,22 @@ pub async fn semantic_search(
     let limit = params.limit.unwrap_or(60).clamp(1, 200) as usize;
     let hits = service.semantic_search(&q, limit).await?;
     Ok(Json(hits))
+}
+
+/// Публичный: поиск по всему сайту — работы, небылицы, листы вестника и карты —
+/// одним списком по убыванию оценки. Пусто, если запрос пуст или не про сайт.
+/// Предел тот же, что у `/search`: кодировщик один на всех.
+pub async fn site_search(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Query(params): Query<SearchParams>,
+) -> Result<Json<Vec<SiteHit>>> {
+    service
+        .check_hot_limit("search", &extract_ip(&headers), 30, 60)
+        .await?;
+    let q: String = params.q.unwrap_or_default().chars().take(300).collect();
+    let limit = params.limit.unwrap_or(30).clamp(1, 100) as usize;
+    Ok(Json(service.site_search(&q, limit).await?))
 }
 
 /// Admin: (re)build the search embeddings for every visible work. Cheap after the
@@ -3868,10 +3920,17 @@ async fn reader_user(service: &AppService, headers: &HeaderMap) -> Option<crate:
     service.get_user_from_session(token).await.ok()
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct TaleDoorsQuery {
+    /// Язык читателя: по нему выбирается канал, на который его зовут.
+    pub lang: Option<String>,
+}
+
 pub async fn get_tale_doors(
     State(service): State<AppService>,
+    Query(q): Query<TaleDoorsQuery>,
 ) -> Json<crate::models::TaleDoorsDto> {
-    Json(service.tale_doors().await)
+    Json(service.tale_doors(crate::lang::Lang::from_tag(q.lang.as_deref())).await)
 }
 
 pub async fn set_tale_sequel_wish(
@@ -3986,6 +4045,24 @@ pub async fn admin_delete_tale_scene(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode> {
     service.admin_delete_tale_scene(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_set_tale_book_cover(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::SetTaleBookCoverRequest>,
+) -> Result<StatusCode> {
+    service.admin_set_tale_book_cover(id, req.url).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_set_tale_book_cover_text(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<crate::models::SetTaleBookCoverTextRequest>,
+) -> Result<StatusCode> {
+    service.admin_set_tale_book_cover_text(id, req.text).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -4236,6 +4313,154 @@ pub async fn save_header_portrait(
     Json(body): Json<HeaderPortrait>,
 ) -> Result<Json<HeaderPortrait>> {
     Ok(Json(service.save_header_portrait(body).await?))
+}
+
+pub async fn get_nav_seals(State(service): State<AppService>) -> Result<Json<NavSeals>> {
+    Ok(Json(service.get_nav_seals().await?))
+}
+
+pub async fn save_nav_seals(
+    State(service): State<AppService>,
+    State(config): State<Config>,
+    Json(body): Json<NavSeals>,
+) -> Result<Json<NavSeals>> {
+    let before = service.get_nav_seals().await?;
+    let saved = service.save_nav_seals(body).await?;
+    // Картинки, которых в сохранённом уже нет, стираются со склада: иначе каждая
+    // замена оставляла бы по два файла навсегда. Сбой стирания ничего не ломает.
+    let kept: std::collections::HashSet<&str> = saved
+        .sections
+        .values()
+        .flat_map(|s| s.images.iter())
+        .flat_map(|i| [i.url.as_str(), i.url_small.as_str()])
+        .collect();
+    for sec in before.sections.values() {
+        for img in &sec.images {
+            for url in [&img.url, &img.url_small] {
+                if kept.contains(url.as_str()) {
+                    continue;
+                }
+                if let Some(rel) = url.strip_prefix("/static/") {
+                    let _ = fs::remove_file(std::path::Path::new(&config.upload_dir).join(rel)).await;
+                }
+            }
+        }
+    }
+    Ok(Json(saved))
+}
+
+/// Долгая сторона крупной копии картинки печати и малой. Печать стоит 58 px (в
+/// свёрнутой шапке 30) и чуть выходит за круг: 192 хватает на тройную плотность,
+/// 96 — на обычный экран. Больше картинка нигде не рисуется, остальное — лишние
+/// байты на каждой странице.
+const SEAL_LARGE_PX: u32 = 192;
+const SEAL_SMALL_PX: u32 = 96;
+
+struct EncodedSeal {
+    large: Vec<u8>,
+    small: Vec<u8>,
+    width: u32,
+    height: u32,
+    width_small: u32,
+}
+
+/// Уменьшает картинку до двух размеров. Прозрачность сохраняется; цвет перед
+/// уменьшением умножается на неё и потом возвращается — иначе тёмный цвет
+/// невидимых пикселей красил бы кромку медальона. Меньше своего размера
+/// картинка не растягивается.
+fn build_seal_images(data: &[u8]) -> Result<EncodedSeal> {
+    let decoded = image::load_from_memory(data)
+        .map_err(|e| AppError::BadRequest(format!("Invalid image file: {}", e)))?;
+    if (decoded.width() as u64) * (decoded.height() as u64) > MAX_IMAGE_PIXELS {
+        return Err(AppError::BadRequest("Image dimensions are too large".into()));
+    }
+    let rgba = decoded.to_rgba8();
+    let mut premultiplied = rgba.clone();
+    for p in premultiplied.pixels_mut() {
+        let a = p.0[3] as u32;
+        for c in 0..3 {
+            p.0[c] = ((p.0[c] as u32 * a + 127) / 255) as u8;
+        }
+    }
+    let fit = |long: u32| -> image::RgbaImage {
+        let (w, h) = (premultiplied.width(), premultiplied.height());
+        let scale = (long as f64 / w.max(h) as f64).min(1.0);
+        let nw = ((w as f64 * scale).round() as u32).max(1);
+        let nh = ((h as f64 * scale).round() as u32).max(1);
+        let mut out = if (nw, nh) == (w, h) {
+            premultiplied.clone()
+        } else {
+            image::imageops::resize(&premultiplied, nw, nh, FilterType::Lanczos3)
+        };
+        for p in out.pixels_mut() {
+            let a = p.0[3] as u32;
+            if a > 0 && a < 255 {
+                for c in 0..3 {
+                    p.0[c] = ((p.0[c] as u32 * 255 + a / 2) / a).min(255) as u8;
+                }
+            }
+        }
+        out
+    };
+    let large = fit(SEAL_LARGE_PX);
+    let small = fit(SEAL_SMALL_PX);
+    Ok(EncodedSeal {
+        large: encode_webp_rgba(&large),
+        small: encode_webp_rgba(&small),
+        width: large.width(),
+        height: large.height(),
+        width_small: small.width(),
+    })
+}
+
+pub async fn admin_upload_nav_seal(
+    State(config): State<Config>,
+    mut multipart: Multipart,
+) -> Result<Json<NavSealImage>> {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        if data.len() > MAX_IMAGE_BYTES {
+            return Err(AppError::BadRequest("Image file is too large".into()));
+        }
+        let bytes = data.to_vec();
+        let seal = tokio::task::spawn_blocking(move || build_seal_images(&bytes))
+            .await
+            .map_err(|e| AppError::Internal(format!("Seal processing task failed: {}", e)))??;
+
+        let id = Uuid::new_v4().to_string();
+        let large = format!("seals/{id}.webp");
+        let small = format!("seals/{id}-s.webp");
+        write_bytes(&config.upload_dir, &large, &seal.large).await?;
+        write_bytes(&config.upload_dir, &small, &seal.small).await?;
+        tracing::info!(
+            target: "gotiga_server::media",
+            event = "nav_seal_uploaded",
+            path = %large,
+            bytes = seal.large.len(),
+            bytes_small = seal.small.len(),
+            outcome = "ok",
+            "menu seal picture uploaded"
+        );
+        return Ok(Json(NavSealImage {
+            id,
+            url: public_static_url(&large),
+            url_small: public_static_url(&small),
+            width: seal.width,
+            height: seal.height,
+            width_small: seal.width_small,
+        }));
+    }
+    Err(AppError::BadRequest("No file field found".to_string()))
 }
 
 pub async fn admin_get_reel_theme_presets(
@@ -4787,6 +5012,21 @@ pub async fn list_gazette(
 
 pub async fn list_tales(State(service): State<AppService>) -> Result<Json<Vec<GazetteLeafDto>>> {
     Ok(Json(service.list_tales_public().await?))
+}
+
+/// Какой язык предложить по стране посетителя. Ответ зависит от адреса, поэтому
+/// ни браузер, ни общий кэш его хранить не должны.
+pub async fn site_locale(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let ip = client_ip_from_headers(&headers);
+    let locale = service.site_locale(ip.as_deref(), params.get("country").map(String::as_str));
+    (
+        [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+        Json(locale),
+    )
 }
 
 pub async fn section_counts(
@@ -7099,4 +7339,103 @@ pub async fn admin_read_battle_probe(
     Path(id): Path<Uuid>,
 ) -> Result<Json<crate::siege::ProbeState>> {
     Ok(Json(service.admin_read_battle_probe(id)?))
+}
+
+// ── «Спросить сайт»: каталог ответов и подбор записи ─────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct AskRouteRequest {
+    #[serde(default)]
+    pub question: String,
+    #[serde(default)]
+    pub lang: Option<String>,
+}
+
+/// Какая запись каталога отвечает на вопрос. Подбор гоняет кодировщик (один на
+/// всех под замком), поэтому предел такой же, как у поиска. Текст вопроса
+/// нигде не сохраняется.
+pub async fn ask_route(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(req): Json<AskRouteRequest>,
+) -> Result<Json<crate::ask::AskRoute>> {
+    service
+        .check_hot_limit("ask", &extract_ip(&headers), 30, 60)
+        .await?;
+    let lang = crate::lang::Lang::from_tag(req.lang.as_deref());
+    Ok(Json(service.ask_route(&req.question, lang).await?))
+}
+
+#[derive(serde::Deserialize)]
+pub struct AskQuestionsQuery {
+    #[serde(default)]
+    pub lang: Option<String>,
+}
+
+/// Список вопросов окна «Спросить сайт»: тема, страницы и формулировки каждого.
+pub async fn ask_questions(
+    State(service): State<AppService>,
+    Query(q): Query<AskQuestionsQuery>,
+) -> Result<Json<Vec<crate::ask::AskQuestion>>> {
+    let lang = crate::lang::Lang::from_tag(q.lang.as_deref());
+    Ok(Json(service.ask_questions(lang).await?))
+}
+
+pub async fn admin_list_ask_answers(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::ask::AskAnswer>>> {
+    Ok(Json(service.admin_list_ask_answers().await?))
+}
+
+pub async fn admin_save_ask_answer(
+    State(service): State<AppService>,
+    Json(answer): Json<crate::ask::AskAnswer>,
+) -> Result<Json<crate::ask::AskAnswer>> {
+    Ok(Json(service.admin_save_ask_answer(answer).await?))
+}
+
+pub async fn admin_delete_ask_answer(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_ask_answer(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// === TELEGRAM-КАНАЛЫ И ПОСТ О РЕЛИЗЕ ===
+
+pub async fn admin_channel_overview(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::AdminChannelOverview>> {
+    Ok(Json(service.admin_channel_overview().await?))
+}
+
+pub async fn admin_channel_repost(
+    State(service): State<AppService>,
+    Json(body): Json<crate::models::ChannelRepostRequest>,
+) -> Result<Json<crate::models::ChannelRepostResult>> {
+    Ok(Json(service.admin_channel_repost(&body.kind, body.id).await?))
+}
+
+pub async fn admin_release_save_notes(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+    Json(body): Json<crate::models::SaveReleaseNotes>,
+) -> Result<Json<crate::models::AdminChannelOverview>> {
+    Ok(Json(service.admin_release_save_notes(&id, body.notes).await?))
+}
+
+pub async fn admin_release_send(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+    Json(body): Json<crate::models::SendRelease>,
+) -> Result<Json<crate::models::AdminChannelOverview>> {
+    Ok(Json(service.admin_release_send(&id, &body.langs).await?))
+}
+
+pub async fn admin_release_dismiss(
+    State(service): State<AppService>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::models::AdminChannelOverview>> {
+    Ok(Json(service.admin_release_dismiss(&id).await?))
 }

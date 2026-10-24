@@ -1,7 +1,8 @@
 <script lang="ts">
   // Числа у пункта меню: сколько на полке и, если есть, сколько нового с
-  // прошлого визита. Один компонент на шапку, меню телефона и нижнюю панель:
-  // три копии одного и того же однажды разошлись бы.
+  // прошлого визита. Печатает меню телефона и нижняя панель; шапка компьютера
+  // ставит те же числа второй строкой под названием (свой вид, но те же
+  // `navCounts.total` и `navCounts.fresh`).
   //
   // Пока число не пришло, не печатается ничего: пустое место лучше нуля.
   // «Новое» не печатается на самом разделе: человек уже там и видит всё.
@@ -35,22 +36,22 @@
 <style>
   .nav-count {
     margin-left: 6px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 500;
     letter-spacing: 0;
     font-variant-numeric: tabular-nums;
     /* ink-tertiary на бумаге 6.4:1; над фотографией цвет берётся у пункта. */
-    color: var(--color-ink-tertiary);
+    color: var(--color-ink-secondary);
     transform: translateY(-3px);
   }
 
   .nav-new {
     margin-left: 6px;
-    padding: 2px 5px;
-    border-radius: 8px;
+    padding: 3px 6px;
+    border-radius: 9px;
     background: var(--color-ember-deep);
     color: #fbf6ec;
-    font-size: 9.5px;
+    font-size: 10.5px;
     font-weight: 600;
     letter-spacing: 0;
     line-height: 1;

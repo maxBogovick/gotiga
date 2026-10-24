@@ -30,11 +30,14 @@
     import HomeLayoutEditor from '$lib/components/admin/HomeLayoutEditor.svelte';
     import HeaderDecorPanel from '$lib/components/admin/HeaderDecorPanel.svelte';
     import HeaderPortraitPanel from '$lib/components/admin/HeaderPortraitPanel.svelte';
+    import NavSealsPanel from '$lib/components/admin/NavSealsPanel.svelte';
     import ReelThemePanel from '$lib/components/admin/ReelThemePanel.svelte';
     import CopyEditor from '$lib/components/admin/CopyEditor.svelte';
     import ProgrammePanel from '$lib/components/admin/ProgrammePanel.svelte';
     import GazettePanel from '$lib/components/admin/GazettePanel.svelte';
     import TalesPanel from '$lib/components/admin/TalesPanel.svelte';
+    import AskAnswersPanel from '$lib/components/admin/AskAnswersPanel.svelte';
+    import ChannelPanel from '$lib/components/admin/ChannelPanel.svelte';
     import BattlesPanel from '$lib/components/admin/BattlesPanel.svelte';
     import StudioPanel from '$lib/components/admin/StudioPanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
@@ -135,6 +138,8 @@
                 ['programme',   'adminTabProgramme'],
                 ['gazette',     'adminTabGazette'],
                 ['tales',       'adminTabTales'],
+                ['ask',         'adminTabAsk'],
+                ['channel',     'adminTabChannel'],
                 ['battles',     'adminTabBattles'],
                 ['studio',      'adminTabStudio'],
                 ['marks',       'adminTabMarks'],
@@ -188,7 +193,7 @@
 
     let activeTab = $state<AdminTab>('registry');
     let gazetteSeed = $state<GazetteSeed | null>(null);
-    let activeAuthorSubTab = $state<'profile' | 'texts' | 'header' | 'portrait'>('profile');
+    let activeAuthorSubTab = $state<'profile' | 'texts' | 'header' | 'portrait' | 'seals'>('profile');
     let newOrdersCount = $state(0);
     let newCommissionsCount = $state(0);
     let pendingBookingsCount = $state(0);
@@ -1060,6 +1065,10 @@
 
         {:else if activeTab === 'tales'}
             <div in:fade class="h-full overflow-hidden"><TalesPanel seed={gazetteSeed} onSeedConsumed={() => (gazetteSeed = null)} /></div>
+        {:else if activeTab === 'ask'}
+            <div in:fade class="h-full overflow-hidden"><AskAnswersPanel /></div>
+        {:else if activeTab === 'channel'}
+            <div in:fade class="h-full overflow-hidden"><ChannelPanel /></div>
         {:else if activeTab === 'battles'}
             <div in:fade class="h-full overflow-hidden"><BattlesPanel /></div>
         {:else if activeTab === 'studio'}
@@ -1073,10 +1082,10 @@
             <div in:fade class="h-full flex flex-col">
                 <!-- Sub-tabs for author section -->
                 <div class="flex gap-1 border-b border-[#34251c]/10 px-4 pt-2 flex-shrink-0">
-                    {#each [[('profile'), $t('adminSubProfile')],[('texts'), $t('adminSubTexts')],[('header'), $t('adminSubHeader')],[('portrait'), $t('adminSubPortrait')]] as [sub, label]}
+                    {#each [[('profile'), $t('adminSubProfile')],[('texts'), $t('adminSubTexts')],[('header'), $t('adminSubHeader')],[('portrait'), $t('adminSubPortrait')],[('seals'), $t('adminSubSeals')]] as [sub, label]}
                         {@const authorSubTab = activeAuthorSubTab}
                         <button
-                            onclick={() => activeAuthorSubTab = sub as 'profile' | 'texts' | 'header' | 'portrait'}
+                            onclick={() => activeAuthorSubTab = sub as 'profile' | 'texts' | 'header' | 'portrait' | 'seals'}
                             class="px-3 py-1.5 text-[10px] uppercase tracking-wide border-b-2 transition-colors -mb-px
                                 {authorSubTab === sub ? 'border-[#34251c]/50 text-[#34251c]' : 'border-transparent text-[#5f4636] hover:text-[#34251c]'}"
                         >{label}</button>
@@ -1089,6 +1098,8 @@
                         <HeaderDecorPanel />
                     {:else if activeAuthorSubTab === 'portrait'}
                         <HeaderPortraitPanel />
+                    {:else if activeAuthorSubTab === 'seals'}
+                        <NavSealsPanel />
                     {:else}
                         <TextEditor category="author" />
                     {/if}

@@ -171,6 +171,13 @@ export interface DepthGenSummary {
     results: DepthGenItem[];
 }
 
+/** Вещь, найденная поиском по всему сайту (`GET /search/site`), с оценкой. */
+export interface SiteHit {
+  id: string;
+  kind: 'work' | 'tale' | 'leaf' | 'card';
+  score: number;
+}
+
 /** One ranked result of a hybrid search ("Хранитель"). */
 export interface SemanticHit {
     id: string;
@@ -184,6 +191,59 @@ export interface EmbedIndexSummary {
     indexed: number;
     skipped: number;
     failed: number;
+}
+
+/** «Спросить сайт»: один текст на шести языках. Обязательны en и ru. */
+export interface AskLangTexts {
+    en: string;
+    ru: string;
+    uk: string;
+    es: string;
+    de: string;
+    it: string;
+}
+
+export interface AskLinkDef {
+    href: string;
+    label: AskLangTexts;
+}
+
+/** Данные, из которых страница сама собирает ответ (запись без текста). */
+export type AskHandler = 'count' | 'new' | 'read' | 'start';
+
+/** Запись каталога ответов «Спросить сайт» (`/admin/ask/answers`). */
+export interface AskAnswerEntry {
+    id?: string | null;
+    key: string;
+    handler: AskHandler | null;
+    enabled: boolean;
+    sortOrder: number;
+    /** Тема из `ASK_TOPICS`; пустая сохраняется как `site`. */
+    topic: string;
+    /** Страницы (`work`, `tale`, `play`, `gazette`), на которых запись показывается первой. */
+    pages: string[];
+    phrases: string[];
+    question: AskLangTexts;
+    answer: AskLangTexts;
+    links: AskLinkDef[];
+}
+
+/** Вопрос для списка в окне (`GET /ask/questions`): напечатан на языке читателя. */
+export interface AskQuestion {
+    key: string;
+    question: string;
+    topic: string;
+    pages: string[];
+    /** Формулировки на любых языках: по ним вопрос подсказывается, пока человек печатает. */
+    phrases: string[];
+}
+
+/** Ответ `POST /ask/route`: какая запись каталога отвечает на вопрос. */
+export interface AskRouteReply {
+    /** `answer` — отвечать; `suggest` — уверенности нет, предложить кнопки; `unanswered` — вопрос узнан, но ответа на сайте ещё нет; `none` — не про каталог. */
+    decision: 'answer' | 'suggest' | 'unanswered' | 'none';
+    answer: { key: string; handler: AskHandler | null; text: string; links: { href: string; label: string }[] } | null;
+    candidates: { key: string; question: string }[];
 }
 
 /** Помощник админки (`GET /admin/readiness`): что у работ и байек не доделано.
@@ -668,6 +728,16 @@ export interface AdminAnalyticsQuery {
 export interface BackfillAnalyticsRequest {
     from?: string;
     to?: string;
+}
+
+/** Окно вырезания фигурок на этой машине (`GET /admin/cutout`). */
+export interface CutoutStatus {
+    installed: boolean;
+    running: boolean;
+    url: string | null;
+    /** Запущено отсюда и ещё не ответило: первый запуск ставит зависимости. */
+    starting: boolean;
+    error: string | null;
 }
 
 export interface BackfillAnalyticsResponse {
@@ -2221,6 +2291,32 @@ export interface HeaderPortraitShown {
     edge?: HeaderPortraitEdge;
 }
 
+/** Раздел меню, у которого может быть своя картинка на печати. */
+export type NavSealKey = 'works' | 'gazette' | 'tales' | 'game' | 'studio';
+
+export interface NavSealImage {
+    id: string;
+    /** Крупная копия (`/static/seals/…`), для двойной и тройной плотности. */
+    url: string;
+    /** Малая копия, вдвое уже. */
+    urlSmall: string;
+    width: number;
+    height: number;
+    widthSmall: number;
+}
+
+export interface NavSealSection {
+    images: NavSealImage[];
+    /** Через сколько секунд сменяется картинка. */
+    intervalSec: number;
+    /** `circle` — фото в круге, `free` — картинка с прозрачным фоном, `rect` — прямоугольник. */
+    shape: 'circle' | 'free' | 'rect';
+}
+
+export interface NavSeals {
+    sections: Partial<Record<NavSealKey, NavSealSection>>;
+}
+
 export interface ReelThemePreset {
     id: string;
     name: string;
@@ -2300,6 +2396,10 @@ export interface GazetteLeaf {
     pinned: boolean;
     /** Place on the shelf of tall tales. Absent on every other kind of leaf. */
     shelfOrder?: number | null;
+    /** Готовая обложка книги небылицы. Нет — на полке обложка собирается из фото работы. */
+    bookCover?: string | null;
+    /** Надписи на загруженной обложке: название и имя автора. */
+    bookCoverText?: BookCoverText | null;
     publishedAt: string | null;
     scheduledAt: string | null;
     expectedFrom?: string | null;
@@ -2365,11 +2465,89 @@ export interface SectionCount {
     latest: string | null;
 }
 
+/** Страна посетителя и язык сайта, который ей подходит. Пусто — лучшей догадки,
+ *  чем язык по умолчанию, нет. */
+export interface SiteLocale {
+    country: string | null;
+    suggest: string | null;
+}
+
 /** Числа у пунктов шапки: работы, вестник (без небылиц), небылицы. */
 export interface SectionCounts {
     works: SectionCount;
     gazette: SectionCount;
     tales: SectionCount;
+    /** Сколько этюдов на людях: число у пункта «Игра». Старый сервер его не присылает. */
+    etudes?: number;
+    /** Фото случайной работы для печати «Все работы». Старый сервер его не присылает. */
+    sealWork?: { src: string };
+    /** Последняя вышедшая небылица для печати «Небылицы». Старый сервер её не присылает. */
+    sealTale?: NavSealTale;
+}
+
+/** Матовая полупрозрачная табличка под надписью обложки. */
+export interface BookCoverPlate {
+    on: boolean;
+    /** `#rrggbb`. */
+    color: string;
+    /** 0…1. */
+    opacity: number;
+    /** Размытие обложки под табличкой, % ширины обложки. */
+    blur: number;
+    /** Скругление углов, % ширины обложки. */
+    radius: number;
+    /** Поле между текстом и краем таблички, % ширины обложки. */
+    pad: number;
+}
+
+export type BookCoverAlign = 'left' | 'center' | 'right';
+
+/** Одна надпись на обложке; места и величины — в долях обложки. */
+export interface BookCoverLabel {
+    shown: boolean;
+    /** Свой текст. Пусто — название небылицы, у автора — имя из листа. */
+    text: string;
+    /** Середина надписи, % ширины и высоты обложки. */
+    x: number;
+    y: number;
+    /** Ширина надписи, % ширины обложки. */
+    width: number;
+    /** id из `SITE_FONTS`; пусто — шрифт обложки. */
+    font: string;
+    /** Кегль, % ширины обложки. */
+    size: number;
+    /** 100…900. */
+    weight: number;
+    /** Высота строки, множитель кегля. */
+    lineHeight: number;
+    /** Расстояние между буквами, em. */
+    spacing: number;
+    italic: boolean;
+    /** Тёмная тень под буквами, 0…1. */
+    shadow: number;
+    align: BookCoverAlign;
+    /** `#rrggbb`. */
+    color: string;
+    plate: BookCoverPlate;
+}
+
+export interface BookCoverText {
+    title?: BookCoverLabel | null;
+    author?: BookCoverLabel | null;
+}
+
+/** То, что печати «Небылицы» нужно от небылицы: названия, фото и готовая обложка. */
+export interface NavSealTale {
+    id: string;
+    titleEn: string;
+    titleRu: string;
+    titleUk: string;
+    titleEs: string;
+    titleDe: string;
+    titleIt: string;
+    imageUrl: string | null;
+    imageUrls: string[];
+    bookCover: string | null;
 }
 
 export interface GazetteLeavesPage {
@@ -5151,3 +5329,60 @@ export interface BattleProbeReport {
 export type BattleProbeState =
     | { state: 'running' }
     | { state: 'done'; report: BattleProbeReport };
+
+/** Пункты поста о релизе на одном языке. */
+export interface ReleaseLangNotes {
+    new: string[];
+    better: string[];
+}
+
+export interface AdminReleaseChannel {
+    lang: string;
+    /** Текст поста (HTML Telegram, экранированный сервером); null — писать нечего. */
+    caption: string | null;
+    /** Язык, на котором написаны пункты, если не язык канала. */
+    writtenIn: string | null;
+    /** Куда ведёт кнопка. */
+    link: string;
+    postedAt: string | null;
+    attempts: number;
+    lastError: string | null;
+}
+
+export interface AdminRelease {
+    id: string;
+    createdAt: string;
+    since: string | null;
+    status: 'draft' | 'sent' | 'dismissed';
+    notes: Record<string, ReleaseLangNotes>;
+    channels: AdminReleaseChannel[];
+    newsCount: number;
+}
+
+export interface AdminChannelInfo {
+    lang: string;
+    chat: string;
+    waiting: number;
+    failed: number;
+}
+
+/** Исход повторной публикации в одном канале. */
+export interface ChannelRepostOutcome {
+    lang: string;
+    /** `sent`, `failed`, `local` (стенд на своей машине), `not_on_display` (вещи нет на сайте). */
+    status: 'sent' | 'failed' | 'local' | 'not_on_display';
+    error: string | null;
+}
+
+export interface ChannelRepostResult {
+    local: boolean;
+    results: ChannelRepostOutcome[];
+}
+
+/** Всё, что показывает вкладка «Каналы». */
+export interface AdminChannelOverview {
+    botReady: boolean;
+    local: boolean;
+    channels: AdminChannelInfo[];
+    release: AdminRelease | null;
+}

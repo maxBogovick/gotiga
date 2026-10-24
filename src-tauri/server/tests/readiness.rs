@@ -28,6 +28,7 @@ fn config() -> Config {
         telegram_login_bot_username: None,
         telegram_webhook_secret: None,
         telegram_channel_id: Some("@ritunia_tales".into()),
+        telegram_channel_extra: vec![],
         telegram_chat_id: None,
         smtp_host: None,
         smtp_port: None,

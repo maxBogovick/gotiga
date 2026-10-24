@@ -28,6 +28,12 @@ pub struct Config {
     /// `-100…`). Пишет в него бот уведомлений (`telegram_bot_token`), и он
     /// должен быть администратором канала. Пусто — объявлений нет.
     pub telegram_channel_id: Option<String>,
+    /// Каналы остальных языков: `TELEGRAM_CHANNEL_DE`, `_ES`, `_IT`, `_RU`,
+    /// `_UK`. Пара — язык и `@имя` или `-100…`. Английский канал — прежний
+    /// `telegram_channel_id`: он был единственным, и его настройка не
+    /// переезжает.
+    #[serde(skip)]
+    pub telegram_channel_extra: Vec<(crate::lang::Lang, String)>,
     /// Вход через Google: идентификатор и секрет клиента из консоли Google
     /// Cloud. Оба или ни одного — половина настройки двери не открывает.
     pub google_client_id: Option<String>,
@@ -166,6 +172,14 @@ impl Config {
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
+            telegram_channel_extra: crate::lang::Lang::ALL
+                .into_iter()
+                .filter(|l| *l != crate::lang::Lang::En)
+                .filter_map(|l| {
+                    let name = format!("TELEGRAM_CHANNEL_{}", l.code().to_ascii_uppercase());
+                    Some((l, env_nonempty(&name)?))
+                })
+                .collect(),
             google_client_id: env_nonempty("GOOGLE_CLIENT_ID"),
             google_client_secret: env_nonempty("GOOGLE_CLIENT_SECRET"),
             apple_client_id: env_nonempty("APPLE_CLIENT_ID"),
@@ -305,6 +319,26 @@ impl Config {
     /// попытки сервер говорит об этом словами.
     pub fn public_url_is_local(&self) -> bool {
         is_local_public_url(&self.public_url)
+    }
+
+    /// Все заведённые каналы: английский (прежний `TELEGRAM_CHANNEL_ID`) и
+    /// остальные языки. Порядок — как в `Lang::ALL`, чтобы журнал, админка и
+    /// тесты видели каналы одинаково.
+    pub fn channels(&self) -> Vec<(crate::lang::Lang, String)> {
+        crate::lang::Lang::ALL
+            .into_iter()
+            .filter_map(|l| {
+                let chat = if l == crate::lang::Lang::En {
+                    self.telegram_channel_id.clone()
+                } else {
+                    self.telegram_channel_extra
+                        .iter()
+                        .find(|(x, _)| *x == l)
+                        .map(|(_, c)| c.clone())
+                }?;
+                Some((l, chat))
+            })
+            .collect()
     }
 }
 

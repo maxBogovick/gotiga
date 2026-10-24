@@ -1,0 +1,1259 @@
+[
+ {
+  "q": "Gnome with axe",
+  "lang": "en",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "гном с топором",
+  "lang": "ru",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "gnomo con hacha",
+  "lang": "es",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Gnom mit Axt",
+  "lang": "de",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "gnomo con ascia",
+  "lang": "it",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "гном з сокирою",
+  "lang": "uk",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Granny with cats",
+  "lang": "en",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "бабушка с котами",
+  "lang": "ru",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "abuela con gatos",
+  "lang": "es",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Oma mit Katzen",
+  "lang": "de",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "nonna con i gatti",
+  "lang": "it",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Red Riding Hood",
+  "lang": "en",
+  "expect": [
+   "ca0303c9"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "красная шапочка",
+  "lang": "ru",
+  "expect": [
+   "ca0303c9"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Caperucita Roja",
+  "lang": "es",
+  "expect": [
+   "ca0303c9"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Rotkäppchen",
+  "lang": "de",
+  "expect": [
+   "ca0303c9"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Cappuccetto Rosso",
+  "lang": "it",
+  "expect": [
+   "ca0303c9"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Quasimodo",
+  "lang": "en",
+  "expect": [
+   "1456bf23",
+   "b3404457",
+   "b1213c6a"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "горбун",
+  "lang": "ru",
+  "expect": [
+   "1456bf23",
+   "b3404457",
+   "b1213c6a"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Esmeralda",
+  "lang": "en",
+  "expect": [
+   "98caef86"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Hamlet",
+  "lang": "en",
+  "expect": [
+   "12303f7e"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Edgar Allan Poe",
+  "lang": "en",
+  "expect": [
+   "b9fcf5b0"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Эдгар По",
+  "lang": "ru",
+  "expect": [
+   "b9fcf5b0"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Beatrix Potter",
+  "lang": "en",
+  "expect": [
+   "03ce10e0"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Porthos",
+  "lang": "en",
+  "expect": [
+   "4bf6aa33"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "мушкетёр",
+  "lang": "ru",
+  "expect": [
+   "4bf6aa33"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Lady Agatha",
+  "lang": "en",
+  "expect": [
+   "16db7f27"
+  ],
+  "tag": "name"
+ },
+ {
+  "q": "Frankenstein",
+  "lang": "en",
+  "expect": [
+   "162f2038",
+   "de37d837",
+   "6a796734"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "Франкенштейн",
+  "lang": "ru",
+  "expect": [
+   "162f2038",
+   "de37d837",
+   "6a796734"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "forester",
+  "lang": "en",
+  "expect": [
+   "9e5fe7f4",
+   "bb40f1c0",
+   "4a885f0d"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "лесник",
+  "lang": "ru",
+  "expect": [
+   "9e5fe7f4",
+   "bb40f1c0",
+   "4a885f0d"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "vampire",
+  "lang": "en",
+  "expect": [
+   "5721f346",
+   "c55054d0",
+   "6007a166",
+   "88cb5f7f"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "вампир",
+  "lang": "ru",
+  "expect": [
+   "5721f346",
+   "c55054d0",
+   "6007a166",
+   "88cb5f7f"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "mermaid",
+  "lang": "en",
+  "expect": [
+   "de56c377",
+   "6911f48e",
+   "543ed879",
+   "9f46cc48"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "русалка",
+  "lang": "ru",
+  "expect": [
+   "de56c377",
+   "6911f48e",
+   "543ed879",
+   "9f46cc48"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "Sirene",
+  "lang": "de",
+  "expect": [
+   "de56c377",
+   "6911f48e",
+   "543ed879",
+   "9f46cc48"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "piper",
+  "lang": "en",
+  "expect": [
+   "84427162",
+   "717dba13",
+   "c0b18170",
+   "46fb5f8d"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "крысолов",
+  "lang": "ru",
+  "expect": [
+   "717dba13",
+   "46fb5f8d"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "falconer",
+  "lang": "en",
+  "expect": [
+   "398c05fc",
+   "950e7ade",
+   "9129b41f"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "shaman",
+  "lang": "en",
+  "expect": [
+   "e03fbaa0",
+   "a811d5ef"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "шаман",
+  "lang": "ru",
+  "expect": [
+   "e03fbaa0",
+   "a811d5ef"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "wizard",
+  "lang": "en",
+  "expect": [
+   "b4239589",
+   "fc3e586e",
+   "9e162ec0"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "маг",
+  "lang": "ru",
+  "expect": [
+   "b4239589",
+   "fc3e586e",
+   "9e162ec0"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "Baba Yaga",
+  "lang": "en",
+  "expect": [
+   "42ad6fd1",
+   "fbc7154d",
+   "2f680a8e",
+   "adce314f",
+   "101ee7b7",
+   "23c3d026",
+   "7c58da42",
+   "1de8863a"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "баба яга",
+  "lang": "ru",
+  "expect": [
+   "42ad6fd1",
+   "fbc7154d",
+   "2f680a8e",
+   "adce314f",
+   "101ee7b7",
+   "23c3d026",
+   "7c58da42",
+   "1de8863a"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "witch",
+  "lang": "en",
+  "expect": [
+   "b51cead8",
+   "be5b562e",
+   "82e67a27",
+   "8ca9d690",
+   "7badb2e2",
+   "a659139f",
+   "f2e25c52",
+   "b06263cf",
+   "17e2d434"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "ведьма",
+  "lang": "ru",
+  "expect": [
+   "b51cead8",
+   "be5b562e",
+   "82e67a27",
+   "8ca9d690",
+   "7badb2e2",
+   "a659139f",
+   "f2e25c52",
+   "b06263cf",
+   "17e2d434"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "Hexe",
+  "lang": "de",
+  "expect": [
+   "b51cead8",
+   "be5b562e",
+   "82e67a27",
+   "8ca9d690",
+   "7badb2e2",
+   "a659139f",
+   "f2e25c52",
+   "b06263cf",
+   "17e2d434"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "strega",
+  "lang": "it",
+  "expect": [
+   "b51cead8",
+   "be5b562e",
+   "82e67a27",
+   "8ca9d690",
+   "7badb2e2",
+   "a659139f",
+   "f2e25c52",
+   "b06263cf",
+   "17e2d434"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "bruja",
+  "lang": "es",
+  "expect": [
+   "b51cead8",
+   "be5b562e",
+   "82e67a27",
+   "8ca9d690",
+   "7badb2e2",
+   "a659139f",
+   "f2e25c52",
+   "b06263cf",
+   "17e2d434"
+  ],
+  "tag": "cross"
+ },
+ {
+  "q": "gnomes with weapon",
+  "lang": "en",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "where is gnomes with weapon",
+  "lang": "en",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "гном с оружием",
+  "lang": "ru",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "witch with keys",
+  "lang": "en",
+  "expect": [
+   "8ca9d690",
+   "17e2d434"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "ведьма с ключами",
+  "lang": "ru",
+  "expect": [
+   "8ca9d690",
+   "17e2d434"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "ведьма с метлой и книгой заклинаний",
+  "lang": "ru",
+  "expect": [
+   "be5b562e"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "witch with a spell book",
+  "lang": "en",
+  "expect": [
+   "be5b562e"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "red haired witch",
+  "lang": "en",
+  "expect": [
+   "7badb2e2"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "рыжая ведьма",
+  "lang": "ru",
+  "expect": [
+   "7badb2e2"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "old woman with a bird",
+  "lang": "en",
+  "expect": [
+   "b3b5749d",
+   "42ad6fd1"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "старушка с птичкой",
+  "lang": "ru",
+  "expect": [
+   "b3b5749d",
+   "42ad6fd1"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "grandma with a snail",
+  "lang": "en",
+  "expect": [
+   "d34bdaa6"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "бабушка с улиткой",
+  "lang": "ru",
+  "expect": [
+   "d34bdaa6"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "old woman with chickens",
+  "lang": "en",
+  "expect": [
+   "fc135829",
+   "782d1ad5"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "бабушка с курицей",
+  "lang": "ru",
+  "expect": [
+   "fc135829",
+   "782d1ad5"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "bread",
+  "lang": "en",
+  "expect": [
+   "f20c3037"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "бабушка с хлебом",
+  "lang": "ru",
+  "expect": [
+   "f20c3037"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "potatoes",
+  "lang": "en",
+  "expect": [
+   "7df155fd"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "man with a dog",
+  "lang": "en",
+  "expect": [
+   "0825d87e"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "дедушка с собакой",
+  "lang": "ru",
+  "expect": [
+   "0825d87e"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "girl with a sparrow",
+  "lang": "en",
+  "expect": [
+   "22d14531"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "девочка с воробьём",
+  "lang": "ru",
+  "expect": [
+   "22d14531"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "lady with a pig",
+  "lang": "en",
+  "expect": [
+   "13111df8"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "дама с поросёнком",
+  "lang": "ru",
+  "expect": [
+   "13111df8"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "gnome with mice",
+  "lang": "en",
+  "expect": [
+   "0570d891"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "гном с мышами",
+  "lang": "ru",
+  "expect": [
+   "0570d891"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "gnome with sparrows and books",
+  "lang": "en",
+  "expect": [
+   "2dc46e41",
+   "efd29698"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "gnome cooking",
+  "lang": "en",
+  "expect": [
+   "00c6c3a9",
+   "25d875bc"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "гном повар",
+  "lang": "ru",
+  "expect": [
+   "00c6c3a9",
+   "25d875bc"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "gnome with a candle",
+  "lang": "en",
+  "expect": [
+   "a5f8cc65"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "gnome carrying firewood",
+  "lang": "en",
+  "expect": [
+   "78e6b2db"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "дровосек",
+  "lang": "ru",
+  "expect": [
+   "78e6b2db",
+   "7e186e11"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "man playing accordion",
+  "lang": "en",
+  "expect": [
+   "19339fd8"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "уличный музыкант",
+  "lang": "ru",
+  "expect": [
+   "19339fd8"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "rats",
+  "lang": "en",
+  "expect": [
+   "717dba13",
+   "46fb5f8d"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "snakes",
+  "lang": "en",
+  "expect": [
+   "fbc7154d"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "змеи",
+  "lang": "ru",
+  "expect": [
+   "fbc7154d"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "goat",
+  "lang": "en",
+  "expect": [
+   "98caef86"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "squirrels",
+  "lang": "en",
+  "expect": [
+   "9e5fe7f4"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "monkey",
+  "lang": "en",
+  "expect": [
+   "6b0cd0ad"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "обезьяна",
+  "lang": "ru",
+  "expect": [
+   "6b0cd0ad"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "falcon",
+  "lang": "en",
+  "expect": [
+   "950e7ade",
+   "9129b41f",
+   "398c05fc"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "native american",
+  "lang": "en",
+  "expect": [
+   "950e7ade",
+   "9129b41f"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "steampunk",
+  "lang": "en",
+  "expect": [
+   "de56c377"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "стимпанк",
+  "lang": "ru",
+  "expect": [
+   "de56c377"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "ghost",
+  "lang": "en",
+  "expect": [
+   "4387a661"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "привидение",
+  "lang": "ru",
+  "expect": [
+   "4387a661"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "caveman",
+  "lang": "en",
+  "expect": [
+   "450aeede"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "ballerina",
+  "lang": "en",
+  "expect": [
+   "ff8a0b31"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "балерина",
+  "lang": "ru",
+  "expect": [
+   "ff8a0b31"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "tailor",
+  "lang": "en",
+  "expect": [
+   "93502d20"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "портной",
+  "lang": "ru",
+  "expect": [
+   "93502d20"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "book sculpture",
+  "lang": "en",
+  "expect": [
+   "a7bfc0f0",
+   "03ce10e0",
+   "b1213c6a",
+   "b9fcf5b0"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "miniature book",
+  "lang": "en",
+  "expect": [
+   "a7bfc0f0",
+   "03ce10e0",
+   "b1213c6a",
+   "b9fcf5b0"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "black woman",
+  "lang": "en",
+  "expect": [
+   "70d1c8ce",
+   "e922dcf7"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "Notre-Dame cathedral",
+  "lang": "en",
+  "expect": [
+   "b1213c6a"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "собор парижской богоматери",
+  "lang": "ru",
+  "expect": [
+   "b1213c6a"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "Janelle Monae",
+  "lang": "en",
+  "expect": [
+   "56b30eb6"
+  ],
+  "tag": "paraphrase"
+ },
+ {
+  "q": "do you have a mermaid",
+  "lang": "en",
+  "expect": [
+   "de56c377",
+   "6911f48e",
+   "543ed879",
+   "9f46cc48"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "есть ли у вас русалка",
+  "lang": "ru",
+  "expect": [
+   "de56c377",
+   "6911f48e",
+   "543ed879",
+   "9f46cc48"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "покажи мне ведьму с метлой",
+  "lang": "ru",
+  "expect": [
+   "b51cead8",
+   "82e67a27",
+   "a659139f",
+   "7c58da42",
+   "7badb2e2",
+   "be5b562e"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "what is the witch",
+  "lang": "en",
+  "expect": [
+   "b51cead8",
+   "be5b562e",
+   "82e67a27",
+   "8ca9d690",
+   "7badb2e2",
+   "a659139f",
+   "f2e25c52",
+   "b06263cf",
+   "17e2d434"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "which doll has an axe",
+  "lang": "en",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "у кого из кукол есть топор",
+  "lang": "ru",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "where can I find a vampire",
+  "lang": "en",
+  "expect": [
+   "5721f346",
+   "c55054d0",
+   "6007a166",
+   "88cb5f7f"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "wo finde ich eine Hexe",
+  "lang": "de",
+  "expect": [
+   "b51cead8",
+   "be5b562e",
+   "82e67a27",
+   "8ca9d690",
+   "7badb2e2",
+   "a659139f",
+   "f2e25c52",
+   "b06263cf",
+   "17e2d434"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "hay algún gnomo con libros",
+  "lang": "es",
+  "expect": [
+   "2dc46e41",
+   "efd29698"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "c'è una nonna con un uccellino",
+  "lang": "it",
+  "expect": [
+   "b3b5749d"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "какие есть карты нежити",
+  "lang": "ru",
+  "expect": [
+   "6a796734",
+   "6007a166",
+   "88cb5f7f",
+   "a7e55a06",
+   "c55054d0"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "which cards are water folk",
+  "lang": "en",
+  "expect": [
+   "543ed879",
+   "9f46cc48"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "story about the forester",
+  "lang": "en",
+  "expect": [
+   "bb40f1c0",
+   "4a885f0d"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "рассказ про лесника",
+  "lang": "ru",
+  "expect": [
+   "bb40f1c0",
+   "4a885f0d"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "tale about frankenstein",
+  "lang": "en",
+  "expect": [
+   "de37d837"
+  ],
+  "tag": "question"
+ },
+ {
+  "q": "frankenshtein",
+  "lang": "en",
+  "expect": [
+   "162f2038",
+   "de37d837",
+   "6a796734"
+  ],
+  "tag": "typo"
+ },
+ {
+  "q": "вдьма",
+  "lang": "ru",
+  "expect": [
+   "b51cead8",
+   "be5b562e",
+   "82e67a27",
+   "8ca9d690",
+   "7badb2e2",
+   "a659139f",
+   "f2e25c52",
+   "b06263cf",
+   "17e2d434"
+  ],
+  "tag": "typo"
+ },
+ {
+  "q": "mermiad",
+  "lang": "en",
+  "expect": [
+   "de56c377",
+   "6911f48e",
+   "543ed879",
+   "9f46cc48"
+  ],
+  "tag": "typo"
+ },
+ {
+  "q": "гнм с топором",
+  "lang": "ru",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "typo"
+ },
+ {
+  "q": "vampyre",
+  "lang": "en",
+  "expect": [
+   "5721f346",
+   "c55054d0",
+   "6007a166",
+   "88cb5f7f"
+  ],
+  "tag": "typo"
+ },
+ {
+  "q": "quasimodo",
+  "lang": "en",
+  "expect": [
+   "1456bf23",
+   "b3404457",
+   "b1213c6a"
+  ],
+  "tag": "typo"
+ },
+ {
+  "q": "баба яг",
+  "lang": "ru",
+  "expect": [
+   "42ad6fd1",
+   "fbc7154d",
+   "2f680a8e",
+   "adce314f",
+   "101ee7b7",
+   "23c3d026",
+   "7c58da42",
+   "1de8863a"
+  ],
+  "tag": "typo"
+ },
+ {
+  "q": "dragon",
+  "lang": "en",
+  "expect": [],
+  "tag": "none"
+ },
+ {
+  "q": "дракон",
+  "lang": "ru",
+  "expect": [],
+  "tag": "none"
+ },
+ {
+  "q": "pizza recipe",
+  "lang": "en",
+  "expect": [],
+  "tag": "none"
+ },
+ {
+  "q": "Bitcoin",
+  "lang": "en",
+  "expect": [],
+  "tag": "none"
+ },
+ {
+  "q": "space rocket",
+  "lang": "en",
+  "expect": [],
+  "tag": "none"
+ },
+ {
+  "q": "футбол",
+  "lang": "ru",
+  "expect": [],
+  "tag": "none"
+ }
+]

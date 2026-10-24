@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { figurineNameIn } from '$lib/workText';
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
@@ -8,12 +7,13 @@
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { jsonLdSafe } from '$lib/jsonld';
   import { leafCopy, leafCoverUrl, leafHref } from '$lib/gazette';
-  import { leadTale, minutesKey, readingMinutes, taleMorphNames } from '$lib/tales';
+  import type { GazetteLeaf } from '$lib/types/api';
+  import { leadTale, minutesKey, readingMinutes, taleTone } from '$lib/tales';
   import { readTales } from '$lib/talesRead';
   import { interact } from '$lib/analytics';
   import { api } from '$lib/api';
-  import AppImage from '$lib/components/AppImage.svelte';
-  import ArchClip from '$lib/components/ArchClip.svelte';
+  import TaleBookFace from '$lib/components/TaleBookFace.svelte';
+  import TaleBookReader from '$lib/components/TaleBookReader.svelte';
   import NotFound from '$lib/components/NotFound.svelte';
   import TalePoll from '$lib/components/TalePoll.svelte';
   import TaleSeal from '$lib/components/TaleSeal.svelte';
@@ -26,10 +26,30 @@
   // shelf as the keeper arranged it. One list, not a lead plus a remainder —
   // every arch is the same arch.
   let arcade = $derived(lead ? [lead, ...tales.filter((tale) => tale.id !== lead.id)] : tales);
-  // Names computed for the whole shelf at once, because uniqueness is a
-  // property of the page and not of any one tale. See taleMorphNames.
-  let morphs = $derived(taleMorphNames(arcade));
   let leadCover = $derived(lead ? leafCoverUrl(lead) : '');
+
+  /**
+   * Книга, раскрытая сейчас. Каждая обложка остаётся обычной ссылкой на
+   * страницу небылицы: без скрипта, с нажатым Ctrl/⌘ или средней кнопкой она
+   * открывает страницу, а простое нажатие открывает книгу на месте.
+   */
+  let opened = $state<GazetteLeaf | null>(null);
+  let trigger: HTMLElement | null = null;
+
+  function openBook(event: MouseEvent & { currentTarget: HTMLElement }, tale: GazetteLeaf) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    trigger = event.currentTarget;
+    opened = tale;
+  }
+
+  function closeBook() {
+    opened = null;
+    // Фокус возвращается на обложку, с которой книгу открыли.
+    requestAnimationFrame(() => trigger?.focus());
+  }
+
+  const toneOf = taleTone;
 
   // Picked after the page is alive, never during load: this room prerenders,
   // so a build-time pick would freeze one tale as "random" forever.
@@ -161,8 +181,6 @@
 <div class="root">
   <div class="grain" aria-hidden="true"></div>
 
-  <ArchClip />
-
   <div class="page">
     <nav class="back-nav" in:fade={{ duration: 600 }}>
       <a href="/" class="back-link">{$t('talesBack')}</a>
@@ -190,35 +208,27 @@
           {@const copy = leafCopy(tale, $lang)}
           {@const cover = leafCoverUrl(tale)}
           {@const mins = readingMinutes(copy.body)}
-          {@const morph = morphs.get(tale.id)}
+          {@const book = tale.bookCover ?? ''}
           <li>
-            <a class="arch" href={leafHref(tale, 'tales_arcade')} onclick={() => interact('tale_click', `shelf:${i + 1}`, i + 1, false)}>
-              <span
-                class="arch-frame"
-                style={morph ? `view-transition-name: ${morph}` : undefined}
-              >
-                {#if cover}
-                  <!-- The work in the photograph, not the tale's title: the
-                       title is already the link's own text, and repeating it
-                       here would say the same thing twice to a screen reader
-                       while telling image search nothing about what is pictured. -->
-                  <AppImage
-                    src={cover}
-                    alt={figurineNameIn(tale, $lang)}
-                    class="arch-img"
-                    sizes="(max-width: 480px) 88vw, (max-width: 860px) 44vw, 320px"
-                  />
-                {:else}
-                  <span class="arch-empty" aria-hidden="true">✦</span>
-                {/if}
+            <a class="arch" href={leafHref(tale, 'tales_arcade')} onclick={(e) => openBook(e, tale)} aria-haspopup="dialog">
+              <span class="shelf-book">
+                <TaleBookFace
+                  title={copy.title}
+                  photo={cover}
+                  bookCover={book}
+                  author={tale.author ?? ''}
+                  coverText={tale.bookCoverText}
+                  tone={toneOf(tale.id)}
+                />
               </span>
               <span class="arch-plinth">
-                <!-- Печать на цоколе, а не в арке: арка вырезана из
-                     фотографии, и всё, что лежит внутри, обрезается по ней. -->
                 {#if read.has(tale.id)}
                   <span class="arch-seal"><TaleSeal size={30} label={$t('talesReadSeal')} /></span>
                 {/if}
-                <span class="arch-title">{copy.title}</span>
+                <!-- Заглавие уже вытеснено на собранной обложке; у загруженной
+                     картинки заглавия может не быть, и тогда оно стоит здесь,
+                     если хозяин не поставил его надписью на самой обложке. -->
+                {#if book && !tale.bookCoverText?.title?.shown}<span class="arch-title">{copy.title}</span>{/if}
                 {#if copy.dek}<span class="arch-dek">{copy.dek}</span>{/if}
                 {#if mins}<span class="arch-meta">{mins}&nbsp;{$t(minutesKey(mins))}</span>{/if}
               </span>
@@ -238,6 +248,10 @@
          кого начать, — тоже выбор. -->
     <TalePoll place="shelf" {letters} />
   </div>
+
+  {#if opened}
+    <TaleBookReader tale={opened} tone={toneOf(opened.id)} onclose={closeBook} />
+  {/if}
 </div>
 {/if}
 
@@ -337,14 +351,14 @@
 
   .arcade {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: clamp(30px, 4vw, 54px) clamp(18px, 2.4vw, 34px);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: clamp(30px, 4vw, 50px) clamp(16px, 2vw, 28px);
     margin: 0 0 clamp(44px, 6vw, 72px);
     padding: 0;
     list-style: none;
   }
-  @media (max-width: 860px) { .arcade { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  @media (max-width: 480px) { .arcade { grid-template-columns: 1fr; } }
+  @media (max-width: 980px) { .arcade { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 680px) { .arcade { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
   .arch {
     display: block;
@@ -353,37 +367,24 @@
   }
   .arch:focus-visible { outline: 2px solid rgba(198, 95, 60, 0.6); outline-offset: 6px; }
 
-  /* The shape is cut out of the photograph rather than drawn over it: a frame
-     laid on top would have to be redrawn for every crop, and would sit above
-     the picture during the morph instead of travelling with it. */
-  .arch-frame {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    aspect-ratio: 3 / 4;
-    overflow: hidden;
-    background: #1a120e;
-    clip-path: url(#tale-arch);
-    transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.3, 1);
+  /* Книга стоит на полке: одна на небылицу, обложка собрана
+     `TaleBookFace` (или загружена хозяином). Наклон при наведении — не
+     украшение, а ответ «её можно взять в руки». */
+  .shelf-book {
+    display: block;
+    aspect-ratio: 2 / 3;
+    border-radius: 3px 8px 8px 3px;
+    box-shadow:
+      0 14px 22px -12px rgba(52, 37, 28, 0.6),
+      0 2px 4px rgba(52, 37, 28, 0.28);
+    transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 0.4s ease;
   }
-  .arch-frame :global(.app-image-wrap),
-  .arch-frame :global(img) {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-  .arch-frame :global(img) {
-    filter: sepia(0.28) contrast(0.95) brightness(0.94);
-    transition: filter 0.45s ease, transform 0.6s cubic-bezier(0.2, 0.8, 0.3, 1);
-  }
-  .arch:hover .arch-frame { transform: translateY(-6px); }
-  .arch:hover .arch-frame :global(img),
-  .arch:focus-visible .arch-frame :global(img) { filter: none; transform: scale(1.04); }
-
-  .arch-empty {
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: 30px;
-    color: rgba(216, 198, 177, 0.5);
+  .arch:hover .shelf-book,
+  .arch:focus-visible .shelf-book {
+    transform: translateY(-8px) rotate(-0.8deg);
+    box-shadow:
+      0 24px 30px -14px rgba(52, 37, 28, 0.6),
+      0 3px 6px rgba(52, 37, 28, 0.3);
   }
 
   /* The plinth the arch stands on. Heavier than a hairline on purpose — a
@@ -481,9 +482,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     .arcade li { opacity: 1; transform: none; }
-    .arch-frame,
-    .arch-frame :global(img) { transition: filter 0.3s ease; }
-    .arch:hover .arch-frame { transform: none; }
-    .arch:hover .arch-frame :global(img) { transform: none; }
+    .shelf-book { transition: none; }
+    .arch:hover .shelf-book,
+    .arch:focus-visible .shelf-book { transform: none; }
   }
 </style>

@@ -12,6 +12,7 @@
   import { page } from '$app/state';
   import { fade, fly } from 'svelte/transition';
   import { t } from '$lib/i18n';
+  import { interact } from '$lib/analytics';
   import { GAME_HREF, isNavActive } from '$lib/nav';
   import LangSwitcher from '$lib/components/LangSwitcher.svelte';
   import NavCount from '$lib/components/NavCount.svelte';
@@ -20,9 +21,7 @@
   let pathname = $derived(page.url.pathname);
 
   const MORE = [
-    { href: '/workshop', key: 'navWorkshop' },
     { href: '/studio', key: 'navStudio' },
-    { href: '/author', key: 'navAuthor' },
   ] as const;
 
   let moreOpen = $state(false);
@@ -41,10 +40,27 @@
   const STEP = 6;
   let lastY = 0;
 
+  // Высота страницы читается при изменении размера, а не на каждом событии
+  // прокрутки: `scrollHeight` — принудительный расчёт раскладки.
+  let pageHeight = 0;
+  let sizeWatch: ResizeObserver | null = null;
+  function measure() {
+    pageHeight = document.documentElement.scrollHeight;
+  }
+
+  let frame = 0;
   function onScroll() {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      step();
+    });
+  }
+
+  function step() {
     const y = window.scrollY;
     const delta = y - lastY;
-    const atBottom = window.innerHeight + y >= document.documentElement.scrollHeight - 48;
+    const atBottom = window.innerHeight + y >= pageHeight - 48;
     if (y < 80 || atBottom) {
       away = false;
       lastY = y;
@@ -53,6 +69,22 @@
     if (Math.abs(delta) < STEP) return;
     away = delta > 0 && y > HIDE_AFTER && !moreOpen;
     lastY = y;
+  }
+
+  // Нажатия на панель считаются тем же `header_click`, что и в шапке компьютера:
+  // иначе решение о весе пунктов принималось бы по половине посетителей.
+  const DOCK_NAME: Record<string, string> = {
+    '/figurines': 'works', '/gazette': 'gazette', '/tales': 'tales', [GAME_HREF]: 'game',
+  };
+  function countClicks(node: HTMLElement) {
+    node.addEventListener('click', countClick);
+    return { destroy: () => node.removeEventListener('click', countClick) };
+  }
+  function countClick(e: MouseEvent) {
+    const hit = (e.target as Element | null)?.closest('a, button');
+    if (!hit) return;
+    const name = hit.tagName === 'A' ? DOCK_NAME[hit.getAttribute('href') ?? ''] : 'more';
+    if (name) interact('header_click', `dock:${name}`, null, false);
   }
 
   function closeMore() {
@@ -74,11 +106,18 @@
   onMount(() => {
     reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     lastY = window.scrollY;
+    measure();
     window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', measure, { passive: true });
     document.addEventListener('keydown', onKey);
+    sizeWatch = new ResizeObserver(measure);
+    sizeWatch.observe(document.body);
     return () => {
       window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', measure);
       document.removeEventListener('keydown', onKey);
+      sizeWatch?.disconnect();
+      cancelAnimationFrame(frame);
     };
   });
 </script>
@@ -122,6 +161,7 @@
   class:is-away={away && !moreOpen}
   aria-label={$t('dockSections')}
   onfocusin={() => (away = false)}
+  use:countClicks
 >
   <a
     href="/figurines"
@@ -129,7 +169,7 @@
     class:is-active={isNavActive(here, '/figurines')}
     aria-current={isNavActive(here, '/figurines') ? 'page' : undefined}
   >
-    <SectionSeal icon="works" size={30} wax={isNavActive(here, '/figurines')} />
+    <SectionSeal icon="works" size={30} />
     <span>{$t('dockWorks')}</span>
     <span class="tab-new"><NavCount section="works" active={isNavActive(here, '/figurines')} compact /></span>
   </a>
@@ -139,7 +179,7 @@
     class:is-active={isNavActive(here, '/gazette')}
     aria-current={isNavActive(here, '/gazette') ? 'page' : undefined}
   >
-    <SectionSeal icon="gazette" size={30} wax={isNavActive(here, '/gazette')} />
+    <SectionSeal icon="gazette" size={30} />
     <span>{$t('navGazette')}</span>
     <span class="tab-new"><NavCount section="gazette" active={isNavActive(here, '/gazette')} compact /></span>
   </a>
@@ -149,7 +189,7 @@
     class:is-active={isNavActive(here, '/tales')}
     aria-current={isNavActive(here, '/tales') ? 'page' : undefined}
   >
-    <SectionSeal icon="tales" size={30} wax={isNavActive(here, '/tales')} />
+    <SectionSeal icon="tales" size={30} />
     <span>{$t('navTales')}</span>
     <span class="tab-new"><NavCount section="tales" active={isNavActive(here, '/tales')} compact /></span>
   </a>
@@ -159,7 +199,7 @@
     class:is-active={isNavActive(here, GAME_HREF)}
     aria-current={isNavActive(here, GAME_HREF) ? 'page' : undefined}
   >
-    <SectionSeal icon="game" size={30} wax={isNavActive(here, GAME_HREF)} />
+    <SectionSeal icon="game" size={30} />
     <span>{$t('navGame')}</span>
   </a>
   <button
@@ -170,7 +210,7 @@
     aria-controls="section-more"
     onclick={() => (moreOpen = !moreOpen)}
   >
-    <SectionSeal icon="more" size={30} wax={moreOpen || moreActive} />
+    <SectionSeal icon="more" size={30} />
     <span>{$t('dockMore')}</span>
   </button>
 </nav>
@@ -255,6 +295,56 @@
     .tab.is-active {
       color: var(--color-ember-deep, #6f3b24);
       font-style: italic;
+    }
+
+    /* Красная линия над текущим пунктом и тёплый свет вниз от неё. */
+    .tab {
+      isolation: isolate;
+    }
+    .tab::before,
+    .tab::after {
+      content: '';
+      position: absolute;
+      pointer-events: none;
+    }
+    .tab::before {
+      z-index: -1;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 70%;
+      background: radial-gradient(
+        ellipse 60% 100% at 50% 0%,
+        color-mix(in srgb, var(--color-ember, #c65f3c) 28%, transparent),
+        transparent 72%
+      );
+      opacity: 0;
+      transition: opacity 0.5s ease 0.1s;
+    }
+    .tab::after {
+      left: 22%;
+      right: 22%;
+      top: 0;
+      height: 4px;
+      border-radius: 0 0 2px 2px;
+      background: var(--color-ember, #c65f3c);
+      transform: scaleX(0);
+      transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .tab.is-active::before {
+      opacity: 1;
+    }
+    .tab.is-active::after {
+      transform: scaleX(1);
+    }
+    .tab.is-active :global(.section-icon) {
+      color: var(--color-ember-deep, #6f3b24);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tab::before,
+      .tab::after {
+        transition: none;
+      }
     }
 
     .tab:focus-visible,

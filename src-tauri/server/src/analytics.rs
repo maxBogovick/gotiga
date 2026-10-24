@@ -380,9 +380,6 @@ fn validate_signals(req: &AnalyticsEventRequest) -> Result<()> {
     {
         return Err(bad("signal value out of range"));
     }
-    if sig.viewport_w.is_some_and(|w| !(1..=20_000).contains(&w)) {
-        return Err(bad("viewportW out of range"));
-    }
     Ok(())
 }
 
@@ -418,7 +415,9 @@ fn clean_signals(sig: EventSignals, event_type: AnalyticsEventType) -> EventSign
             .as_deref()
             .map(|c| c.trim().to_ascii_lowercase())
             .filter(|c| matches!(c.as_str(), "slow-2g" | "2g" | "3g" | "4g")),
-        viewport_w: sig.viewport_w,
+        // Only context for the sample: a bogus width is dropped, not a reason
+        // to lose the vitals it came with.
+        viewport_w: sig.viewport_w.filter(|w| (1..=20_000).contains(w)),
     }
 }
 

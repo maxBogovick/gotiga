@@ -4421,18 +4421,25 @@ impl Repository {
 
     // === TELEGRAM-КАНАЛ ===
 
-    /// Отметить вещи, замеченные на людях. Уже отмеченные не трогаются: строка
-    /// журнала заводится один раз, поэтому скрыть и снова показать работу —
-    /// не повод объявлять её второй раз.
-    pub async fn channel_note_seen(&self, kind: &str, ids: &[Uuid], skipped: bool) -> Result<u64> {
+    /// Отметить вещи, замеченные на людях, в журнале канала этого языка.
+    /// Уже отмеченные не трогаются: строка журнала заводится один раз, поэтому
+    /// скрыть и снова показать работу — не повод объявлять её второй раз.
+    pub async fn channel_note_seen(
+        &self,
+        lang: &str,
+        kind: &str,
+        ids: &[Uuid],
+        skipped: bool,
+    ) -> Result<u64> {
         if ids.is_empty() {
             return Ok(0);
         }
         let res = sqlx::query(
-            "INSERT INTO telegram_channel_posts (kind, target_id, skipped)
-             SELECT $1, id, $3 FROM UNNEST($2::uuid[]) AS id
-             ON CONFLICT (kind, target_id) DO NOTHING",
+            "INSERT INTO telegram_channel_posts (lang, kind, target_id, skipped)
+             SELECT $1, $2, id, $4 FROM UNNEST($3::uuid[]) AS id
+             ON CONFLICT (kind, target_id, lang) DO NOTHING",
         )
+        .bind(lang)
         .bind(kind)
         .bind(ids)
         .bind(skipped)
@@ -4441,22 +4448,24 @@ impl Repository {
         Ok(res.rows_affected())
     }
 
-    /// Что пора объявить: замечено не позже `grace_secs` назад, ещё не вышло и
-    /// не исчерпало попыток. Старшие первыми — канал идёт в том порядке, в
-    /// каком вещи появлялись на сайте.
+    /// Что пора объявить в канале этого языка: замечено не позже `grace_secs`
+    /// назад, ещё не вышло и не исчерпало попыток. Старшие первыми — канал
+    /// идёт в том порядке, в каком вещи появлялись на сайте.
     pub async fn channel_due(
         &self,
+        lang: &str,
         grace_secs: i64,
         max_attempts: i32,
         limit: i64,
     ) -> Result<Vec<(String, Uuid)>> {
         Ok(sqlx::query_as(
             "SELECT kind, target_id FROM telegram_channel_posts
-              WHERE posted_at IS NULL AND NOT skipped AND attempts < $2
-                AND seen_at <= NOW() - make_interval(secs => $1)
+              WHERE lang = $1 AND posted_at IS NULL AND NOT skipped AND attempts < $3
+                AND seen_at <= NOW() - make_interval(secs => $2)
               ORDER BY seen_at
-              LIMIT $3",
+              LIMIT $4",
         )
+        .bind(lang)
         .bind(grace_secs as f64)
         .bind(max_attempts)
         .bind(limit)
@@ -4464,12 +4473,19 @@ impl Repository {
         .await?)
     }
 
-    pub async fn channel_mark_posted(&self, kind: &str, id: Uuid, message_id: Option<i64>) -> Result<()> {
+    pub async fn channel_mark_posted(
+        &self,
+        lang: &str,
+        kind: &str,
+        id: Uuid,
+        message_id: Option<i64>,
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE telegram_channel_posts
-                SET posted_at = NOW(), message_id = $3, last_error = NULL
-              WHERE kind = $1 AND target_id = $2",
+                SET posted_at = NOW(), message_id = $4, last_error = NULL
+              WHERE lang = $1 AND kind = $2 AND target_id = $3",
         )
+        .bind(lang)
         .bind(kind)
         .bind(id)
         .bind(message_id)
@@ -4478,14 +4494,162 @@ impl Repository {
         Ok(())
     }
 
-    pub async fn channel_mark_failed(&self, kind: &str, id: Uuid, why: &str) -> Result<()> {
+    pub async fn channel_mark_failed(&self, lang: &str, kind: &str, id: Uuid, why: &str) -> Result<()> {
         sqlx::query(
             "UPDATE telegram_channel_posts
-                SET attempts = attempts + 1, last_error = $3
-              WHERE kind = $1 AND target_id = $2",
+                SET attempts = attempts + 1, last_error = $4
+              WHERE lang = $1 AND kind = $2 AND target_id = $3",
         )
+        .bind(lang)
         .bind(kind)
         .bind(id)
+        .bind(why)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Вещи, которые канал заметил на людях после `since` и не пропустил при
+    /// подключении, — то есть то, что вышло на сайте с прошлого релиза. Язык
+    /// не важен: вещь одна, её замечает каждый канал. Старшие первыми.
+    pub async fn channel_new_since(&self, since: DateTime<Utc>) -> Result<Vec<(String, Uuid)>> {
+        Ok(sqlx::query_as(
+            "SELECT kind, target_id FROM telegram_channel_posts
+              WHERE seen_at > $1 AND NOT skipped
+              GROUP BY kind, target_id
+              ORDER BY MIN(seen_at)",
+        )
+        .bind(since)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Очередь каждого канала: сколько вещей ждёт выхода и сколько оставили
+    /// после исчерпанных попыток.
+    pub async fn channel_queue(&self, max_attempts: i32) -> Result<Vec<(String, i64, i64)>> {
+        Ok(sqlx::query_as(
+            "SELECT lang,
+                    COUNT(*) FILTER (WHERE attempts < $1),
+                    COUNT(*) FILTER (WHERE attempts >= $1)
+               FROM telegram_channel_posts
+              WHERE posted_at IS NULL AND NOT skipped
+              GROUP BY lang",
+        )
+        .bind(max_attempts)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    // === ПОСТ О РЕЛИЗЕ ===
+
+    /// Последний релиз, о котором завели черновик.
+    pub async fn release_latest(&self) -> Result<Option<crate::models::ReleasePostRow>> {
+        Ok(sqlx::query_as(
+            "SELECT id, created_at, since, notes::text AS notes, status
+               FROM release_posts ORDER BY created_at DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    pub async fn release_get(&self, id: &str) -> Result<Option<crate::models::ReleasePostRow>> {
+        Ok(sqlx::query_as(
+            "SELECT id, created_at, since, notes::text AS notes, status
+               FROM release_posts WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Завести черновик. Чужой номер не затирается: повторная выкладка того
+    /// же релиза — это не новый пост. Возвращает, завёлся ли черновик.
+    pub async fn release_create(
+        &self,
+        id: &str,
+        since: Option<DateTime<Utc>>,
+        notes_json: &str,
+    ) -> Result<bool> {
+        let res = sqlx::query(
+            "INSERT INTO release_posts (id, since, notes) VALUES ($1, $2, $3::jsonb)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(since)
+        .bind(notes_json)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Переписать пункты черновика. Отправленный и отклонённый не правятся.
+    pub async fn release_save_notes(&self, id: &str, notes_json: &str) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE release_posts SET notes = $2::jsonb WHERE id = $1 AND status = 'draft'",
+        )
+        .bind(id)
+        .bind(notes_json)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    pub async fn release_set_status(&self, id: &str, status: &str) -> Result<()> {
+        sqlx::query("UPDATE release_posts SET status = $2 WHERE id = $1")
+            .bind(id)
+            .bind(status)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn release_sends(&self, id: &str) -> Result<Vec<crate::models::ReleaseSendRow>> {
+        Ok(sqlx::query_as(
+            "SELECT lang, caption, posted_at, attempts, last_error
+               FROM release_post_sends WHERE release_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Заморозить текст, уходящий в канал. Уже вышедший не перезаписывается.
+    pub async fn release_send_prepare(&self, id: &str, lang: &str, caption: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO release_post_sends (release_id, lang, caption) VALUES ($1, $2, $3)
+             ON CONFLICT (release_id, lang) DO UPDATE SET caption = EXCLUDED.caption
+              WHERE release_post_sends.posted_at IS NULL",
+        )
+        .bind(id)
+        .bind(lang)
+        .bind(caption)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn release_send_posted(&self, id: &str, lang: &str, message_id: Option<i64>) -> Result<()> {
+        sqlx::query(
+            "UPDATE release_post_sends
+                SET posted_at = NOW(), message_id = $3, last_error = NULL
+              WHERE release_id = $1 AND lang = $2",
+        )
+        .bind(id)
+        .bind(lang)
+        .bind(message_id)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn release_send_failed(&self, id: &str, lang: &str, why: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE release_post_sends
+                SET attempts = attempts + 1, last_error = $3
+              WHERE release_id = $1 AND lang = $2",
+        )
+        .bind(id)
+        .bind(lang)
         .bind(why)
         .execute(&self.pg_pool)
         .await?;
@@ -7301,7 +7465,7 @@ impl Repository {
                l.title_en, l.title_ru, l.title_uk, l.title_es, l.title_de, l.title_it, l.dek_en, l.dek_ru, l.dek_uk, l.dek_es, l.dek_de, l.dek_it,
                l.body_en, l.body_ru, l.body_uk, l.body_es, l.body_de, l.body_it,
                l.figurine_id, l.href, l.source_name, l.source_url, l.author, l.image_url, l.image_urls,
-               l.pinned, l.shelf_order, l.published_at, l.scheduled_at, l.expected_from, l.expected_to,
+               l.pinned, l.shelf_order, l.book_cover, l.book_cover_text, l.published_at, l.scheduled_at, l.expected_from, l.expected_to,
                l.created_at, l.updated_at,
                f.name AS figurine_name, f.slug AS figurine_slug,
                (SELECT jsonb_object_agg(t.lang, t.name)::text FROM figurine_translations t
@@ -7391,12 +7555,14 @@ impl Repository {
                (SELECT COUNT(*) FROM gazette_leaves WHERE kind = 'tale' AND {OUT}),
                (SELECT COUNT(*) FROM gazette_leaves WHERE kind = 'tale' AND {OUT}
                   AND $3::timestamptz IS NOT NULL AND {WHEN} > $3::timestamptz),
-               (SELECT MAX({WHEN}) FROM gazette_leaves WHERE kind = 'tale' AND {OUT})"
+               (SELECT MAX({WHEN}) FROM gazette_leaves WHERE kind = 'tale' AND {OUT}),
+               (SELECT COUNT(*) FROM battle_challenges WHERE status = 'published')"
         );
         type Row = (
             i64, i64, Option<DateTime<Utc>>,
             i64, i64, Option<DateTime<Utc>>,
             i64, i64, Option<DateTime<Utc>>,
+            i64,
         );
         let r: Row = sqlx::query_as(&sql)
             .bind(works_since)
@@ -7409,7 +7575,41 @@ impl Repository {
             works: SectionCount { total: r.0, fresh: r.1, latest: r.2 },
             gazette: SectionCount { total: r.3, fresh: r.4, latest: r.5 },
             tales: SectionCount { total: r.6, fresh: r.7, latest: r.8 },
+            etudes: r.9,
+            seal_work: None,
+            seal_tale: None,
         })
+    }
+
+    /// Несколько случайных работ на людях: из них печать «Все работы» берёт первую,
+    /// у которой есть фото. Условие «на людях» то же, что у `section_counts`.
+    pub async fn random_visible_figurine_ids(&self, limit: i64) -> Result<Vec<Uuid>> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            "SELECT id FROM figurines
+              WHERE is_visible = true AND (first_look_until IS NULL OR first_look_until <= NOW())
+              ORDER BY random() LIMIT $1",
+        )
+        .bind(limit)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    /// Последняя вышедшая небылица (по дате выхода, а не по порядку полки: порядок
+    /// задан вручную и о новизне не говорит).
+    pub async fn latest_tale_for_seal(&self) -> Result<Option<crate::models::NavSealTale>> {
+        Ok(sqlx::query_as::<_, crate::models::NavSealTale>(
+            "SELECT id, title_en, title_ru, title_uk, title_es, title_de, title_it,
+                    image_url, image_urls, book_cover
+               FROM gazette_leaves
+              WHERE kind = 'tale' AND published_at IS NOT NULL
+                AND (status = 'published'
+                     OR (status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW()))
+              ORDER BY published_at DESC, id DESC
+              LIMIT 1",
+        )
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     /// Rewrite the whole shelf in one statement. Ids that are not tales are
@@ -8839,6 +9039,38 @@ impl Repository {
         )
         .bind(tale_id)
         .bind(of)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Обложка книги небылицы; `None` снимает её. Ручка своя, как у порядка
+    /// полки: автосохранение листа обложку не трогает.
+    pub async fn set_tale_book_cover(&self, tale_id: Uuid, cover: Option<&str>) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE gazette_leaves SET book_cover = $2
+              WHERE id = $1 AND kind = 'tale'",
+        )
+        .bind(tale_id)
+        .bind(cover)
+        .execute(&self.pg_pool)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Надписи на обложке; `None` снимает их. Ручка своя, как у самой
+    /// обложки: автосохранение листа их не трогает.
+    pub async fn set_tale_book_cover_text(
+        &self,
+        tale_id: Uuid,
+        text: Option<&crate::models::BookCoverText>,
+    ) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE gazette_leaves SET book_cover_text = $2
+              WHERE id = $1 AND kind = 'tale'",
+        )
+        .bind(tale_id)
+        .bind(text.map(sqlx::types::Json))
         .execute(&self.pg_pool)
         .await?;
         Ok(res.rows_affected() > 0)

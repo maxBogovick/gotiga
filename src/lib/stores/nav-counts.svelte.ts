@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { api } from '$lib/api';
 import type { SectionCount } from '$lib/types/api';
+import { navPhoto } from '$lib/stores/nav-photo.svelte';
 
 // Числа у пунктов шапки: сколько работ, листов вестника и небылиц, и сколько из
 // них появилось с тех пор, как посетитель в последний раз открывал этот раздел.
@@ -57,6 +58,8 @@ function writeSeen(seen: Seen) {
 
 class NavCountsStore {
   counts = $state<Counts>({});
+  /** Этюдов на людях (число у пункта «Игра»); `null`, пока не пришло. */
+  etudes = $state<number | null>(null);
 
   #seen: Seen = {};
   #readAt = 0;
@@ -94,6 +97,8 @@ class NavCountsStore {
         }
         if (changed) writeSeen(this.#seen);
         this.counts = next;
+        this.etudes = typeof res.etudes === 'number' ? res.etudes : null;
+        navPhoto.apply(res);
       })
       .catch(() => {
         // Числа — украшение: упали — пункты остаются без них, а в следующий раз спросим снова.

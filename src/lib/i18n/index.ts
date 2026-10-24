@@ -75,28 +75,72 @@ export async function textInLang(l: Lang, key: PublicKey): Promise<string> {
 	return String((dicts[l] as Record<string, unknown>)[key] ?? '');
 }
 
-/** The language a first-time reader gets: an explicit `?lang=`, then what they
- *  chose last time, then what their browser asks for. English is the default
- *  for anything else, as before. */
-function getInitialLang(): Lang {
-	if (typeof window === 'undefined') return 'en';
-	try {
-		const asked = new URLSearchParams(window.location.search).get('lang');
-		if (isLang(asked)) return asked;
-	} catch { /* an unreadable address is not a reason to fail */ }
-	try {
-		const saved = localStorage.getItem('gotiga_lang');
-		if (isLang(saved)) return saved;
-	} catch { /* storage may be closed */ }
+const LANG_KEY = 'gotiga_lang';
+const GEO_KEY = 'gotiga_lang_geo';
+/** How long the server's answer about the visitor's country is trusted. Long
+ *  enough that a return visit does not flash the wrong language while it asks
+ *  again; short enough that a reader who travelled is noticed. */
+const GEO_TTL_MS = 3 * 24 * 3600 * 1000;
+
+/** The first language the browser asks for that the site has, or null. */
+function browserLang(): Lang | null {
+	if (typeof navigator === 'undefined') return null;
 	const wanted = (navigator.languages?.length ? navigator.languages : [navigator.language]) ?? [];
 	for (const raw of wanted) {
 		const base = String(raw || '').toLowerCase().split('-')[0];
 		if (isLang(base)) return base;
 	}
-	return 'en';
+	return null;
 }
 
-const initialLang = getInitialLang();
+/** What the reader chose themselves: an explicit `?lang=` or the switcher. */
+function chosenLang(): Lang | null {
+	try {
+		const asked = new URLSearchParams(window.location.search).get('lang');
+		if (isLang(asked)) return asked;
+	} catch { /* an unreadable address is not a reason to fail */ }
+	try {
+		const saved = localStorage.getItem(LANG_KEY);
+		if (isLang(saved)) return saved;
+	} catch { /* storage may be closed */ }
+	return null;
+}
+
+/** The server's last answer about the visitor's country: the language it
+ *  suggested (or none) and when it was asked. Null once it has gone stale. */
+function geoAnswer(): { suggest: Lang | null } | null {
+	try {
+		const raw = JSON.parse(localStorage.getItem(GEO_KEY) ?? 'null');
+		if (!raw || typeof raw.at !== 'number' || Date.now() - raw.at > GEO_TTL_MS) return null;
+		return { suggest: isLang(raw.suggest) ? raw.suggest : null };
+	} catch {
+		return null;
+	}
+}
+
+/** English is what a browser says when nobody set it: most browsers ship with
+ *  `en-US`. So English from the browser is the one answer a country may
+ *  overrule; any other language the browser asks for is a decision, and a
+ *  Russian reader in Berlin keeps Russian. */
+function browserSettlesIt(): boolean {
+	const b = browserLang();
+	return b !== null && b !== 'en';
+}
+
+/** The language a first-time reader gets: an explicit `?lang=`, then what they
+ *  chose last time, then what their browser asks for, then (only when the
+ *  browser says nothing but English) the language of their country as the
+ *  server last reported it. English is the default for anything else. */
+function getInitialLang(): { lang: Lang; chosen: boolean } {
+	if (typeof window === 'undefined') return { lang: 'en', chosen: false };
+	const chosen = chosenLang();
+	if (chosen) return { lang: chosen, chosen: true };
+	if (browserSettlesIt()) return { lang: browserLang()!, chosen: false };
+	return { lang: geoAnswer()?.suggest ?? browserLang() ?? 'en', chosen: false };
+}
+
+const initial = getInitialLang();
+const initialLang = initial.lang;
 
 function emptyCopy(): Record<Lang, Record<string, string>> {
 	return Object.fromEntries(LANGS.map((l) => [l, {}])) as Record<Lang, Record<string, string>>;
@@ -104,12 +148,50 @@ function emptyCopy(): Record<Lang, Record<string, string>> {
 
 export const lang = writable<Lang>(initialLang);
 
+// Only the reader's own choice is remembered under `gotiga_lang`. It used to
+// be written for every value, including the one guessed from the browser, and
+// a guess saved as a choice is a choice nobody made: the first visit froze
+// English in place and no later hint (the country) could ever change it.
+// `quiet` holds the write back while the language is set by a guess.
+let quiet = !initial.chosen;
 lang.subscribe((l) => {
-	if (typeof window === 'undefined') return;
+	if (typeof window === 'undefined' || quiet) return;
 	try {
-		localStorage.setItem('gotiga_lang', l);
+		localStorage.setItem(LANG_KEY, l);
 	} catch { /* storage may be closed */ }
 });
+quiet = false;
+
+/** Ask the server which language the visitor's country reads, and switch to it
+ *  when nothing the visitor did says otherwise. Called once the page is up.
+ *  Resolves to the language switched to, or null when nothing changed.
+ *
+ *  Order of trust: what the reader chose, what their browser asks for, and only
+ *  then the country. The IP address never leaves the server, which looks the
+ *  country up in a local table and stores nothing. */
+export async function suggestLangByCountry(
+	ask: () => Promise<{ suggest?: string | null }>,
+): Promise<Lang | null> {
+	if (typeof window === 'undefined') return null;
+	if (chosenLang() || browserSettlesIt() || geoAnswer()) return null;
+	let suggest: Lang | null = null;
+	try {
+		const answer = await ask();
+		suggest = isLang(answer?.suggest) ? answer.suggest : null;
+	} catch {
+		return null; // no answer is no guess; the page stays as it is
+	}
+	try {
+		localStorage.setItem(GEO_KEY, JSON.stringify({ suggest, at: Date.now() }));
+	} catch { /* storage may be closed */ }
+	// The reader may have used the switcher while the answer was on its way.
+	if (!suggest || chosenLang() || get(lang) !== initialLang) return null;
+	await loadLang(suggest);
+	quiet = true;
+	lang.set(suggest);
+	quiet = false;
+	return suggest;
+}
 
 if (typeof window !== 'undefined' && initialLang !== 'en') {
 	void loadLang(initialLang).then(() => lang.update((l) => l));

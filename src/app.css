@@ -111,8 +111,11 @@
 }
 
 :root {
-  /* Updated by SiteHeader on scroll; read by sticky sub-headers site-wide */
-  --site-header-h: 78px;
+  /* Текущая высота шапки: её читают липкие полосы страниц. Значение целиком в
+     CSS (по ширине окна); SiteHeader лишь ставит на <html> признаки состояния
+     `hdr-scrolled` и `hdr-leaf`. Прежде число писал JS: до монтирования оно было
+     78 px при настоящих 150, а на телефоне 78 при 58. */
+  --site-header-h: var(--site-header-height);
   /* The fixed header's height as a layout budget (the padding buffer routes reserve at
      the top of the page). It used to be declared in the home page's <style> — and Svelte
      cannot scope `:root`, so it became a GLOBAL variable owned by one route: /upcoming,
@@ -144,6 +147,13 @@
   :root {
     --site-header-height: 58px;
   }
+}
+
+/* Свёрнутая прокруткой шапка на компьютере и шапка на странице работы. */
+:root.hdr-scrolled { --site-header-h: 58px; }
+:root.hdr-leaf { --site-header-h: 56px; }
+@media (max-width: 1024px) {
+  :root.hdr-leaf { --site-header-h: 50px; }
 }
 
 /* Anchor links (the home page's "See the work" → #gallery, and every in-page jump)

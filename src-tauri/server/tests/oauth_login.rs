@@ -116,6 +116,7 @@ async fn spawn(pool: PgPool, provider_addr: &str, mail: bool) -> String {
         telegram_login_bot_username: None,
         telegram_webhook_secret: None,
         telegram_channel_id: None,
+        telegram_channel_extra: vec![],
         google_client_id: None,
         google_client_secret: None,
         apple_client_id: None,

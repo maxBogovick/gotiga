@@ -17,6 +17,7 @@
             $t('privacyDataTale'),
             $t('privacyDataStudio'),
             $t('privacyDataAsk'),
+            $t('privacyDataLanguage'),
         ] },
         { title: $t('privacySectionAnalyticsTitle'), paragraphs: [$t('privacyAnalyticsBody')] },
         { title: $t('privacySectionLogsTitle'), paragraphs: [$t('privacyLogsBody')] },

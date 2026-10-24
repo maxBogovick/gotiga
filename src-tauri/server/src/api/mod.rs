@@ -107,6 +107,9 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/figurines/:id", get(handlers::get_figurine))
             // Semantic search ("Хранитель") — natural-language ranking of the archive.
             .route("/search", get(handlers::semantic_search))
+            .route("/search/site", get(handlers::site_search))
+            .route("/ask/route", post(handlers::ask_route))
+            .route("/ask/questions", get(handlers::ask_questions))
             .route("/content/texts/:param", get(handlers::get_texts_by_param))
             .route("/showing-rooms", get(handlers::get_showing_rooms))
             .route("/main-background", get(handlers::get_main_background))
@@ -212,6 +215,8 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/tales", get(handlers::list_tales))
             // Числа у пунктов шапки: работы, вестник, небылицы.
             .route("/site/counts", get(handlers::section_counts))
+            // Язык по стране посетителя (адрес разбирается по локальной базе).
+            .route("/site/locale", get(handlers::site_locale))
             // === СКРОМНЫЕ ЭПИЧЕСКИЕ БИТВЫ ===
             // The shelf and the five frames are the same for every visitor;
             // what a given person owns is not, and lives behind a session.
@@ -471,6 +476,24 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                         auth_middleware,
                     )),
             )
+            // === MENU SEALS ===
+            .route("/settings/nav-seals", get(handlers::get_nav_seals))
+            .route(
+                "/admin/settings/nav-seals",
+                put(handlers::save_nav_seals).route_layer(middleware::from_fn_with_state(
+                    config.clone(),
+                    auth_middleware,
+                )),
+            )
+            .route(
+                "/admin/nav-seals/art",
+                post(handlers::admin_upload_nav_seal)
+                    .route_layer(DefaultBodyLimit::max(MEDIA_UPLOAD_LIMIT))
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
             .route(
                 "/admin/settings/reel-theme-presets",
                 get(handlers::admin_get_reel_theme_presets)
@@ -580,6 +603,51 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 ),
             )
             .route(
+                "/admin/channel",
+                get(handlers::admin_channel_overview).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/channel/repost",
+                post(handlers::admin_channel_repost).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/channel/release/:id/notes",
+                put(handlers::admin_release_save_notes).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/channel/release/:id/send",
+                post(handlers::admin_release_send).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/channel/release/:id/dismiss",
+                post(handlers::admin_release_dismiss).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/ask/answers",
+                get(handlers::admin_list_ask_answers)
+                    .put(handlers::admin_save_ask_answer)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/ask/answers/:id",
+                delete(handlers::admin_delete_ask_answer).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/tales/:id/scene",
                 get(handlers::admin_get_tale_scene)
                     .put(handlers::admin_put_tale_scene)
@@ -588,6 +656,18 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                         config.clone(),
                         auth_middleware,
                     )),
+            )
+            .route(
+                "/admin/tales/:id/book-cover",
+                post(handlers::admin_set_tale_book_cover).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/tales/:id/book-cover-text",
+                post(handlers::admin_set_tale_book_cover_text).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
             )
             .route(
                 "/admin/tales/:id/sequel",
@@ -1823,10 +1903,27 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
     // достучится никогда (§ 16.2). Маршрута снаружи локальной машины не
     // существует: не «есть, но отказывает», а нет вовсе, как и у webhook с
     // неверным секретом.
+    //
+    // Так же — вырезание фигурок (§ 21): модель стоит на машине автора, и
+    // на рабочем сервере запускать нечего.
     let api = if config.public_url_is_local() {
         api.route(
             "/auth/telegram/local/:code",
             get(handlers::telegram_play_locally),
+        )
+        .route(
+            "/admin/cutout",
+            get(crate::cutout::status).route_layer(middleware::from_fn_with_state(
+                config.clone(),
+                auth_middleware,
+            )),
+        )
+        .route(
+            "/admin/cutout/start",
+            post(crate::cutout::start).route_layer(middleware::from_fn_with_state(
+                config.clone(),
+                auth_middleware,
+            )),
         )
     } else {
         api
@@ -1858,6 +1955,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         "assets",
         // Склад студии: детали и листы людей.
         "studio",
+        // Картинки на печатях меню, уже уменьшенные.
+        "seals",
+        // Готовые обложки книг небылиц, встроенные в сервер.
+        "covers",
     ] {
         app = app.nest_service(
             &format!("/static/{}", subdir),

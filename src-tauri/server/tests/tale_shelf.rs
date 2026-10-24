@@ -136,3 +136,66 @@ async fn a_tale_walks_its_own_shelf(pool: PgPool) {
     assert_eq!(prev.map(|n| n.slug), Some("tale-third".to_string()));
     assert!(next.is_some(), "the gazette keeps reading past the tales");
 }
+
+#[sqlx::test]
+async fn book_cover_is_set_read_back_and_cleared_on_tales_only(pool: PgPool) {
+    let repo = Repository::new(pool.clone());
+    let tale = seed_leaf(&pool, "tale-covered", "tale", 1).await;
+    let arrival = seed_leaf(&pool, "an-arrival", "arrival", 2).await;
+
+    let cover = |repo: &Repository| {
+        let repo = repo.clone();
+        async move {
+            repo.list_tales_public(10)
+                .await
+                .expect("list shelf")
+                .into_iter()
+                .find(|l| l.slug == "tale-covered")
+                .and_then(|l| l.book_cover)
+        }
+    };
+
+    assert_eq!(cover(&repo).await, None);
+
+    assert!(repo.set_tale_book_cover(tale, Some("/static/images/cover.jpg")).await.unwrap());
+    assert_eq!(cover(&repo).await.as_deref(), Some("/static/images/cover.jpg"));
+
+    // Лист вестника обложки не получает: ручка отвечает «не нашлось».
+    assert!(!repo.set_tale_book_cover(arrival, Some("/static/images/cover.jpg")).await.unwrap());
+
+    assert!(repo.set_tale_book_cover(tale, None).await.unwrap());
+    assert_eq!(cover(&repo).await, None);
+}
+
+#[sqlx::test]
+async fn book_cover_text_is_stored_and_cleared_on_tales_only(pool: PgPool) {
+    let repo = Repository::new(pool.clone());
+    let tale = seed_leaf(&pool, "tale-lettered", "tale", 1).await;
+    let arrival = seed_leaf(&pool, "an-arrival", "arrival", 2).await;
+
+    let text: gotiga_server::models::BookCoverText = serde_json::from_value(serde_json::json!({
+        "title": { "shown": true, "x": 40.0, "y": 80.0 }
+    }))
+    .unwrap();
+
+    let read = |repo: Repository| async move {
+        repo.list_tales_public(10)
+            .await
+            .expect("list shelf")
+            .into_iter()
+            .find(|l| l.slug == "tale-lettered")
+            .and_then(|l| l.book_cover_text)
+            .map(|t| t.0)
+    };
+
+    assert!(read(repo.clone()).await.is_none());
+    assert!(repo.set_tale_book_cover_text(tale, Some(&text)).await.unwrap());
+    let back = read(repo.clone()).await.expect("stored");
+    let title = back.title.expect("title label");
+    assert_eq!((title.x, title.y), (40.0, 80.0));
+    assert!(back.author.is_none());
+
+    assert!(!repo.set_tale_book_cover_text(arrival, Some(&text)).await.unwrap());
+    assert!(repo.set_tale_book_cover_text(tale, None).await.unwrap());
+    assert!(read(repo).await.is_none());
+}

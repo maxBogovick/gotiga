@@ -6,13 +6,23 @@
   import { resolveMediaUrl } from '$lib/api';
   import { interact } from '$lib/analytics';
   import { siteAsk, prefersReducedMotion, type AskTurn } from '$lib/stores/site-ask.svelte';
-  import { siteAskUi } from '$lib/stores/site-ask-ui.svelte';
 
-  let { turn, ontick }: { turn: AskTurn; ontick: () => void } = $props();
+  // `current` — это последний ответ разговора: кнопки под прежними не нужны.
+  let { turn, current = true, ontick, onfollow }: { turn: AskTurn; current?: boolean; ontick: () => void; onfollow?: () => void } = $props();
 
   const WORD_MS = 34;
 
-  const paragraphs = $derived(turn.reply?.paragraphs ?? []);
+  // У прежнего ответа кнопки-вопросы убраны, и «Например:» / «спросите так:» повисло
+  // бы без примеров: последняя фраза, кончающаяся двоеточием, снимается; если это
+  // весь абзац, двоеточие заменяется точкой.
+  const paragraphs = $derived.by(() => {
+    const own = turn.reply?.paragraphs ?? [];
+    const hidden = !current && (turn.reply?.links ?? []).some((l) => l.kind === 'question');
+    if (!hidden || !own.length) return own;
+    const last = own[own.length - 1];
+    const cut = last.replace(/(?<=[.!?]\s)[^.!?]*:\s*$/, '').trimEnd();
+    return [...own.slice(0, -1), cut !== last.trimEnd() && cut ? cut : last.replace(/\s*:\s*$/, '.')];
+  });
   const words = $derived(paragraphs.map((p) => p.split(' ')));
   const total = $derived(words.reduce((n, w) => n + w.length, 0));
 
@@ -52,14 +62,16 @@
   });
 
   const choices = $derived((turn.reply?.links ?? []).filter((l) => l.kind === 'choice'));
-  const others = $derived((turn.reply?.links ?? []).filter((l) => l.kind !== 'choice'));
+  // У прежних ответов остаются ссылки на страницы, а кнопки-вопросы уходят.
+  const others = $derived((turn.reply?.links ?? []).filter((l) => l.kind !== 'choice' && (current || l.kind !== 'question')));
+  const suggested = $derived(turn.reply?.suggest ?? []);
   const writing = $derived(!turn.typed && !!turn.reply);
   /** Абзац, в конце которого стоит черта печатающего пера. */
   const lastShown = $derived(visible.reduce((at, p, i) => (p ? i : at), -1));
 
   function followed(kind: string) {
     interact('site_ask_link', kind);
-    siteAskUi.hide();
+    onfollow?.();
   }
 </script>
 
@@ -81,7 +93,7 @@
       {/if}
     {/each}
   </div>
-  {#if turn.typed && choices.length}
+  {#if current && turn.typed && choices.length}
     <div class="choices">
       {#each choices as c, i (c.label)}
         <button type="button" class="choice" style:--i={i} onclick={() => siteAsk.ask(c.label, 'chip', c.quiz)}>{c.label}</button>
@@ -111,9 +123,29 @@
       {/each}
     </ul>
   {/if}
+  {#if current && turn.typed && suggested.length}
+    <p class="maybe">{$t('askSuggestLead')}</p>
+    <ul class="links">
+      {#each suggested as link, i (link.label)}
+        <li style:--i={i}>
+          <button type="button" class="ask-again" onclick={() => siteAsk.ask(link.label, 'chip')}>
+            <span class="name">{link.label}</span>
+            <span class="arrow" aria-hidden="true">?</span>
+          </button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 {/if}
 
 <style>
+  .maybe {
+    margin: 14px 0 6px;
+    font-family: var(--font-display, Fraunces, Georgia, serif);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--ak-ink-3);
+  }
   .line {
     margin: 0 0 0.6em;
     font-family: var(--font-body, Georgia, serif);
