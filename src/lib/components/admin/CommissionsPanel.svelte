@@ -4,6 +4,8 @@
   import { api, resolveMediaUrl } from '$lib/api';
   import type { CommissionDto, CommissionStatus, ThreadDetailDto, AttachmentInput, Figurine, FigurineListItem } from '$lib/types/api';
   import MessageAttachments from '$lib/components/MessageAttachments.svelte';
+  import CommissionRequestDetails from '$lib/components/admin/CommissionRequestDetails.svelte';
+  const firstContact = (c: CommissionDto) => c.requesterEmail ?? (c.contacts?.[0] ? `${c.contacts[0].channel}: ${c.contacts[0].value}` : '');
 
   let { onNewCount = (_n: number) => {} } = $props();
 
@@ -318,7 +320,7 @@
                 <div class="text-xs text-[#5f4636]/70 mt-0.5">
                   {formatDate(c.createdAt)}
                   {#if c.requesterName}· <span class="font-medium text-[#5f4636]">{c.requesterName}</span>{/if}
-                  · {c.requesterEmail}
+                  {#if firstContact(c)}· {firstContact(c)}{/if}
                 </div>
                 {#if !expanded}
                   <div class="text-xs text-[#5f4636]/80 mt-1 truncate">{c.description}</div>
@@ -331,9 +333,11 @@
             <div class="px-4 pb-4">
             <div class="text-sm text-[#34251c] mb-1">
               {#if c.requesterName}<span class="font-medium">{c.requesterName}</span> · {/if}
-              <a href="mailto:{c.requesterEmail}" class="text-[#c65f3c] hover:underline">{c.requesterEmail}</a>
+              {#if c.requesterEmail}<a href="mailto:{c.requesterEmail}" class="text-[#c65f3c] hover:underline">{c.requesterEmail}</a>{/if}
               {#if c.requesterPhone}· <span class="text-[#5f4636]">{c.requesterPhone}</span>{/if}
             </div>
+
+            <CommissionRequestDetails {c} />
 
             <p class="text-sm text-[#5f4636] whitespace-pre-wrap border-l-2 border-[#d8c6b1] pl-2 mt-2">{c.description}</p>
 
@@ -533,7 +537,7 @@
               {:else}
                 <div class="text-[11px] text-[#5f4636]/50">
                   The thread becomes available once the sender links an account.
-                  <a href="mailto:{c.requesterEmail}" class="text-[#c65f3c] hover:underline">Email →</a>
+                  {#if c.requesterEmail}<a href="mailto:{c.requesterEmail}" class="text-[#c65f3c] hover:underline">Email →</a>{/if}
                 </div>
               {/if}
             </div>

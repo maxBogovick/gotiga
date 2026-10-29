@@ -9,6 +9,7 @@
   import { fade } from 'svelte/transition';
   import { api, resolveMediaUrl } from '$lib/api';
   import LangSwitcher from '$lib/components/LangSwitcher.svelte';
+  import PwaInstallButton from '$lib/components/pwa/PwaInstallButton.svelte';
   import RavenWatcher from '$lib/components/RavenWatcher.svelte';
   import NeighborPlate from '$lib/components/NeighborPlate.svelte';
   import { afterLoadIdle } from '$lib/after-load-idle';
@@ -695,6 +696,8 @@
     <div class="ghost-right-group">
       <!-- Язык — одна печать с буквами; нажатие раскрывает листок из трёх строк. -->
       <LangSwitcher variant="light" />
+      <!-- «Установить приложение»: только компьютер и только пока не установлено. -->
+      <PwaInstallButton variant="header" where="header" />
       <div class="header-actions">
       {#if isWorkLeaf && leafChrome}
         {#await import('$lib/components/DetailHeaderTools.svelte') then { default: DetailHeaderTools }}

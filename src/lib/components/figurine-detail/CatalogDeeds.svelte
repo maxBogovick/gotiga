@@ -12,20 +12,6 @@
 </script>
 
 <div class="deed-row catalog-deeds">
-  <button
-    type="button"
-    class="deed deed--primary"
-    onclick={() => ctx.openRequestModal(ctx.statusUi.defaultIntent)}
-  >
-    <span class="deed-ico" aria-hidden="true">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="1.5" y="3" width="11" height="8" rx="0.8"/>
-        <path d="M1.8 3.4 7 7.4 12.2 3.4"/>
-      </svg>
-    </span>
-    <span class="deed-label">{$t('unifiedOpenRequest')}</span>
-  </button>
-
   <LikeDeed />
 
   <a

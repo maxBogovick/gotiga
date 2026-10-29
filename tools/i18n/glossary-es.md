@@ -233,3 +233,14 @@ Regla del proyecto (CLAUDE.md § 1.1): nombres directos, sin metáforas; una cos
 
 - Materiales: siempre **pintura acrílica** (también donde el original dice «acrylics»): el filtro del archivo agrupa por valor.
 - Técnica: **«Modelado a mano, pintado a mano, hecho a mano»** (antes «…pintura a mano, confección a mano», poco natural).
+
+## Compra por Etsy y solicitudes (octubre 2026)
+
+| ru | es |
+|---|---|
+| Приобрести (botón; lleva a la página de la obra en Etsy) | **Comprar** |
+| Хочу похожую | **Quiero una parecida** |
+| Заявка (sin compromiso) | **solicitud** |
+| Заказать фигурку | **Encargar una figura** |
+| Почему оплата через Etsy | **Por qué el pago se hace en Etsy** |
+| В наличии | **Disponible** |

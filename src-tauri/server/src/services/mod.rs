@@ -17,12 +17,16 @@ use base64::Engine as _;
 use uuid::Uuid;
 
 mod ask;
+mod digest;
 mod site_search;
 mod insights;
+mod jobs;
 mod oauth_login;
+mod push;
 mod release;
 mod readiness;
 pub use insights::{BattleReport, BehaviourReport, HealthReport, PipelineHealth};
+pub use jobs::JobStatus;
 
 #[derive(Clone)]
 pub struct AppService {
@@ -58,9 +62,15 @@ pub struct AppService {
     /// Каталог ответов «Спросить сайт» вместе с векторами формулировок. Собирается
     /// при первом вопросе и сбрасывается правкой каталога в админке.
     ask_index: Arc<tokio::sync::RwLock<Option<Arc<ask::AskIndex>>>>,
+    /// Пара ключей сервера для уведомлений (`push.rs`): читается из настроек один раз.
+    push_vapid: Arc<tokio::sync::OnceCell<Arc<crate::push::Vapid>>>,
     /// Небылицы, листы вестника и карты вместе с их векторами для общего поиска
     /// (`site_search`). Живёт `INDEX_TTL` и пересобирается сам.
     site_index: Arc<tokio::sync::RwLock<Option<Arc<site_search::SiteIndex>>>>,
+    /// Работы вместе с остальными вещами, разобранные для поиска по словам: тексты
+    /// режутся на слова один раз, а не на каждый запрос. Живёт `LEXICAL_TTL`; сохранение
+    /// работы и её подписи сбрасывает его сразу (`forget_site_lexical`).
+    site_lexical: Arc<tokio::sync::RwLock<Option<Arc<site_search::SiteLexical>>>>,
     /// То, что в картинках печатей шапки одно на всех и меняется редко: последняя
     /// небылица и признак «автор загрузил свои картинки для печати „Все работы“».
     /// `GET /site/counts` вызывает каждая загрузка каждой страницы, и три лишних
@@ -143,7 +153,9 @@ impl AppService {
             http_client,
             oauth,
             ask_index: Arc::new(tokio::sync::RwLock::new(None)),
+            push_vapid: Arc::new(tokio::sync::OnceCell::new()),
             site_index: Arc::new(tokio::sync::RwLock::new(None)),
+            site_lexical: Arc::new(tokio::sync::RwLock::new(None)),
             nav_seal_cache: Arc::new(Mutex::new(None)),
         }
     }
@@ -1165,6 +1177,7 @@ impl AppService {
             name: f.name,
             slug: f.slug,
             slug_manual: f.slug_manual,
+            etsy_url: f.etsy_url,
             status: f.status,
             short_text: f.short_text,
             face_image_url: face.map(|i| self.face_image_url(i)),
@@ -1515,6 +1528,7 @@ impl AppService {
                 .as_ref()
                 .map(|p| self.resolve_url(p, "figurines_video", &fig_id_str)),
             secret_text: figurine.secret_text,
+            etsy_url: figurine.etsy_url,
             status: figurine.status,
             sort_order: figurine.sort_order,
             is_visible: figurine.is_visible,
@@ -1931,6 +1945,7 @@ impl AppService {
             .bind(uuid)
             .execute(self.repo.pg_pool())
             .await?;
+        self.forget_site_lexical().await;
         // Best-effort: re-embed so the caption is reflected in search right away.
         if let Err(e) = self.reindex_figurine_embedding(uuid).await {
             tracing::warn!(target: "gotiga_server::embed", error = %e, "reindex after caption set failed");
@@ -2122,6 +2137,9 @@ impl AppService {
     pub async fn save_figurine(&self, mut req: crate::models::SaveFigurineRequest) -> Result<()> {
         let figurine_id = Self::parse_uuid(&req.id)?;
         validate_text("Name", &req.name, 200)?;
+        if let Some(raw) = req.etsy_url.as_deref() {
+            req.etsy_url = Some(normalize_etsy_url(raw)?);
+        }
         if req.images.len() > 50 {
             return Err(AppError::BadRequest("Too many images (max 50)".into()));
         }
@@ -2233,6 +2251,7 @@ impl AppService {
             });
         }
         Self::log_domain_event("figurine_saved", "figurine", figurine_id, "ok");
+        self.forget_site_lexical().await;
         Ok(())
     }
 
@@ -2393,6 +2412,7 @@ impl AppService {
         }
 
         Self::log_domain_event("figurine_deleted", "figurine", uuid, "ok");
+        self.forget_site_lexical().await;
         Ok(())
     }
 
@@ -2830,6 +2850,13 @@ impl AppService {
             requester_phone: c.requester_phone.clone(),
             title: c.title.clone(),
             description: c.description.clone(),
+            contacts: serde_json::from_value(c.contacts.clone()).unwrap_or_default(),
+            wish: c.wish.clone(),
+            choices: serde_json::from_value(c.choices.clone()).unwrap_or_default(),
+            size_key: c.size_key.clone(),
+            deadline_kind: c.deadline_kind.clone(),
+            budget_key: c.budget_key.clone(),
+            budget_currency: c.budget_currency.clone(),
             size_note: c.size_note.clone(),
             mood: c.mood.clone(),
             deadline: c.deadline.map(|d| d.to_string()),
@@ -2842,6 +2869,7 @@ impl AppService {
             figurine_id: c.figurine_id.clone(),
             status: c.status.clone(),
             admin_notes: c.admin_notes.clone(),
+            lang: c.lang.clone(),
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
             attachments: attachments.iter().map(AttachmentDto::from).collect(),
@@ -2851,16 +2879,45 @@ impl AppService {
         })
     }
 
+    /// Уборка: фото гостей, которые никто не приложил к заявке за сутки.
+    /// Возвращает, сколько файлов стёрто.
+    pub async fn sweep_commission_uploads(&self) -> Result<usize> {
+        let mut done = 0;
+        for url in self.repo.stale_commission_uploads(24).await? {
+            // Сначала строка (если заявка успела занять фото — строка остаётся, файл тоже).
+            if self.repo.drop_unclaimed_commission_upload(&url).await? {
+                self.remove_upload(&url).await;
+                done += 1;
+            }
+        }
+        Ok(done)
+    }
+
+    /// Записывает загруженное гостем фото (файл уже на диске).
+    pub async fn record_commission_upload(&self, url: &str) -> Result<()> {
+        self.repo.record_commission_upload(url).await
+    }
+
+    /// `logged_in`: заявку отправляет вошедший (его фото идут через `/profile/uploads`).
+    /// Гость может приложить только фото, загруженные через `/commissions/uploads`
+    /// и ещё не занятые другой заявкой, и не больше трёх.
     pub async fn create_commission(
         &self,
         req: &CommissionRequest,
+        logged_in: bool,
     ) -> Result<CommissionCreatedResponse> {
         if !req.age_confirmed {
             return Err(crate::error::AppError::BadRequest(
                 "Please confirm you are 16 or older".to_string(),
             ));
         }
+        let prepared = prepare_commission(req, chrono::Utc::now().date_naive())?;
         validate_attachments(&req.attachment_urls)?;
+        if !logged_in && req.attachment_urls.len() > GUEST_COMMISSION_PHOTOS {
+            return Err(AppError::BadRequest(format!(
+                "Too many photos (max {GUEST_COMMISSION_PHOTOS})"
+            )));
+        }
         if let Some(source_id) = req
             .source_figurine_id
             .as_deref()
@@ -2874,7 +2931,10 @@ impl AppService {
                 ));
             }
         }
-        let saved = self.repo.create_commission(req).await?;
+        let saved = self
+            .repo
+            .create_commission(req, &prepared, !logged_in)
+            .await?;
         self.observability
             .record_business_event("commission_created", "ok");
         Self::log_domain_event("commission_created", "commission", saved.id, "ok");
@@ -3226,12 +3286,12 @@ impl AppService {
             ✒️ Идея: {}\n\
             📝 Описание: {}\n\
             👤 Имя: {}\n\
-            📧 Email: {}\n\n\
+            {}\n\
             🔗 [Открыть в админке]({})",
             escape_markdown(title),
             escape_markdown(&c.description),
             escape_markdown(&c.requester_name),
-            escape_markdown(&c.requester_email),
+            escape_markdown(&commission_details(c)),
             admin_link,
         );
 
@@ -4123,6 +4183,157 @@ impl AppService {
 
 // ── Input validation helpers ────────────────────────────────────────────────
 
+/// Сколько фото может приложить гость к заявке.
+pub const GUEST_COMMISSION_PHOTOS: usize = 3;
+
+/// Заявка, приведённая в порядок: то, что хранится, и то, что проверено.
+#[derive(Debug, Clone)]
+pub struct PreparedCommission {
+    pub email: Option<String>,
+    pub contacts: Vec<crate::commission_wizard::Contact>,
+    pub choices: crate::commission_wizard::Choices,
+    pub wish: Option<String>,
+    pub size_key: Option<String>,
+    pub deadline_kind: Option<String>,
+    pub budget_key: Option<String>,
+    pub budget_currency: Option<String>,
+    pub deadline: Option<chrono::NaiveDate>,
+}
+
+fn closed_value(
+    field: &str,
+    value: Option<&str>,
+    allowed: &[&str],
+) -> Result<Option<String>> {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        None => Ok(None),
+        Some(v) if allowed.contains(&v) => Ok(Some(v.to_string())),
+        Some(_) => Err(AppError::BadRequest(format!("Unknown value for {field}"))),
+    }
+}
+
+/// Проверки заявки без базы: способы связи, закрытые списки, срок.
+pub fn prepare_commission(
+    req: &CommissionRequest,
+    today: chrono::NaiveDate,
+) -> Result<PreparedCommission> {
+    use crate::commission_wizard as w;
+    let contacts = w::normalize_contacts(&req.contacts).map_err(AppError::BadRequest)?;
+
+    let typed = req
+        .requester_email
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty());
+    let email = match typed {
+        Some(e) if w::looks_like_email(e) => Some(e.to_string()),
+        Some(_) => return Err(AppError::BadRequest("A valid email is required.".into())),
+        None => contacts
+            .iter()
+            .find(|c| c.channel == "email")
+            .map(|c| c.value.clone()),
+    };
+    if email.is_none() && contacts.is_empty() {
+        return Err(AppError::BadRequest(
+            "Please leave a way to reach you.".into(),
+        ));
+    }
+
+    let wish = closed_value("wish", req.wish.as_deref(), &w::WISHES)?;
+    let size_key = closed_value("sizeKey", req.size_key.as_deref(), &w::SIZE_KEYS)?;
+    let deadline_kind = closed_value(
+        "deadlineKind",
+        req.deadline_kind.as_deref(),
+        &w::DEADLINE_KINDS,
+    )?;
+    let budget_key = closed_value("budgetKey", req.budget_key.as_deref(), &w::BUDGET_KEYS)?;
+    let budget_currency = closed_value(
+        "budgetCurrency",
+        req.budget_currency.as_deref(),
+        &w::BUDGET_CURRENCIES,
+    )?;
+
+    let deadline = match deadline_kind.as_deref() {
+        Some("none") | Some("asap") => None,
+        kind => {
+            let raw = req.deadline.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            match raw {
+                None if kind == Some("date") => {
+                    return Err(AppError::BadRequest("A deadline date is required.".into()));
+                }
+                None => None,
+                Some(s) => {
+                    let d = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
+                        AppError::BadRequest(
+                            "Invalid deadline date (expected YYYY-MM-DD)".to_string(),
+                        )
+                    })?;
+                    if d < today {
+                        return Err(AppError::BadRequest(
+                            "The deadline date is in the past.".into(),
+                        ));
+                    }
+                    Some(d)
+                }
+            }
+        }
+    };
+
+    Ok(PreparedCommission {
+        email,
+        contacts,
+        choices: w::normalize_choices(&req.choices.clone().unwrap_or_default()),
+        wish,
+        size_key,
+        deadline_kind,
+        budget_key,
+        budget_currency,
+        deadline,
+    })
+}
+
+/// Всё, что человек выбрал в мастере заявки, простыми словами, по строке на пункт.
+/// Первая строка — как связаться: почта и каждый способ связи по строке.
+fn commission_details(c: &Commission) -> String {
+    use crate::commission_wizard as w;
+    let contacts: Vec<w::Contact> = serde_json::from_value(c.contacts.clone()).unwrap_or_default();
+    let choices: w::Choices = serde_json::from_value(c.choices.clone()).unwrap_or_default();
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("📞 Связаться:".into());
+    let mut any = false;
+    if let Some(e) = c.requester_email.as_deref()
+        && !contacts.iter().any(|k| k.channel == "email" && k.value == e)
+    {
+        lines.push(format!("Email: {e}"));
+        any = true;
+    }
+    for k in &contacts {
+        lines.push(format!("{}: {}", w::channel_label(&k.channel), k.value));
+        any = true;
+    }
+    if !any {
+        lines.push("—".into());
+    }
+    if let Some(wish) = c.wish.as_deref() {
+        lines.push(format!("🎯 Хочет: {}", w::wish_word(wish)));
+    }
+    lines.extend(w::choices_lines(&choices));
+    if let Some(k) = c.size_key.as_deref() {
+        lines.push(format!("📏 Размер: {}", w::size_word(k)));
+    }
+    match (c.deadline_kind.as_deref(), c.deadline) {
+        (Some("asap"), _) => lines.push("⏳ Срок: как можно скорее".into()),
+        (Some("none"), _) => lines.push("⏳ Срок: не важен".into()),
+        (_, Some(d)) => lines.push(format!("⏳ Срок: до {d}")),
+        _ => {}
+    }
+    if let Some(k) = c.budget_key.as_deref() {
+        let cur = c.budget_currency.as_deref().unwrap_or("");
+        lines.push(format!("💰 Бюджет: {} {cur}", w::budget_word(k)).trim_end().to_string());
+    }
+    lines.join("\n")
+}
+
 const MAX_ATTACHMENTS: usize = 10;
 const MAX_URL_LEN: usize = 2048;
 
@@ -4155,6 +4366,35 @@ fn validate_attachments(atts: &[AttachmentInput]) -> Result<()> {
 }
 
 /// Require a trimmed string within `[1, max]` characters.
+/// Ссылка на страницу работы на Etsy: только https, хост `etsy.com`,
+/// `www.etsy.com` или короткие ссылки `etsy.me`, не длиннее 500 знаков.
+/// Пустая строка значит «очистить» и возвращается пустой.
+pub(crate) fn normalize_etsy_url(raw: &str) -> Result<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(String::new());
+    }
+    let bad = || {
+        AppError::BadRequest(
+            "Etsy link must be an https:// address on etsy.com or etsy.me (max 500 characters)"
+                .into(),
+        )
+    };
+    if raw.chars().count() > 500 {
+        return Err(bad());
+    }
+    let url = reqwest::Url::parse(raw).map_err(|_| bad())?;
+    let host_ok = matches!(
+        url.host_str().map(str::to_ascii_lowercase).as_deref(),
+        Some("etsy.com" | "www.etsy.com" | "etsy.me")
+    );
+    if url.scheme() != "https" || !host_ok || !url.username().is_empty() || url.password().is_some()
+    {
+        return Err(bad());
+    }
+    Ok(url.to_string())
+}
+
 fn validate_text(field: &str, value: &str, max: usize) -> Result<()> {
     let len = value.trim().chars().count();
     if len == 0 {
@@ -5388,13 +5628,13 @@ impl AppService {
     ///
     /// Ошибка не роняет запуск: не дозвонились до Telegram — сайт всё равно
     /// должен открыться, а вход подождёт следующего запуска.
-    pub async fn announce_telegram_webhook(&self) {
+    pub async fn announce_telegram_webhook(&self) -> Result<bool> {
         let (Some(bot), Some(url)) = (self.login_bot(), self.telegram_webhook_url()) else {
-            return; // двери нет — и объявлять нечего
+            return Ok(false); // двери нет — и объявлять нечего
         };
         let secret = match self.config.telegram_webhook_secret.as_deref() {
             Some(s) => s,
-            None => return,
+            None => return Ok(false),
         };
         // В журнал идёт адрес БЕЗ секрета: секрет стоит в самом пути, а журнал
         // читают и в терминале, и в админском просмотрщике.
@@ -5407,13 +5647,19 @@ impl AppService {
                 self.config.public_url,
                 said
             );
-            return;
+            return Ok(false);
         }
         match bot.announce(&url, secret).await {
-            Ok(()) => tracing::info!("Telegram webhook registered at {said}"),
+            Ok(()) => {
+                tracing::info!("Telegram webhook registered at {said}");
+                Ok(true)
+            }
             // Уровень warn, а не info: вход не работает, и это должно быть
             // видно в журнале запуска, а не найдено потом по жалобе.
-            Err(e) => tracing::warn!("Telegram webhook NOT registered ({said}): {e}"),
+            Err(e) => {
+                tracing::warn!("Telegram webhook NOT registered ({said}): {e}");
+                Err(AppError::Internal(format!("Telegram webhook not registered: {e}")))
+            }
         }
     }
 
@@ -5449,18 +5695,29 @@ impl AppService {
     /// подключённый позже английского, не получает архив и не мешает ему.
     pub async fn announce_to_channel(&self) -> Result<usize> {
         let channels = self.channels();
+        if self.channel_bot().is_none() || channels.is_empty() {
+            return Ok(0); // бота нет или каналов нет — объявлять некому и некуда
+        }
+        let langs: Vec<crate::lang::Lang> = channels.iter().map(|(l, _)| *l).collect();
+        let all = self.channel_on_display(&langs).await?;
+        self.announce_channels(&all).await
+    }
+
+    /// Каналы по уже прочитанному «что на людях»: то же чтение делит с ними рассылка
+    /// уведомлений (`announce_news`).
+    async fn announce_channels(
+        &self,
+        all: &HashMap<crate::lang::Lang, HashMap<(String, Uuid), ChannelPost>>,
+    ) -> Result<usize> {
+        let channels = self.channels();
         let Some(bot) = self.channel_bot() else {
             return Ok(0); // бота нет — объявлять некому
         };
-        if channels.is_empty() {
-            return Ok(0); // каналов нет — объявлять некуда
-        }
-        let langs: Vec<crate::lang::Lang> = channels.iter().map(|(l, _)| *l).collect();
-        let mut all = self.channel_on_display(&langs).await?;
+        let empty = HashMap::new();
         let mut sent = 0;
         for (lang, chat) in channels {
-            let posts = all.remove(&lang).unwrap_or_default();
-            sent += self.announce_in(&bot, lang, &chat, &posts).await?;
+            let posts = all.get(&lang).unwrap_or(&empty);
+            sent += self.announce_in(&bot, lang, &chat, posts).await?;
         }
         Ok(sent)
     }
@@ -18888,4 +19145,42 @@ fn impression_reply_words(lang: crate::lang::Lang, name: &str) -> (String, Strin
     );
     let view = lang.pick("The work", "Работа", "Робота", "La obra", "Die Arbeit", "L’opera");
     (subject, yours, answer, view)
+}
+
+#[cfg(test)]
+mod etsy_url_tests {
+    use super::normalize_etsy_url;
+
+    #[test]
+    fn accepts_etsy_addresses() {
+        for ok in [
+            "https://www.etsy.com/listing/123/some-doll",
+            "https://etsy.com/listing/123",
+            "https://etsy.me/3abcDEF",
+            "  https://www.etsy.com/shop/JustaSculpture  ",
+        ] {
+            assert!(normalize_etsy_url(ok).is_ok(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn empty_clears() {
+        assert_eq!(normalize_etsy_url("   ").unwrap(), "");
+    }
+
+    #[test]
+    fn rejects_other_addresses() {
+        for bad in [
+            "http://www.etsy.com/listing/1",
+            "https://evil.com/etsy.com",
+            "https://etsy.com.evil.com/x",
+            "https://user@www.etsy.com/x",
+            "javascript:alert(1)",
+            "www.etsy.com/listing/1",
+        ] {
+            assert!(normalize_etsy_url(bad).is_err(), "{bad}");
+        }
+        let long = format!("https://www.etsy.com/{}", "a".repeat(500));
+        assert!(normalize_etsy_url(&long).is_err());
+    }
 }

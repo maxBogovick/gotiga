@@ -195,3 +195,14 @@ Una cosa — una parola in tutti i posti (sito, gioco, studio).
 | poseable | snodabile / da mettere in posa | |
 | Baba Yaga | Baba Yaga | come nel dizionario dell’interfaccia (`searchHints`), non «Baba Jaga» |
 | Little Red Riding Hood / Pied Piper / Hamlet / Quasimodo | Cappuccetto Rosso / Pifferaio di Hamelin / Amleto / Quasimodo | nomi italiani consueti |
+
+## Acquisto tramite Etsy e richieste (ottobre 2026)
+
+| ru | it |
+|---|---|
+| Приобрести (pulsante; porta alla pagina dell’opera su Etsy) | **Acquista** |
+| Хочу похожую | **Vorrei una simile** |
+| Заявка (senza impegno) | **richiesta** |
+| Заказать фигурку | **Richiedi una figura** |
+| Почему оплата через Etsy | **Perché il pagamento passa da Etsy** |
+| В наличии | **Disponibile** |

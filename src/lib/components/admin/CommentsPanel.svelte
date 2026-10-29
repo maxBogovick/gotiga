@@ -2,11 +2,18 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { t } from '$lib/i18n';
-  import type { AdminCommentDto, AdminCommentsPage } from '$lib/types/api';
+  import type { AdminCommentDto } from '$lib/types/api';
+
+  /** Строка списка: отклик на работу или на байку — выглядят одинаково. */
+  type Row = AdminCommentDto & { href: string };
+  type View = { items: Row[]; total: number; pendingCount: number };
 
   let { onPendingCount }: { onPendingCount?: (n: number) => void } = $props();
 
-  let pageData = $state<AdminCommentsPage | null>(null);
+  let pageData = $state<View | null>(null);
+  /** Чьи отклики показаны: у работ и у байк они хранятся порознь, а модерируются здесь вместе. */
+  let kind = $state<'work' | 'tale'>('work');
+  let pending = $state({ work: 0, tale: 0 });
   let loading = $state(true);
   let onlyPending = $state(true);
   let newestFirst = $state(true);
@@ -21,35 +28,73 @@
   async function load() {
     loading = true;
     try {
-      pageData = await api.adminListComments({
-        pending: onlyPending,
-        sort: newestFirst ? 'newest' : 'oldest',
-        figurineId: figurineFilter.trim() || undefined,
-        page,
-        perPage,
-      });
-      onPendingCount?.(pageData.pendingCount);
+      const sort = newestFirst ? 'newest' : 'oldest';
+      const [works, tales] = await Promise.all([
+        kind === 'work'
+          ? api.adminListComments({ pending: onlyPending, sort, figurineId: figurineFilter.trim() || undefined, page, perPage })
+          : api.adminListComments({ pending: true, perPage: 1 }),
+        kind === 'tale'
+          ? api.adminListTaleComments({ pending: onlyPending, sort, page, perPage })
+          : api.adminListTaleComments({ pending: true, perPage: 1 }),
+      ]);
+      pending = { work: works.pendingCount, tale: tales.pendingCount };
+      onPendingCount?.(pending.work + pending.tale);
+      pageData =
+        kind === 'work'
+          ? {
+              items: works.items.map((c) => ({ ...c, href: `/figurines/${c.figurineId}` })),
+              total: works.total,
+              pendingCount: works.pendingCount,
+            }
+          : {
+              items: tales.items.map((c) => ({
+                id: c.id,
+                figurineId: c.taleId,
+                figurineName: c.taleTitleRu || c.taleTitleEn,
+                authorName: c.authorName,
+                authorEmail: c.authorEmail,
+                body: c.body,
+                isApproved: c.isApproved,
+                adminReply: c.adminReply,
+                createdAt: c.createdAt,
+                userId: c.userId,
+                href: `/tales/${c.taleSlug}`,
+              })) as Row[],
+              total: tales.total,
+              pendingCount: tales.pendingCount,
+            };
     } finally {
       loading = false;
     }
   }
 
+  function pickKind(next: 'work' | 'tale') {
+    if (kind === next) return;
+    kind = next;
+    page = 1;
+    expandedReply = null;
+    void load();
+  }
+
   onMount(load);
 
+  const moderate = (id: string, req: { isApproved: boolean; adminReply: string | null }) =>
+    kind === 'tale' ? api.adminModerateTaleComment(id, req) : api.adminModerateComment(id, req);
+
   async function approve(id: string) {
-    await api.adminModerateComment(id, { isApproved: true, adminReply: replyDrafts[id]?.trim() || null });
+    await moderate(id, { isApproved: true, adminReply: replyDrafts[id]?.trim() || null });
     await load();
   }
 
   async function reject(id: string) {
-    await api.adminModerateComment(id, { isApproved: false, adminReply: null });
+    await moderate(id, { isApproved: false, adminReply: null });
     await load();
   }
 
   async function saveReply(c: AdminCommentDto) {
     savingReply = c.id;
     try {
-      await api.adminModerateComment(c.id, {
+      await moderate(c.id, {
         isApproved: c.isApproved,
         adminReply: replyDrafts[c.id]?.trim() || null,
       });
@@ -63,7 +108,7 @@
 
   async function del(id: string) {
     if (!confirm($t('adminCommentsDelete') + '?')) return;
-    await api.adminDeleteComment(id);
+    await (kind === 'tale' ? api.adminDeleteTaleComment(id) : api.adminDeleteComment(id));
     await load();
   }
 
@@ -85,6 +130,14 @@
 <div class="panel">
   <div class="panel-header">
     <h2 class="panel-title">{$t('adminCommentsTitle')}</h2>
+    <div class="kinds" role="tablist">
+      <button role="tab" aria-selected={kind === 'work'} class="kind" class:kind--on={kind === 'work'} onclick={() => pickKind('work')}>
+        {$t('navAllWorks')}{#if pending.work > 0}<span class="badge">{pending.work}</span>{/if}
+      </button>
+      <button role="tab" aria-selected={kind === 'tale'} class="kind" class:kind--on={kind === 'tale'} onclick={() => pickKind('tale')}>
+        {$t('adminTabTales')}{#if pending.tale > 0}<span class="badge">{pending.tale}</span>{/if}
+      </button>
+    </div>
     <div class="header-controls">
       <label class="pending-toggle">
         <input type="checkbox" bind:checked={onlyPending} onchange={() => { page = 1; load(); }} />
@@ -97,13 +150,13 @@
         <option value={true}>{$t('adminCommentsSortNewest')}</option>
         <option value={false}>{$t('adminCommentsSortOldest')}</option>
       </select>
-      <input
+      {#if kind === 'work'}<input
         class="filter-input"
         type="text"
         placeholder={$t('adminCommentsFilterFigurine')}
         bind:value={figurineFilter}
         oninput={() => { page = 1; load(); }}
-      />
+      />{/if}
     </div>
   </div>
 
@@ -123,7 +176,7 @@
       {#each pageData.items as c (c.id)}
         <li class="comment-row" class:approved={c.isApproved} class:pending={!c.isApproved}>
           <div class="comment-meta">
-            <a href="/figurines/{c.figurineId}" target="_blank" rel="noopener" class="figurine-link">{c.figurineName}</a>
+            <a href={c.href} target="_blank" rel="noopener" class="figurine-link">{c.figurineName}</a>
             <span class="sep">·</span>
             <strong class="author">{c.authorName}</strong>
             {#if c.authorEmail}
@@ -235,6 +288,20 @@
   }
 
   .filter-input:focus { border-color: #c65f3c; }
+
+  .kinds { display: flex; gap: 0.4rem; }
+  .kind {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: #5f4636;
+    background: transparent;
+    border: 1px solid #d8c6b1;
+    padding: 0.25rem 0.75rem;
+    cursor: pointer;
+  }
+  .kind--on { background: #34251c; border-color: #34251c; color: #f8f1e7; }
 
   .panel-title {
     font-family: 'Fraunces', Georgia, serif;

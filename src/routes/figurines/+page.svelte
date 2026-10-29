@@ -10,7 +10,7 @@
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
-  import OrderModal from '$lib/components/OrderModal.svelte';
+  import EtsyBuyDialog from '$lib/components/EtsyBuyDialog.svelte';
   import FilterPopover from '$lib/components/FilterPopover.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { houseClock } from '$lib/stores/house-clock.svelte';
@@ -316,7 +316,7 @@
 
   // ── Card actions ─────────────────────────────────────────────────────────
   let lightboxFig = $state<FigurineListItem | null>(null);
-  let orderFig = $state<FigurineListItem | null>(null);
+  let buyFig = $state<FigurineListItem | null>(null);
   let shareCopiedId = $state('');
 
   onMount(() => {
@@ -326,6 +326,8 @@
     // `page.url.searchParams` is forbidden during prerender — seed `?q=` only
     // in the browser, after the static archive HTML has been written.
     searchQuery = page.url.searchParams.get('q') ?? '';
+    // `?status=available` — ссылка «Смотреть работы в наличии» со страницы «Как приобрести».
+    if (page.url.searchParams.get('status') === 'available') mainFilter = 'available';
     try {
       const viewed: string[] = JSON.parse(localStorage.getItem('gotiga_viewed') ?? '[]');
       viewedIds = new Set(viewed);
@@ -397,7 +399,7 @@
   function openOrder(e: MouseEvent, fig: FigurineListItem) {
     e.preventDefault();
     e.stopPropagation();
-    orderFig = fig;
+    buyFig = fig;
   }
 
   function openSimilarCommission(e: MouseEvent, fig: FigurineListItem) {
@@ -934,8 +936,8 @@
                                  translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
                                  [transition-delay:130ms]"
                           onclick={(e) => openOrder(e, figurine)}
-                          title={$t('cardRequest')}
-                          aria-label={$t('cardRequest')}
+                          title={$t('buyAction')}
+                          aria-label={$t('buyAction')}
                         >
                           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                             <rect x="2" y="4" width="10" height="7" rx="0.5" stroke="currentColor" stroke-width="1"/>
@@ -1045,16 +1047,12 @@
   />
 {/if}
 
-{#if orderFig}
-  <OrderModal
-    isOpen={!!orderFig}
-    figurineName={workBase(orderFig, 'name')}
-    displayName={orderFig.name}
-    figurineId={orderFig.id}
-    mode="request"
-    onClose={() => { orderFig = null; }}
-  />
-{/if}
+<EtsyBuyDialog
+  isOpen={!!buyFig}
+  work={buyFig}
+  onClose={() => { buyFig = null; }}
+  onSimilar={() => { if (buyFig) goto(`/commission?source=${encodeURIComponent(buyFig.id)}`); }}
+/>
 
 <style>
   @keyframes shimmer {

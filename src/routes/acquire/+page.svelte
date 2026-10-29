@@ -2,15 +2,15 @@
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { t, brandName } from '$lib/i18n';
+  import EtsyWhy from '$lib/components/EtsyWhy.svelte';
 
-  const numerals = ['I', 'II', 'III', 'IV', 'V'];
+  const numerals = ['I', 'II', 'III', 'IV'];
 
   let steps = $derived([
     { title: $t('acquireStep1Title'), body: $t('acquireStep1Body') },
     { title: $t('acquireStep2Title'), body: $t('acquireStep2Body') },
     { title: $t('acquireStep3Title'), body: $t('acquireStep3Body') },
     { title: $t('acquireStep4Title'), body: $t('acquireStep4Body') },
-    { title: $t('acquireStep5Title'), body: $t('acquireStep5Body') },
   ]);
 </script>
 
@@ -41,12 +41,16 @@
       {/each}
     </ol>
 
+    <div class="why" in:fade={{ duration: 500, delay: 550 }}>
+      <EtsyWhy />
+    </div>
+
     <div class="closing" in:fade={{ duration: 600, delay: 650 }}>
       <span class="seal" aria-hidden="true">✦</span>
       <p>{$t('acquireClosing')}</p>
       <div class="actions">
-        <a class="cta cta--primary" href="/commission">{$t('acquireCommissionCta')} →</a>
-        <a class="cta cta--ghost" href="/figurines">{$t('acquireBrowseCta')}</a>
+        <a class="cta cta--primary" href="/figurines?status=available">{$t('acquireBrowseCta')} →</a>
+        <a class="cta cta--ghost" href="/commission">{$t('acquireCommissionCta')}</a>
       </div>
     </div>
   </div>
@@ -78,6 +82,8 @@
   .numeral { font-family: 'Fraunces', Georgia, serif; font-size: 1.5rem; color: #c65f3c; line-height: 1.1; letter-spacing: 0.04em; }
   .entry-title { font-family: 'Fraunces', Georgia, serif; font-size: 1.3rem; font-weight: 500; margin: 0 0 0.5rem; color: #34251c; }
   .entry-body { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 1.15rem; line-height: 1.6; color: #5f4636; margin: 0; }
+
+  .why { margin-top: 2.2rem; }
 
   .closing { margin-top: 3rem; text-align: center; }
   .seal { display: inline-grid; place-items: center; width: 3.4rem; height: 3.4rem; margin-bottom: 1rem; border-radius: 48% 52% 45% 55%; background: radial-gradient(circle at 35% 30%, #d8714f, #8f2e1a); color: #f8f1e7; font-size: 1.2rem; box-shadow: 0 10px 24px -12px rgba(143,46,26,0.7); }

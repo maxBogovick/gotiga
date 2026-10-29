@@ -118,6 +118,7 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
             .route("/orders", post(handlers::create_order))
             .route("/analytics/events", post(handlers::record_analytics_event))
             .route("/commissions", post(handlers::create_commission))
+            .route("/commissions/uploads", post(handlers::commission_upload))
             .route(
                 "/commissions/:token",
                 get(handlers::get_commission_by_token),
@@ -172,6 +173,10 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/orders/notify/:token",
                 get(handlers::get_notify_by_token).post(handlers::cancel_notify_by_token),
             )
+            // === PUSH (уведомления о новом на сайте) ===
+            .route("/push/config", get(handlers::push_config))
+            .route("/push/subscribe", post(handlers::push_subscribe))
+            .route("/push/unsubscribe", post(handlers::push_unsubscribe))
             // === NEWSLETTER ("visitor book") ===
             .route("/subscribe", post(handlers::subscribe))
             .route("/subscribe/telegram", post(handlers::subscribe_via_telegram))
@@ -1420,6 +1425,24 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 ),
             )
             .route(
+                "/admin/jobs",
+                get(handlers::admin_get_jobs).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/digests",
+                get(handlers::admin_get_digests).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/analytics/digests/rebuild",
+                post(handlers::admin_rebuild_digest).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/analytics/health",
                 get(handlers::admin_get_health).route_layer(
                     middleware::from_fn_with_state(config.clone(), auth_middleware),
@@ -1959,6 +1982,8 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
         "seals",
         // Готовые обложки книг небылиц, встроенные в сервер.
         "covers",
+        // Фото, которые гости прикладывают к заявке.
+        "commission",
     ] {
         app = app.nest_service(
             &format!("/static/{}", subdir),

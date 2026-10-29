@@ -76,6 +76,8 @@ export interface FigurineListItem {
     /** До трёх похожих работ в порядке автора (номера). Приходят только в основном
      *  списке работ; док на главной показывает их тремя миниатюрами. */
     similarIds?: string[];
+    /** Страница работы на Etsy; нет — кнопка «Приобрести» ведёт в магазин. */
+    etsyUrl?: string | null;
     /** Тексты работы на других языках — только поля, видные в списке. Нет языка или
      *  поля — печатается английское поле самой работы (`workText`). */
     translations?: FigurineTranslations;
@@ -307,6 +309,8 @@ export interface Figurine {
     ambiencePath: string | null;
     videoUrl: string | null;
     secretText: string | null;
+    /** Страница работы на Etsy. Пустая строка при сохранении очищает. */
+    etsyUrl?: string | null;
     status: FigurineStatus;
     sortOrder: number;
     isVisible: boolean;
@@ -943,16 +947,30 @@ export interface AdminVisitorEvent {
     internalSource: string | null;
 }
 
+import type {
+    RequestContact, RequestWish, RequestChoices, SizeKey, DeadlineKind, BudgetKey, BudgetCurrency,
+} from '../requestChoices';
+
 // ── Commissions: a petition to the master to create a NEW figurine ──
 export type CommissionStatus =
     | 'new' | 'reviewing' | 'accepted' | 'in_progress' | 'completed' | 'declined';
 
 export interface CommissionRequest {
     requesterName?: string | null;
-    requesterEmail: string;
+    /** Optional: at least one of `requesterEmail` / `contacts` is required. */
+    requesterEmail?: string | null;
     requesterPhone?: string | null;
     title?: string | null;
+    /** May be empty (the request wizard has only an optional note). */
     description: string;
+    /** Ways to reach the person; one per channel, at most 9. */
+    contacts?: RequestContact[];
+    wish?: RequestWish | null;
+    choices?: RequestChoices;
+    sizeKey?: SizeKey | null;
+    deadlineKind?: DeadlineKind | null;
+    budgetKey?: BudgetKey | null;
+    budgetCurrency?: BudgetCurrency | null;
     sizeNote?: string | null;
     mood?: string | null;
     deadline?: string | null;
@@ -987,10 +1005,17 @@ export interface CommissionDto {
     id: string;
     claimToken: string;
     requesterName: string;
-    requesterEmail: string;
+    requesterEmail: string | null;
     requesterPhone: string | null;
     title: string;
     description: string;
+    contacts: RequestContact[];
+    wish: RequestWish | null;
+    choices: RequestChoices;
+    sizeKey: SizeKey | null;
+    deadlineKind: DeadlineKind | null;
+    budgetKey: BudgetKey | null;
+    budgetCurrency: BudgetCurrency | null;
     sizeNote: string | null;
     mood: string | null;
     deadline: string | null;
@@ -1003,6 +1028,8 @@ export interface CommissionDto {
     figurineId: string | null;
     status: CommissionStatus;
     adminNotes: string | null;
+    /** Language the request was written in. */
+    lang?: string | null;
     createdAt: string;
     updatedAt: string;
     attachments: AttachmentDto[];
@@ -1920,6 +1947,19 @@ export interface SubscriptionCreatedResponse {
     unsubscribeToken: string;
     /** True when this email was already an active subscriber. */
     alreadySubscribed: boolean;
+}
+
+/** О чём присылать уведомления: новые работы, небылицы, листы вестника. */
+export type PushTopic = 'works' | 'tales' | 'gazette';
+
+export interface PushSubscribeRequest {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+    /** Язык сайта у читателя: на нём приходит текст уведомления. */
+    lang: string;
+    topics: PushTopic[];
+    /** Прежний адрес подписки, если браузер выдал новую: темы и язык переезжают. */
+    oldEndpoint?: string | null;
 }
 
 export interface TelegramSubscribeResponse {
@@ -5195,6 +5235,64 @@ export interface BehaviourReport {
     sections: SectionRow[];
     interactions: InteractionRow[];
     tales: TaleReadRow[];
+}
+
+/** What stands next to a finding. A coincidence the digest could measure, not a cause. */
+export type DigestHint =
+    | { code: 'slow_load'; lcpMs: number }
+    | { code: 'errors'; events: number }
+    | { code: 'no_scroll'; share: number }
+    | { code: 'in_app_browser' };
+
+export interface DigestFinding {
+    pathGroup: string;
+    /** null: every source. */
+    origin: string | null;
+    /** null: every device. */
+    deviceClass: string | null;
+    visits: number;
+    quick: number;
+    /** Share of visits that left within 10 s, 0..1. */
+    rate: number;
+    referenceRate: number;
+    /** `past`: the same group in the four weeks before; `room`: the rest of the same room. */
+    against: 'past' | 'room';
+    /** How many more people left quickly than the reference share would give. */
+    extra: number;
+    hints: DigestHint[];
+}
+
+export interface DigestWeek {
+    /** Monday. */
+    weekStart: string;
+    madeAt: string;
+    visits: number;
+    quick: number;
+    findings: DigestFinding[];
+    telegramAt: string | null;
+}
+
+/** Последний запуск одного фонового прохода (журнал `job_runs`). */
+export interface JobStatus {
+    job: string;
+    /** Расписание в секундах; 0 — один раз при запуске сервера. */
+    everySecs: number;
+    startedAt: string;
+    finishedAt: string;
+    durationMs: number;
+    ok: boolean;
+    okAt: string | null;
+    /** Когда проход в последний раз что-то сделал, а не отработал вхолостую. */
+    didAt: string | null;
+    /** Что сделал в тот раз. */
+    note: string | null;
+    error: string | null;
+    runs: number;
+    failures: number;
+    /** Сбоев подряд. */
+    inARow: number;
+    ageSecs: number;
+    state: 'ok' | 'failed' | 'late';
 }
 
 export interface VitalsRow {

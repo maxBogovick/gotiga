@@ -1,5 +1,9 @@
+import { browser } from '$app/environment';
 import { api } from '$lib/api';
 import type { FigurineListItem } from '$lib/types/api';
+
+/** How long the browser holds the page for the leaves about a work before showing it without them. */
+const QUICK_MS = 40;
 
 // Web build: prerender one static HTML page per figurine. SvelteKit can't know the
 // ids of a dynamic [id] route on its own, so entries() enumerates them from the API
@@ -69,10 +73,28 @@ export const load = async ({ params, fetch }: { params: { id: string }; fetch: t
   // search engines at the pretty URL. Falls back to whatever handle was used.
   const canonicalPath = `/figurines/${figurine?.slug ?? params.id}`;
 
-  let gazetteLeaves: import('$lib/types/api').GazetteLeaf[] = [];
+  // The leaves about this work sit below the photo, but they were awaited after the work
+  // itself, so a client-side visit waited for two requests in a row before showing
+  // anything. The prerender and the hydration of a prerendered page get them in hand
+  // (the former from the API, the latter from the response SvelteKit inlined, which
+  // answers well inside `QUICK_MS`); a visit that has to go to the network shows the page
+  // first and the page fills them in from `gazetteLater` (getGazetteForWork never rejects).
+  type Leaves = import('$lib/types/api').GazetteLeaf[];
+  let gazetteLeaves: Leaves = [];
+  let gazetteLater: Promise<Leaves> | null = null;
   if (figurine) {
-    gazetteLeaves = await api.getGazetteForWork(figurine.id, fetch);
+    const leavesReq = api.getGazetteForWork(figurine.id, fetch);
+    if (!browser) {
+      gazetteLeaves = await leavesReq;
+    } else {
+      const quick = await Promise.race([
+        leavesReq,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), QUICK_MS)),
+      ]);
+      if (quick) gazetteLeaves = quick;
+      else gazetteLater = leavesReq;
+    }
   }
 
-  return { figurine, prev, next, loadError, canonicalPath, gazetteLeaves };
+  return { figurine, prev, next, loadError, canonicalPath, gazetteLeaves, gazetteLater };
 };

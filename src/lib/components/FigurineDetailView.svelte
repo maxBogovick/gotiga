@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { nameTranslations, workBase } from '$lib/workText';
+  import { workBase } from '$lib/workText';
   import { onMount, onDestroy, tick, setContext } from 'svelte';
   import { fade } from 'svelte/transition';
   import type { Figurine, FigurineSchedule, FigurineStatus, DisplayConfig, FigurineImage, GazetteLeaf } from '$lib/types/api';
   import type { FigurineListItem } from '$lib/types/api';
   import { figurineHref } from '$lib/figurineHref';
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
-  import UnifiedRequestModal from '$lib/components/UnifiedRequestModal.svelte';
+  import RequestWizard from '$lib/components/RequestWizard.svelte';
+  import EtsyBuyDialog from '$lib/components/EtsyBuyDialog.svelte';
   import CandleReveal from '$lib/components/CandleReveal.svelte';
   import MemoryMirror from '$lib/components/MemoryMirror.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
@@ -21,7 +22,7 @@
   import { t, lang, brandName, locale } from '$lib/i18n';
   import { leafCopy, leafHref } from '$lib/gazette';
   import { isTale } from '$lib/tales';
-  import { FigurineClaimsStore, type ClaimData } from '$lib/stores/figurine-claims.svelte';
+  import { FigurineClaimsStore } from '$lib/stores/figurine-claims.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { pageTurn } from '$lib/stores/page-turn.svelte';
   import { detailHeader } from '$lib/stores/detail-header.svelte';
@@ -112,8 +113,7 @@
   let selectedImageIndex = $state(readInitialPhotoIndex());
   let isGrimoireOpen = $state(false);
   let showRequestModal = $state(false);
-  let requestInitialIntent = $state<RequestIntent>('request');
-  let createSimilarHref = $derived(`/commission?source=${encodeURIComponent(id)}`);
+  let showBuyDialog = $state(false);
   let figurineSchedule = $state<FigurineSchedule>({ entries: [] });
   let scheduleLoadFailed = $state(false);
   let isAudioPlaying = $state(false);
@@ -179,7 +179,6 @@
   // Showing that is happening TODAY (started but not yet ended)
   let hasActiveShowing = $derived(showings.some(s => s.startsAt <= todayStr && s.endsAt >= todayStr));
 
-  type RequestIntent = 'request' | 'reserve' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
   type AttributeKind = 'dimensions' | 'material' | 'technique';
 
   function statusLabel(status: FigurineStatus): string {
@@ -210,18 +209,12 @@
             ? $t('unifiedShowingNote')
             : $t('unifiedAvailableNote');
     const mobileSubtitle = isAvailable
-      ? (hasActiveShowing ? $t('detailMobileShowingSub') : $t('figurinePriceOnRequest'))
+      ? (hasActiveShowing ? $t('detailMobileShowingSub') : $t('figurineStatusAvailable'))
       : figurine.status === 'reserved'
         ? $t('detailMobileReservedSub')
         : figurine.status === 'in_progress'
           ? $t('detailMobileProgressSub')
           : $t('detailMobileSoldSub');
-    const defaultIntent: RequestIntent = figurine.status === 'reserved'
-      ? 'waitlist'
-      : figurine.status === 'in_progress' || figurine.status === 'sold'
-        ? 'notify'
-        : 'request';
-
     return {
       label: statusLabel(figurine.status),
       title,
@@ -229,7 +222,6 @@
       mobileSubtitle,
       mobileCtaLabel: $t('detailMobileRequestCta'),
       mobileIcon: isAvailable ? 'lock' : 'arrow',
-      defaultIntent,
     };
   });
 
@@ -676,6 +668,11 @@
   // <picture> elements would actually pick) so paging with the new arrow
   // buttons / swipe feels instant instead of showing a fresh blur-up each
   // time. Fire-and-forget Image() objects — the browser cache does the rest.
+  //
+  // It waits for the photo on screen: the big neighbours (140–240 KB each) used to start
+  // the moment the page came alive, on the same slow link the visible photo and the
+  // remaining scripts were still using. On a slow or metered connection the neighbours
+  // are limited to their small thumbnails.
   function preloadImage(path: string | null | undefined) {
     if (typeof Image === 'undefined' || !path) return;
     const url = resolveMediaUrl(path);
@@ -684,15 +681,50 @@
     img.src = resolveWebpUrl(url) ?? url;
   }
 
+  function onSlowLink(): boolean {
+    const c = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    return !!c && (c.saveData === true || c.effectiveType === 'slow-2g' || c.effectiveType === '2g' || c.effectiveType === '3g');
+  }
+
   $effect(() => {
     const idx = activeImageIndex;
     const images = sortedImages;
-    const prevImg = images[idx - 1];
-    const nextImg = images[idx + 1];
-    preloadImage(prevImg?.url);
-    preloadImage(prevImg?.thumbUrl);
-    preloadImage(nextImg?.url);
-    preloadImage(nextImg?.thumbUrl);
+    const neighbours = [images[idx - 1], images[idx + 1]];
+    if (typeof window === 'undefined') return;
+
+    let idleHandle: number | undefined;
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    const main = document.querySelector<HTMLImageElement>('[data-figurine-plate] img.brass-main');
+
+    function preload() {
+      for (const n of neighbours) {
+        preloadImage(n?.thumbUrl);
+        if (!onSlowLink()) preloadImage(n?.url);
+      }
+    }
+    function whenIdle() {
+      main?.removeEventListener('load', whenIdle);
+      main?.removeEventListener('error', whenIdle);
+      clearTimeout(fallback);
+      if ('requestIdleCallback' in window) idleHandle = window.requestIdleCallback(preload, { timeout: 2000 });
+      else fallback = setTimeout(preload, 300);
+    }
+
+    if (!main || main.complete) {
+      whenIdle();
+    } else {
+      main.addEventListener('load', whenIdle);
+      main.addEventListener('error', whenIdle);
+      // A photo that never answers must not keep the neighbours from loading for good.
+      fallback = setTimeout(whenIdle, 8000);
+    }
+
+    return () => {
+      main?.removeEventListener('load', whenIdle);
+      main?.removeEventListener('error', whenIdle);
+      clearTimeout(fallback);
+      if (idleHandle !== undefined) window.cancelIdleCallback(idleHandle);
+    };
   });
 
   let imageViewMode = $state<'fit' | 'detail'>('fit');
@@ -1245,19 +1277,14 @@
   // ── Sticky condensed nav — три фазы ─────────────────────────────────────
   let scrollY = $state(0);
 
-  function defaultRequestIntent(): RequestIntent {
-    return statusUi.defaultIntent;
+  /** Любой вход «Хочу похожую» открывает мастер заявки с этой работой за основу. */
+  function openRequestModal(_intent?: string) {
+    analyticsClient?.cta('create_similar');
+    showRequestModal = true;
   }
 
-  function openRequestModal(intent = defaultRequestIntent()) {
-    const analyticsIntent = intent === 'similar'
-      ? 'create_similar'
-      : intent === 'viewing'
-        ? 'booking'
-        : intent;
-    analyticsClient?.cta(analyticsIntent);
-    requestInitialIntent = intent;
-    showRequestModal = true;
+  function openBuyDialog() {
+    showBuyDialog = true;
   }
 
   function openClaimLookup() {
@@ -1443,6 +1470,7 @@
     toggleRaking,
     setImageViewMode,
     openRequestModal,
+    openBuyDialog,
     openGrimoire,
     closeGrimoire,
     handlePersonalRecordToggle,
@@ -1484,20 +1512,25 @@
   ontouchstart={handlePageTouchStart}
   ontouchend={handlePageTouchEnd}
 >
-  <UnifiedRequestModal
-    isOpen={showRequestModal}
-    figurineName={workBase(figurine, 'name')}
-    displayName={figurine.name}
-    figurineNameTranslations={nameTranslations(figurine)}
-    figurineId={figurine.id}
-    status={figurine.status}
-    schedule={figurineSchedule}
-    initialIntent={requestInitialIntent}
-    onJoined={(tok: string, pos: number) => { queueJoin = { token: tok, position: pos }; }}
-    onNotified={(tok: string) => { notifyJoin = tok; }}
-    onBookingCreated={(claim: ClaimData) => cs.onBookingCreated(claim)}
-    onClose={() => (showRequestModal = false)}
+  <EtsyBuyDialog
+    isOpen={showBuyDialog}
+    work={figurine}
+    onClose={() => (showBuyDialog = false)}
+    onSimilar={() => openRequestModal('similar')}
   />
+
+  {#if showRequestModal}
+    <RequestWizard
+      mode="dialog"
+      source={{
+        id: figurine.id,
+        name: workBase(figurine, 'name'),
+        displayName: figurine.name,
+        photo: (figurine.images.find((i) => i.imageType === 'face') ?? figurine.images[0])?.thumbUrl ?? null,
+      }}
+      onClose={() => (showRequestModal = false)}
+    />
+  {/if}
 
   <!-- ── Story share modal ──────────────────────────────────────────────── -->
   {#if showStoryModal}
@@ -1680,7 +1713,7 @@
 {/if}
 
 <!-- Mobile sticky CTA after the first screen — present for every status. -->
-{#if scrollY > 300 && !showRequestModal}
+{#if scrollY > 300 && !showRequestModal && !showBuyDialog}
   <div class="mobile-cta" transition:fade={{ duration: 180 }}>
     <div class="mobile-cta-info">
       <span class="mobile-cta-name">{figurine.name}</span>
@@ -1688,20 +1721,15 @@
         {statusUi.mobileSubtitle}
       </span>
     </div>
-    <button type="button" onclick={() => openRequestModal()} class="mobile-cta-btn">
-      {statusUi.mobileCtaLabel}
-      {#if statusUi.mobileIcon === 'lock'}
-        <svg width="13" height="14" viewBox="0 0 14 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M4.5 5V3.5a2.5 2.5 0 0 1 5 0V5"/>
-          <rect x="2" y="5" width="10" height="8.5" rx="1.2"/>
-        </svg>
-      {:else}
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M2 7h9M8 4l3 3-3 3"/>
-        </svg>
-      {/if}
+    <button type="button" onclick={() => (figurine.status === 'available' ? openBuyDialog() : openRequestModal('similar'))} class="mobile-cta-btn">
+      {figurine.status === 'available' ? $t('buyAction') : $t('buySimilar')}
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2 7h9M8 4l3 3-3 3"/>
+      </svg>
     </button>
-    <a href={createSimilarHref} class="mobile-cta-link" onclick={() => analyticsClient?.cta('create_similar')}>{$t('commissionCreateSimilarShort')}</a>
+    {#if figurine.status === 'available'}
+      <button type="button" class="mobile-cta-link" onclick={() => openRequestModal('similar')}>{$t('buySimilar')}</button>
+    {/if}
   </div>
 {/if}
 

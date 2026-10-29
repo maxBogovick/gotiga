@@ -32,10 +32,20 @@ pub fn by(lang: Lang, words: [&'static str; 6]) -> &'static str {
     }]
 }
 
+/// Языки, из которых канал берёт текст. Английский канал читают только по-английски,
+/// поэтому русский или немецкий текст в него не попадает вовсе (вещь без
+/// английского текста там не выходит); остальные каналы идут по цепочке откатов сайта.
+fn sources(lang: Lang) -> Vec<Lang> {
+    match lang {
+        Lang::En => vec![Lang::En],
+        _ => lang.fallbacks().to_vec(),
+    }
+}
+
 /// Первый непустой текст по цепочке откатов и язык, на котором он написан.
 /// Колонки в порядке en, ru, uk, es, de, it.
 pub fn pick_text(lang: Lang, cols: [Option<&str>; 6]) -> Option<(String, Lang)> {
-    for l in lang.fallbacks() {
+    for l in sources(lang) {
         let side = match l {
             Lang::En => cols[0],
             Lang::Ru => cols[1],
@@ -59,7 +69,7 @@ pub fn pick_text_or(
     first: [Option<&str>; 6],
     second: [Option<&str>; 6],
 ) -> Option<(String, Lang)> {
-    for l in lang.fallbacks() {
+    for l in sources(lang) {
         let at = |cols: [Option<&str>; 6]| {
             pick_text(l, cols).filter(|(_, from)| *from == l).map(|(t, _)| t)
         };
@@ -239,14 +249,14 @@ pub fn words(lang: Lang, sort: Sort) -> Words {
         ),
         Sort::EtudeSolo => (
             [
-                "New etude in the game",
-                "Новый этюд в игре",
-                "Новий етюд у грі",
-                "Nuevo desafío en el juego",
-                "Neue Etüde im Spiel",
-                "Nuova étude nel gioco",
+                "New battle in the game",
+                "Новая битва в игре",
+                "Нова битва у грі",
+                "Nueva batalla en el juego",
+                "Neue Schlacht im Spiel",
+                "Nuova battaglia nel gioco",
             ],
-            ["etude", "этюд", "етюд", "desafío", "etüde", "étude"],
+            ["battle", "битва", "битва", "batalla", "schlacht", "battaglia"],
             ["Play", "Сыграть", "Зіграти", "Jugar", "Spielen", "Gioca"],
         ),
         Sort::EtudeDeck => (
@@ -258,7 +268,7 @@ pub fn words(lang: Lang, sort: Sort) -> Words {
                 "Neue Begegnung im Spiel",
                 "Nuovo incontro nel gioco",
             ],
-            ["etude", "этюд", "етюд", "desafío", "etüde", "étude"],
+            ["battle", "битва", "битва", "batalla", "schlacht", "battaglia"],
             ["Play", "Сыграть", "Зіграти", "Jugar", "Spielen", "Gioca"],
         ),
     };
@@ -731,6 +741,14 @@ mod tests {
         let own = pick_text(Lang::De, [Some("en"), None, None, None, Some(" de "), None]).unwrap();
         assert_eq!(own, ("de".to_string(), Lang::De));
         assert!(pick_text(Lang::It, [None, None, None, None, None, None]).is_none());
+    }
+
+    #[test]
+    fn the_english_channel_never_gets_foreign_text() {
+        let ru_only = [None, Some("русский"), None, None, None, None];
+        assert!(pick_text(Lang::En, ru_only).is_none());
+        assert!(pick_text_or(Lang::En, ru_only, [None; 6]).is_none());
+        assert_eq!(pick_text(Lang::En, [Some("en"), Some("ru"), None, None, None, None]).unwrap().1, Lang::En);
     }
 
     #[test]

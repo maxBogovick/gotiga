@@ -130,7 +130,38 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
             loop {
                 tick.tick().await;
-                svc.reload_geoip();
+                let _ = svc
+                    .track_job("geoip_reload", 3600, async { svc.reload_geoip(); Ok(()) }, |_| None)
+                    .await;
+            }
+        });
+    }
+
+    // Background: недельный разбор быстрых уходов. Тик — час: недели «кончаются» только в
+    // календаре, события у этого нет. Проход идемпотентен (разбор недели один, письмо
+    // владельцу отмечается), первый тик через две минуты после запуска.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                tick.tick().await;
+                let round = svc
+                    .track_job("quick_exit_digest", 3600, svc.weekly_digest_round(), |(made, sent)| {
+                        match (*made, *sent) {
+                            (false, 0) => None,
+                            (true, 0) => Some("the week's digest was made".into()),
+                            (true, n) => Some(format!("the week's digest was made and sent ({n})")),
+                            (false, n) => Some(format!("a digest was sent to Telegram ({n})")),
+                        }
+                    })
+                    .await;
+                match round {
+                    Ok((_, n)) if n > 0 => tracing::info!("Digest of quick exits: {n} sent"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Digest round failed: {e}"),
+                }
             }
         });
     }
@@ -149,7 +180,12 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(900));
             loop {
                 tick.tick().await;
-                match svc.judge_due_studio_seasons().await {
+                match svc
+                    .track_job("studio_verdict", 900, svc.judge_due_studio_seasons(), |n| {
+                        (*n > 0).then(|| format!("seasons judged: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Сезон студии подведён: {n} к хозяину"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Вердикт сезона не удался: {e}"),
@@ -168,7 +204,12 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(900));
             loop {
                 tick.tick().await;
-                match svc.close_due_auctions().await {
+                match svc
+                    .track_job("auctions", 900, svc.close_due_auctions(), |n| {
+                        (*n > 0).then(|| format!("lots sold: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Молоток: продано лотов {n}"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Молоток не удался: {e}"),
@@ -188,7 +229,13 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
             loop {
                 tick.tick().await;
-                match svc.sweep_studio_store().await {
+                match svc
+                    .track_job("studio_store_sweep", 24 * 3600, svc.sweep_studio_store(), |(sheets, assets)| {
+                        (*sheets > 0 || *assets > 0)
+                            .then(|| format!("sheets {sheets}, parts {assets} removed"))
+                    })
+                    .await
+                {
                     Ok((0, 0)) => {}
                     Ok((sheets, assets)) => {
                         tracing::info!("Склад студии убран: листов {sheets}, деталей {assets}")
@@ -199,12 +246,38 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Фото гостей к заявкам: загруженное, но не приложенное ни к одной заявке за сутки,
+    // стирается вместе со строкой. Раз в сутки; опоздать этот проход не может.
+    {
+        let svc = service.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+            loop {
+                tick.tick().await;
+                match svc
+                    .track_job("commission_upload_cleanup", 24 * 3600, svc.sweep_commission_uploads(), |n| {
+                        (*n > 0).then(|| format!("photos removed: {n}"))
+                    })
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!("Фото к заявкам убраны: {n}"),
+                    Err(e) => tracing::warn!("Уборка фото к заявкам не удалась: {e}"),
+                }
+            }
+        });
+    }
+
     // Саморегистрация webhook Telegram: сервер сам говорит, куда стучаться.
     // Фоном — сеть не должна задерживать открытие сайта.
     {
         let svc = service.clone();
         tokio::spawn(async move {
-            svc.announce_telegram_webhook().await;
+            let _ = svc
+                .track_job("telegram_webhook", 0, svc.announce_telegram_webhook(), |done| {
+                    done.then(|| "webhook registered with Telegram".into())
+                })
+                .await;
         });
     }
 
@@ -230,7 +303,12 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
             loop {
                 tick.tick().await;
-                match svc.refresh_stale_embeddings().await {
+                match svc
+                    .track_job("search_index", 600, svc.refresh_stale_embeddings(), |n| {
+                        (*n > 0).then(|| format!("works re-indexed: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Search index: {n} works refreshed"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Search index refresh round failed: {e}"),
@@ -245,7 +323,12 @@ async fn main() -> anyhow::Result<()> {
     {
         let svc = service.clone();
         tokio::spawn(async move {
-            match svc.warm_ask_index().await {
+            match svc
+                .track_job("ask_index_warm", 0, svc.warm_ask_index(), |n| {
+                    Some(format!("answers indexed: {n}"))
+                })
+                .await
+            {
                 Ok(n) => tracing::info!("Ask the site: {n} answers indexed"),
                 Err(e) => tracing::warn!("Ask the site: the catalog was not indexed at start: {e}"),
             }
@@ -258,7 +341,12 @@ async fn main() -> anyhow::Result<()> {
     {
         let svc = service.clone();
         tokio::spawn(async move {
-            match svc.warm_site_index().await {
+            match svc
+                .track_job("site_index_warm", 0, svc.warm_site_index(), |n| {
+                    Some(format!("tales, leaves and cards indexed: {n}"))
+                })
+                .await
+            {
                 Ok(n) => tracing::info!("Site search: {n} tales, leaves and cards indexed"),
                 Err(e) => tracing::warn!("Site search: the index was not built at start: {e}"),
             }
@@ -276,14 +364,32 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
             loop {
                 tick.tick().await;
-                match svc.announce_to_channel().await {
-                    Ok(n) if n > 0 => tracing::info!("Telegram channel: {n} posts out"),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!("Telegram channel round failed: {e}"),
+                // Каналы и уведомления в браузере: что на людях читается один раз на оба.
+                match svc
+                    .track_job("channel_news", 300, svc.announce_news(), |(posts, pushes)| {
+                        (*posts > 0 || *pushes > 0)
+                            .then(|| format!("channel posts {posts}, browser notifications {pushes}"))
+                    })
+                    .await
+                {
+                    Ok((posts, pushes)) => {
+                        if posts > 0 {
+                            tracing::info!("Telegram channel: {posts} posts out");
+                        }
+                        if pushes > 0 {
+                            tracing::info!("Push: {pushes} notifications out");
+                        }
+                    }
+                    Err(e) => tracing::warn!("News round failed: {e}"),
                 }
                 // Новый релиз в файле заметок — черновик поста в админке. После
                 // объявлений: журнал уже заметил то, что вышло к выкладке.
-                if let Err(e) = svc.prepare_release_draft().await {
+                if let Err(e) = svc
+                    .track_job("release_draft", 300, svc.prepare_release_draft(), |made| {
+                        made.as_ref().map(|v| format!("draft of release {v}"))
+                    })
+                    .await
+                {
                     tracing::warn!("Release draft round failed: {e}");
                 }
             }
@@ -300,17 +406,32 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(300));
             loop {
                 tick.tick().await;
-                match svc.send_tale_letters().await {
+                match svc
+                    .track_job("tale_letters", 300, svc.send_tale_letters(), |n| {
+                        (*n > 0).then(|| format!("letters sent: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Tale letters: {n} sent"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Tale letters round failed: {e}"),
                 }
-                match svc.send_tale_book_notes().await {
+                match svc
+                    .track_job("tale_book_notes", 300, svc.send_tale_book_notes(), |n| {
+                        (*n > 0).then(|| format!("Telegram notes to the house book: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Book notes: {n} sent to Telegram"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Book notes round failed: {e}"),
                 }
-                match svc.send_tale_notes().await {
+                match svc
+                    .track_job("tale_notes", 300, svc.send_tale_notes(), |n| {
+                        (*n > 0).then(|| format!("Telegram notes to those waiting: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Tale notes: {n} sent to Telegram"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Tale notes round failed: {e}"),
@@ -327,7 +448,12 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
             loop {
                 tick.tick().await;
-                match svc.prune_login_history(RETENTION_DAYS).await {
+                match svc
+                    .track_job("prune_login_history", 24 * 3600, svc.prune_login_history(RETENTION_DAYS), |n| {
+                        (*n > 0).then(|| format!("login attempts removed: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => {
                         tracing::info!("Pruned {n} login attempts older than {RETENTION_DAYS} days")
                     }
@@ -336,7 +462,12 @@ async fn main() -> anyhow::Result<()> {
                 }
                 // Отработавшие и остывшие слова для входа через Telegram —
                 // здесь же: тот же срок жизни у задачи, та же уборка за входом.
-                match svc.prune_telegram_login_codes().await {
+                match svc
+                    .track_job("prune_telegram_login", 24 * 3600, svc.prune_telegram_login_codes(), |n| {
+                        (*n > 0).then(|| format!("Telegram login words removed: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Pruned {n} spent Telegram login words"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Telegram login-word prune failed: {e}"),
@@ -344,19 +475,34 @@ async fn main() -> anyhow::Result<()> {
                 // Просроченные сессии — все разом. Прежде сессия стиралась только при
                 // следующем входе того же человека, и у не вернувшегося её строка
                 // (с адресом и браузером) оставалась навсегда.
-                match svc.prune_expired_sessions().await {
+                match svc
+                    .track_job("prune_sessions", 24 * 3600, svc.prune_expired_sessions(), |n| {
+                        (*n > 0).then(|| format!("expired sessions removed: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Pruned {n} expired sessions"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Expired-session prune failed: {e}"),
                 }
                 // Гости боя: имя без дверей живёт месяц, потом уходит с партиями.
-                match svc.prune_stale_guests().await {
+                match svc
+                    .track_job("prune_guests", 24 * 3600, svc.prune_stale_guests(), |n| {
+                        (*n > 0).then(|| format!("stale guest players removed: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Pruned {n} stale guest players"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("Guest-player prune failed: {e}"),
                 }
                 // Отработавшие и остывшие попытки входа через Google и Apple.
-                match svc.prune_oauth_logins().await {
+                match svc
+                    .track_job("prune_oauth", 24 * 3600, svc.prune_oauth_logins(), |n| {
+                        (*n > 0).then(|| format!("spent OAuth sign-ins removed: {n}"))
+                    })
+                    .await
+                {
                     Ok(n) if n > 0 => tracing::info!("Pruned {n} spent OAuth sign-ins"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!("OAuth sign-in prune failed: {e}"),
@@ -375,23 +521,33 @@ async fn main() -> anyhow::Result<()> {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
             loop {
                 tick.tick().await;
-                loop {
-                    match svc
-                        .prune_analytics_events_chunked(RETENTION_DAYS, BATCH_SIZE)
-                        .await
-                    {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            tracing::info!(
-                                "Pruned {n} analytics events older than {RETENTION_DAYS} days"
-                            );
-                            tokio::task::yield_now().await;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Analytics retention prune failed: {e}");
-                            break;
-                        }
-                    }
+                let round = svc
+                    .track_job(
+                        "analytics_prune",
+                        24 * 3600,
+                        async {
+                            let mut total: u64 = 0;
+                            loop {
+                                match svc
+                                    .prune_analytics_events_chunked(RETENTION_DAYS, BATCH_SIZE)
+                                    .await?
+                                {
+                                    0 => break Ok(total),
+                                    n => {
+                                        total += n as u64;
+                                        tracing::info!(
+                                            "Pruned {n} analytics events older than {RETENTION_DAYS} days"
+                                        );
+                                        tokio::task::yield_now().await;
+                                    }
+                                }
+                            }
+                        },
+                        |total| (*total > 0).then(|| format!("raw events removed: {total}")),
+                    )
+                    .await;
+                if let Err(e) = round {
+                    tracing::warn!("Analytics retention prune failed: {e}");
                 }
             }
         });
@@ -403,7 +559,10 @@ async fn main() -> anyhow::Result<()> {
         let svc = service.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-            match svc.refresh_gazette_desk().await {
+            match svc
+                .track_job("gazette_desk", 6 * 3600, svc.refresh_gazette_desk(), desk_note)
+                .await
+            {
                 Ok(r) if r.imported > 0 => {
                     tracing::info!(
                         "Gazette desk: {} cuttings from {} feeds",
@@ -418,7 +577,10 @@ async fn main() -> anyhow::Result<()> {
             tick.tick().await;
             loop {
                 tick.tick().await;
-                if let Err(e) = svc.refresh_gazette_desk().await {
+                if let Err(e) = svc
+                    .track_job("gazette_desk", 6 * 3600, svc.refresh_gazette_desk(), desk_note)
+                    .await
+                {
                     tracing::warn!("Gazette desk refresh failed: {e}");
                 }
             }
@@ -485,4 +647,9 @@ async fn shutdown_signal() {
     }
 
     tracing::info!("Signal received, starting graceful shutdown");
+}
+
+/// Что записать в журнал проходов о подборке заметок мира: сколько вырезок и из скольких лент.
+fn desk_note(r: &gotiga_server::models::GazetteRefreshReport) -> Option<String> {
+    (r.imported > 0).then(|| format!("cuttings imported: {} from {} feeds", r.imported, r.feeds))
 }

@@ -63,10 +63,19 @@
   let thumbImg = $state<HTMLImageElement | undefined>();
   let thumbPicture = $state<HTMLElement | undefined>();
 
+  // The photo is visible from the first paint, so it never waits for scripts: a
+  // prerendered page used to keep every photo at opacity 0 until hydration set `loaded`,
+  // which on a slow phone meant a blurred thumb long after the real file had arrived.
+  // Only a photo that has not started to paint when the page comes alive is held back
+  // until it loads, so it can fade in over the thumb instead of popping in.
+  let waitForLoad = $state(false);
+
   // Repair the photo after hydration — Svelte skips src/srcset there, and on a
   // prerendered page the DOM's photo is the build's, not today's. See hydrate-image.ts;
   // the home page's hero does the same for its own <img>.
   onMount(() => {
+    const painting = !!mainImg && mainImg.naturalWidth > 0;
+
     // The <source> first: the browser re-runs its selection when the <img>'s own
     // src/srcset is touched, so the sources must already be correct by then.
     syncAttr(thumbPicture?.querySelector('source'), 'srcset', thumbWebp);
@@ -80,6 +89,8 @@
     // have finished already (marking us `loaded`, which fades the blur-up out). Re-read
     // the element's real state so the fade follows the photo actually on screen.
     if (mainImg && !(mainImg.complete && mainImg.naturalWidth > 0)) loaded = false;
+
+    waitForLoad = !painting;
   });
 
   // Reset whenever the source changes. If the (possibly cached) image is already
@@ -129,7 +140,7 @@
     <picture
       bind:this={mainPicture}
       class="app-image-picture"
-      class:app-image-picture--loaded={loaded || failed}
+      class:app-image-picture--pending={waitForLoad && !loaded && !failed}
     >
       {#if candidates?.webp}
         <source type="image/webp" srcset={candidates.webp} {sizes} />
@@ -180,7 +191,7 @@
     transition: opacity 0.3s ease;
   }
 
-  /* Main image: invisible until loaded, then fade in */
+  /* Main image: visible as soon as the browser paints it, with no script involved. */
   .app-image-picture {
     display: contents;
   }
@@ -195,11 +206,14 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    opacity: 0;
+    color: transparent;
     transition: opacity 0.4s ease;
   }
 
-  .app-image-picture--loaded .app-image-main {
-    opacity: 1;
+  /* A photo that had not begun to paint when the page came alive waits, hidden, for its
+     load event and then fades in over the thumb. */
+  .app-image-picture--pending .app-image-main {
+    opacity: 0;
   }
+
 </style>

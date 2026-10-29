@@ -6,6 +6,12 @@
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import SiteFooter from '$lib/components/SiteFooter.svelte';
   import SectionBar from '$lib/components/SectionBar.svelte';
+  import PwaUpdateBar from '$lib/components/pwa/PwaUpdateBar.svelte';
+  import PwaInstallStrip from '$lib/components/pwa/PwaInstallStrip.svelte';
+  import PwaInstallGuide from '$lib/components/pwa/PwaInstallGuide.svelte';
+  import { pwa } from '$lib/stores/pwa.svelte';
+  import { userDesk } from '$lib/stores/user-desk.svelte';
+  import { navCounts } from '$lib/stores/nav-counts.svelte';
   import { WORK_LEAF_RE } from '$lib/nav';
   import { currentWork } from '$lib/stores/current-work.svelte';
   import { themeConfig, themeCSS, startListeningForPreview, applyPreviewPayload } from '$lib/stores/theme.svelte';
@@ -95,6 +101,23 @@
     if (typeof document !== 'undefined') document.documentElement.lang = $lang;
   });
 
+  // Манифест приложения на языке читателя: название и ярлыки на значке. Подменяется ссылка,
+  // а не сам файл: установленное приложение читает манифест при установке и при обновлении.
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    if (link) link.href = `/pwa/manifest.${$lang}.webmanifest`;
+  });
+
+  // Число на значке установленного приложения: непрочитанные ответы мастерской и новое
+  // в разделах с прошлого визита. Вкладке значок не нужен.
+  $effect(() => {
+    if (!pwa.standalone) return;
+    const fresh =
+      navCounts.fresh('works') + navCounts.fresh('gazette') + navCounts.fresh('tales');
+    pwa.setBadge(userDesk.unread + fresh);
+  });
+
   // Admin theme override CSS. Injected via injectStyle (sets style.textContent, which
   // does NOT parse HTML) rather than `{@html <style>…</style>}` in <svelte:head>: the
   // theme values are admin-authored and served to every visitor, and a `</style>` in any
@@ -148,11 +171,8 @@
     installErrorReporting();
     startVitals();
 
-    if ('serviceWorker' in navigator && import.meta.env.VITE_BUILD_TARGET === 'web') {
-      import('virtual:pwa-register').then(({ registerSW }) => {
-        registerSW({ immediate: false });
-      }).catch(() => {});
-    }
+    // Service Worker, установка, обновления и уведомления: одно хранилище (`pwa.svelte.ts`).
+    void pwa.start();
 
     // Load theme and copy overrides
     Promise.all([
@@ -337,6 +357,12 @@
 
   {#if showSectionBar && shellReady && !wideScreen}
     <SectionBar />
+    <PwaInstallStrip />
+  {/if}
+
+  <PwaUpdateBar />
+  {#if pwa.guideOpen}
+    <PwaInstallGuide onclose={() => pwa.closeGuide()} />
   {/if}
 
   {#if wantsDock}

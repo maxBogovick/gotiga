@@ -1,6 +1,8 @@
 <script lang="ts">
   import { t, brandName } from '$lib/i18n';
   import { CHANNEL_URL, CHANNEL_HANDLE } from '$lib/channel';
+  import PwaInstallButton from '$lib/components/pwa/PwaInstallButton.svelte';
+  import PushSettings from '$lib/components/pwa/PushSettings.svelte';
 
   // Single source of truth for the contact details. Phone doubles as the
   // Telegram handle (Telegram resolves +<number> links directly).
@@ -129,6 +131,13 @@
           </a>
         </li>
       </ul>
+
+      <!-- Приложение: установка и уведомления о новом. Каждая вещь показывается только
+           там, где возможна. -->
+      <div class="app-block">
+        <PwaInstallButton variant="row" where="footer" />
+        <PushSettings id="push-footer" />
+      </div>
     </section>
   </div>
 
@@ -354,6 +363,33 @@
     text-transform: uppercase;
     color: var(--color-ember, #c65f3c);
   }
+  /* Приложение: подвал тёмный, поэтому цвета кнопок установки и уведомлений светлеют. */
+  .app-block {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(239, 226, 207, 0.14);
+    color: #efe2cf;
+  }
+  .app-block:not(:has(.install, .push)) {
+    display: none;
+  }
+  .app-block :global(.install--row) {
+    height: 44px;
+    color: #f0b79d;
+    border-bottom: 0;
+  }
+  .app-block :global(.install--row:focus-visible),
+  .app-block :global(.push .btn:focus-visible),
+  .app-block :global(.push .topic input:focus-visible) {
+    outline-color: #f0b79d;
+  }
+  .app-block :global(.push) {
+    margin-top: 8px;
+  }
+  .app-block :global(.push .btn--quiet) {
+    color: #efe2cf;
+  }
+
   .contact-list {
     list-style: none;
     margin: 0;

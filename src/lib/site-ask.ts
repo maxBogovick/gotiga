@@ -99,11 +99,11 @@ const ABOUT_PHRASES: [AboutKey, string[]][] = [
     'de qué están hechas', 'de que estan hechas', 'hechas de', 'hecho de', 'material', 'qué tamaño', 'que tamaño', 'tamaño',
     'woraus', 'wie groß', 'wie gross', 'größe', 'groesse', 'wie gemacht',
     'di che cosa sono', 'di cosa sono fatte', 'fatte di', 'materiale', 'dimensioni', 'quanto è grande', 'come sono fatte']],
-  ['rules', ['как играть', 'правила', 'что такое этюд', 'что такое игра', 'как работает игра', 'how to play', 'rules', 'what is a study', 'how does the game',
-    'як грати', 'що таке етюд', 'що таке гра',
-    'cómo se juega', 'como se juega', 'cómo jugar', 'como jugar', 'reglas', 'qué es un étude', 'que es un etude',
-    'wie spielt man', 'wie spiele ich', 'regeln', 'was ist eine etüde',
-    'come si gioca', 'come giocare', 'regole', 'cos’è un étude', "cos'è un étude"]],
+  ['rules', ['как играть', 'правила', 'что такое этюд', 'что такое битва', 'что такое игра', 'как работает игра', 'how to play', 'rules', 'what is a study', 'what is a battle', 'how does the game',
+    'як грати', 'що таке етюд', 'що таке битва', 'що таке гра',
+    'cómo se juega', 'como se juega', 'cómo jugar', 'como jugar', 'reglas', 'qué es un étude', 'que es un etude', 'qué es una batalla', 'que es una batalla',
+    'wie spielt man', 'wie spiele ich', 'regeln', 'was ist eine etüde', 'was ist eine schlacht',
+    'come si gioca', 'come giocare', 'regole', 'cos’è un étude', "cos'è un étude", 'cos’è una battaglia', "cos'è una battaglia"]],
   ['tale', ['что такое небылиц', 'что такое байк', 'what is a tall tale', 'what are tall tales', 'що таке небилиц',
     'qué es un cuento', 'que es un cuento', 'qué son los cuentos', 'was ist eine geschichte', 'was sind die geschichten', 'cos’è un racconto', "cos'è un racconto", 'cosa sono i racconti']],
   ['gazette', ['что такое вестник', 'what is the gazette', 'що таке вісник', 'qué es la gaceta', 'que es la gaceta', 'was ist die zeitung', 'cos’è la gazzetta', "cos'è la gazzetta"]],
@@ -116,7 +116,7 @@ const FACT_STEMS: [FactKey, string[]][] = [
   ['tales', ['небыл', 'небил', 'tale', 'байк', 'истори', 'історі', 'cuento', 'geschicht', 'raccont']],
   ['leaves', ['вестник', 'вісник', 'gazette', 'лист', 'gaceta', 'hoja', 'zeitung', 'blätt', 'blatt', 'gazzett', 'fogli']],
   ['cards', ['карт', 'card', 'carta', 'carte', 'karte']],
-  ['etudes', ['этюд', 'етюд', 'stud', 'etude', 'étude', 'etüde']],
+  ['etudes', ['этюд', 'етюд', 'битв', 'stud', 'etude', 'étude', 'etüde', 'battle', 'batalla', 'schlacht', 'battagl']],
   ['races', ['расы', 'расам', 'расах', 'раси', 'race', 'raza', 'volk', 'völker', 'voelker', 'razz']],
   ['works', ['работ', 'робіт', 'робот', 'work', 'figurin', 'кукл', 'фигур', 'ляльк', 'фігур', 'obra', 'figura', 'muñec', 'werk', 'figur', 'puppe', 'opera', 'opere', 'statuin', 'bambol']],
 ];
@@ -454,12 +454,12 @@ function playReply(index: AskIndex, lang: Lang): AskReply {
   const paragraphs = [
     say(
       lang,
-      `В игре ${n_cards(lang, cards.length)}. Этюд — это партия против компьютера: вы расставляете карты и играете.`,
-      `У грі ${n_cards(lang, cards.length)}. Етюд — це партія проти комп’ютера: ви розставляєте карти й граєте.`,
-      `The game has ${n_cards(lang, cards.length)}. A study is a game against the computer: you place your cards and play.`,
-      `El juego tiene ${n_cards(lang, cards.length)}. Un étude es una partida contra el ordenador: colocas tus cartas y juegas.`,
-      `Im Spiel gibt es ${n_cards(lang, cards.length)}. Eine Etüde ist eine Partie gegen den Computer: Du stellst deine Karten auf und spielst.`,
-      `Il gioco ha ${n_cards(lang, cards.length)}. Un étude è una partita contro il computer: disponi le tue carte e giochi.`,
+      `В игре ${n_cards(lang, cards.length)}. Битва — это партия против компьютера: вы расставляете карты и играете.`,
+      `У грі ${n_cards(lang, cards.length)}. Битва — це партія проти комп’ютера: ви розставляєте карти й граєте.`,
+      `The game has ${n_cards(lang, cards.length)}. A battle is a game against the computer: you place your cards and play.`,
+      `El juego tiene ${n_cards(lang, cards.length)}. Una batalla es una partida contra el ordenador: colocas tus cartas y juegas.`,
+      `Im Spiel gibt es ${n_cards(lang, cards.length)}. Eine Schlacht ist eine Partie gegen den Computer: Du stellst deine Karten auf und spielst.`,
+      `Il gioco ha ${n_cards(lang, cards.length)}. Una battaglia è una partita contro il computer: disponi le tue carte e giochi.`,
     ),
   ];
   if (first) {
@@ -478,7 +478,7 @@ function playReply(index: AskIndex, lang: Lang): AskReply {
   const links: AskLink[] = [];
   if (first) links.push(etudeLink(first, lang));
   links.push({ kind: 'section', label: say(lang, 'Полка карт', 'Полиця карт', 'Card shelf', 'Estante de cartas', 'Kartenregal', 'Scaffale delle carte'), hint: String(cards.length), href: '/battles' });
-  if (etudes.length > 1) links.push({ kind: 'section', label: say(lang, 'Все этюды', 'Усі етюди', 'All studies', 'Todos los études', 'Alle Etüden', 'Tutti gli étude'), hint: String(etudes.length), href: '/battles/etude' });
+  if (etudes.length > 1) links.push({ kind: 'section', label: say(lang, 'Все битвы', 'Усі битви', 'All battles', 'Todas las batallas', 'Alle Schlachten', 'Tutte le battaglie'), hint: String(etudes.length), href: '/battles/etude' });
   return { intent: 'play', paragraphs, links };
 }
 
@@ -668,12 +668,12 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
       const lead = price
         ? say(
             lang,
-            'Цен на сайте нет: условия мастер называет лично в переписке. ',
-            'Цін на сайті немає: умови майстер називає особисто в листуванні. ',
-            'There are no prices on the site: the maker names the terms personally, in a message. ',
-            'En el sitio no hay precios: la autora indica las condiciones personalmente, por mensaje. ',
-            'Auf der Seite gibt es keine Preise: Die Bedingungen nennt die Autorin persönlich, per Nachricht. ',
-            'Sul sito non ci sono prezzi: le condizioni le indica l’autrice di persona, per messaggio. ',
+            'Цена работы в наличии указана на её странице на Etsy; цену заказной фигурки мы обсуждаем в переписке. ',
+            'Ціна роботи в наявності вказана на її сторінці на Etsy; ціну замовної фігурки ми обговорюємо в листуванні. ',
+            'The price of a work in stock is on its Etsy page; the price of a commissioned figurine is discussed in a message. ',
+            'El precio de una obra disponible está en su página de Etsy; el de una figura por encargo se habla por mensaje. ',
+            'Der Preis eines verfügbaren Werks steht auf seiner Etsy-Seite; den Preis einer Auftragsfigur besprechen wir per Nachricht. ',
+            'Il prezzo di un’opera disponibile è sulla sua pagina Etsy; quello di una figura su commissione si discute per messaggio. ',
           )
         : '';
       return {
@@ -681,13 +681,13 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
         paragraphs: [
           lead + text('acquireStep1Body'),
           say(lang, 'Порядок такой: ', 'Порядок такий: ', 'The order is: ', 'El orden es: ', 'Der Ablauf: ', 'L’ordine è questo: ') +
-            [text('acquireStep1Title'), text('acquireStep2Title'), text('acquireStep3Title'), text('acquireStep4Title'), text('acquireStep5Title')].join(' → ') + '.',
-          text('acquireStep5Body'),
+            [text('acquireStep1Title'), text('acquireStep2Title'), text('acquireStep3Title'), text('acquireStep4Title')].join(' → ') + '.',
+          text('acquireStep4Body'),
         ],
         links: [
           sec(text('acquireTitle'), '/acquire'),
-          sec(text('acquireCommissionCta'), '/commission'),
           sec(text('acquireBrowseCta'), '/figurines'),
+          sec(text('acquireCommissionCta'), '/commission'),
         ],
       };
     }
@@ -758,24 +758,24 @@ function aboutReply(index: AskIndex, lang: Lang, key: AboutKey, price: boolean, 
         paragraphs: [
           say(
             lang,
-            'Этюд — партия против компьютера на небольшом поле. Вы расставляете карты и ходите по очереди; выигрывает тот, у кого остались карты, когда у противника их не осталось.',
-            'Етюд — партія проти комп’ютера на невеликому полі. Ви розставляєте карти й ходите по черзі; виграє той, у кого залишилися карти, коли в противника їх не залишилося.',
-            'A study is a game against the computer on a small field. You place your cards and take turns; whoever still has cards when the opponent has none wins.',
-            'Un étude es una partida contra el ordenador en un campo pequeño. Colocas tus cartas y se juega por turnos; gana quien conserva cartas cuando al rival no le queda ninguna.',
-            'Eine Etüde ist eine Partie gegen den Computer auf einem kleinen Feld. Du stellst deine Karten auf, und ihr zieht abwechselnd; es gewinnt, wer noch Karten hat, wenn der Gegner keine mehr hat.',
-            'Un étude è una partita contro il computer su un piccolo campo. Disponi le tue carte e si gioca a turno; vince chi ha ancora carte quando l’avversario non ne ha più.',
+            'Битва — партия против компьютера на небольшом поле. Вы расставляете карты и ходите по очереди; выигрывает тот, у кого остались карты, когда у противника их не осталось.',
+            'Битва — партія проти комп’ютера на невеликому полі. Ви розставляєте карти й ходите по черзі; виграє той, у кого залишилися карти, коли в противника їх не залишилося.',
+            'A battle is a game against the computer on a small field. You place your cards and take turns; whoever still has cards when the opponent has none wins.',
+            'Una batalla es una partida contra el ordenador en un campo pequeño. Colocas tus cartas y se juega por turnos; gana quien conserva cartas cuando al rival no le queda ninguna.',
+            'Eine Schlacht ist eine Partie gegen den Computer auf einem kleinen Feld. Du stellst deine Karten auf, und ihr zieht abwechselnd; es gewinnt, wer noch Karten hat, wenn der Gegner keine mehr hat.',
+            'Una battaglia è una partita contro il computer su un piccolo campo. Disponi le tue carte e si gioca a turno; vince chi ha ancora carte quando l’avversario non ne ha più.',
           ),
           say(
             lang,
-            'У каждого этюда могут быть свои правила: они написаны на листе боя перед началом. Первые бои можно играть без входа.',
-            'У кожного етюду можуть бути свої правила: вони написані на аркуші бою перед початком. Перші бої можна грати без входу.',
-            'Each study may have its own rules: they are written on the battle sheet before it starts. The first battles can be played without signing in.',
-            'Cada étude puede tener sus propias reglas: están escritas en la hoja de combate antes de empezar. Los primeros combates se pueden jugar sin entrar.',
-            'Jede Etüde kann eigene Regeln haben: Sie stehen vor dem Start auf dem Kampfblatt. Die ersten Kämpfe kannst du ohne Anmeldung spielen.',
-            'Ogni étude può avere regole proprie: sono scritte sul foglio della battaglia prima dell’inizio. Le prime battaglie si possono giocare senza entrare.',
+            'У каждой битвы могут быть свои правила: они написаны на листе боя перед началом. Первые бои можно играть без входа.',
+            'У кожної битви можуть бути свої правила: вони написані на аркуші бою перед початком. Перші бої можна грати без входу.',
+            'Each battle may have its own rules: they are written on the battle sheet before it starts. The first battles can be played without signing in.',
+            'Cada batalla puede tener sus propias reglas: están escritas en la hoja de combate antes de empezar. Los primeros combates se pueden jugar sin entrar.',
+            'Jede Schlacht kann eigene Regeln haben: Sie stehen vor dem Start auf dem Kampfblatt. Die ersten Kämpfe kannst du ohne Anmeldung spielen.',
+            'Ogni battaglia può avere regole proprie: sono scritte sul foglio della battaglia prima dell’inizio. Le prime battaglie si possono giocare senza entrare.',
           ),
         ],
-        links: [sec(say(lang, 'Этюды', 'Етюди', 'Studies', 'Études', 'Etüden', 'Étude'), '/battles/etude'), sec(say(lang, 'Полка карт', 'Полиця карт', 'Card shelf', 'Estante de cartas', 'Kartenregal', 'Scaffale delle carte'), '/battles')],
+        links: [sec(say(lang, 'Битвы', 'Битви', 'Battles', 'Batallas', 'Schlachten', 'Battaglie'), '/battles/etude'), sec(say(lang, 'Полка карт', 'Полиця карт', 'Card shelf', 'Estante de cartas', 'Kartenregal', 'Scaffale delle carte'), '/battles')],
       };
     case 'tale':
       return {
@@ -851,7 +851,7 @@ function countReply(index: AskIndex, lang: Lang, facts: FactKey[], gazetteTotal:
         break;
       case 'etudes':
         parts.push(n_etudes(lang, etudes.length));
-        links.push({ kind: 'section', label: say(lang, 'Этюды', 'Етюди', 'Studies', 'Études', 'Etüden', 'Étude'), hint: String(etudes.length), href: '/battles/etude' });
+        links.push({ kind: 'section', label: say(lang, 'Битвы', 'Битви', 'Battles', 'Batallas', 'Schlachten', 'Battaglie'), hint: String(etudes.length), href: '/battles/etude' });
         break;
       case 'races': {
         const byRace = new Map<string, number>();

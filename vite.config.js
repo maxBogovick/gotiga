@@ -71,38 +71,46 @@ export default defineConfig(async () => ({
   plugins: [
     sveltekit(),
     tailwindcss(),
-    // The service worker only belongs to the web build. This used to be expressed as
-    // `workbox: { globPatterns: [] }` on the Tauri target — but an empty precache manifest
-    // with no runtimeCaching is not a valid workbox config, so `npm run build` (the Tauri
-    // profile) died in the service-worker step with "Couldn't find configuration for either
-    // precaching or runtime caching". That break is on master, independent of any perf work.
+    // The service worker only belongs to the web build. `disable` is the plugin's own switch
+    // for this: dropping the plugin from the array instead would leave the
+    // `virtual:pwa-register` module that the layout imports unresolvable, and Rollup fails on
+    // a dynamic import it cannot resolve even when the call site is guarded at runtime. With
+    // `disable` the virtual module still resolves (to a no-op) and no service worker is emitted.
     //
-    // `disable` is the plugin's own switch for this and is the right tool: dropping the
-    // plugin from the array instead would leave the `virtual:pwa-register` module that
-    // +layout.svelte imports unresolvable, and Rollup fails on a dynamic import it cannot
-    // resolve even when the call site is guarded at runtime. With `disable` the virtual
-    // module still resolves (to a no-op) and no service worker is emitted.
+    // The worker is our own file (src/pwa/sw.js, `injectManifest`): offline page, push and an
+    // update that waits for the visitor all need code that the generated one cannot hold.
+    // It is NOT named src/service-worker.* — SvelteKit would pick that name up and build it
+    // a second time.
     VitePWA({
       disable: !isWebBuild,
-      registerType: "autoUpdate",
+      strategies: "injectManifest",
+      srcDir: "src/pwa",
+      filename: "sw.js",
+      // "prompt": a new version waits until the visitor agrees (the page asks, see
+      // src/lib/stores/pwa.svelte.ts) instead of reloading a tab with an unsent letter.
+      registerType: "prompt",
       injectRegister: null,
       manifest: false,
       devOptions: { enabled: false },
       // SvelteKit's adapter-static sets Vite's own `base` to a relative "./" so
-      // prerendered pages can be deployed under any subpath (see the `../` asset
-      // hrefs it emits). vite-plugin-pwa inherits that same `base` by default and
-      // bakes it into the register script as `new Workbox("./sw.js", { scope: "./" })`.
-      // "./" is resolved by the browser relative to the CURRENT DOCUMENT URL, and
-      // SvelteKit's default trailingSlash ("never") means a nested route's URL has
-      // no trailing slash — e.g. /figurines/some-slug. Resolving "./sw.js" against
-      // that strips the last segment (treated as a filename) and lands one level up,
-      // at /figurines/sw.js — a 404, confirmed in production. The site is only ever
-      // deployed at the domain root, so force an absolute base here independent of
-      // SvelteKit's relative asset paths.
+      // prerendered pages can be deployed under any subpath. vite-plugin-pwa inherits that
+      // same `base` and bakes it into the register script as `new Workbox("./sw.js")`,
+      // which the browser resolves against the CURRENT document URL: on a nested route
+      // (/figurines/some-slug, no trailing slash) that lands on /figurines/sw.js — a 404,
+      // confirmed in production. The site is only ever deployed at the domain root, so
+      // force an absolute base.
       base: "/",
       scope: "/",
-      workbox: {
+      injectManifest: {
+        rollupFormat: "iife",
         globPatterns: ["**/*.{js,css,html,ico,png,webp,svg}"],
+        // Splash screens (16 files, 3 MB) are fetched by iOS itself at launch, and the
+        // screenshots only matter to the install dialog: neither belongs in every visitor's
+        // precache. The game's artwork (static/battles, ~17 MB) and the tale illustrations
+        // (static/tales, ~2 MB) used to be precached too — every first-time visitor
+        // downloaded ~24 MB in the background for pages most of them never open. They are
+        // cached as they are looked at instead (src/pwa/sw.js, "site-art").
+        globIgnores: ["pwa/splash/**", "pwa/screenshots/**", "battles/**", "tales/**"],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         // Drop the SPA-only /admin route from the precache. It is never prerendered and
         // pulls in 27 panels — a ~0.5 MB JS chunk plus ~90 KB CSS that the service worker
@@ -114,67 +122,6 @@ export default defineConfig(async () => ({
         // we only edit the precache MANIFEST, resolving the admin route's own files from
         // SvelteKit's build manifest so there is no hardcoded hash or node index.
         manifestTransforms: [adminPrecacheExclusion],
-        navigateFallback: null,
-        runtimeCaching: [
-          {
-            urlPattern: /\/fonts\/.*\.woff2$/i,
-            handler: "CacheFirst",
-            options: {
-              cacheName: "self-hosted-fonts",
-              expiration: { maxAgeSeconds: 60 * 60 * 24 * 365, maxEntries: 40 },
-            },
-          },
-          {
-            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
-            handler: "StaleWhileRevalidate",
-            options: { cacheName: "gfonts-stylesheets" },
-          },
-          {
-            urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
-            handler: "CacheFirst",
-            options: {
-              cacheName: "gfonts-webfonts",
-              expiration: { maxAgeSeconds: 60 * 60 * 24 * 365 },
-            },
-          },
-          // The language suggested for the visitor's country depends on who asks.
-          // Before the general /api/ rule below: the first matching route wins.
-          {
-            urlPattern: /\/api\/v1\/site\/locale/,
-            handler: "NetworkOnly",
-          },
-          {
-            urlPattern: /\/api\//,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "api-cache",
-              networkTimeoutSeconds: 8,
-              expiration: { maxAgeSeconds: 60 * 5 },
-            },
-          },
-          // Backgrounds must come BEFORE the /static/ rule below (workbox takes the
-          // first matching route) and must NOT be CacheFirst. Every other file under
-          // /static/ is content-addressed — a fresh uuid per upload — so caching it
-          // hard is free. The background is the one exception: the handler overwrites
-          // cabinet-bg.jpg in place, so the URL is stable while the bytes change.
-          // CacheFirst would pin the old photo in the service worker for a week, and
-          // the SW answers before the network, so nginx's `no-cache` on this path
-          // would never even be consulted. StaleWhileRevalidate paints instantly from
-          // cache and picks the new background up on the very next view.
-          {
-            urlPattern: /\/static\/backgrounds\//,
-            handler: "StaleWhileRevalidate",
-            options: { cacheName: "backend-background" },
-          },
-          {
-            urlPattern: /\/static\//,
-            handler: "CacheFirst",
-            options: {
-              cacheName: "backend-static",
-              expiration: { maxAgeSeconds: 60 * 60 * 24 * 7 },
-            },
-          },
-        ],
       },
     }),
   ],

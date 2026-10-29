@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 
 use gotiga_server::embed;
-use gotiga_server::search::{hybrid_search, site_search, SearchRecord, SiteBoost};
+use gotiga_server::search::{hybrid_search, keep_hits, SearchIndex, SearchRecord, SiteBoost};
 use serde_json::Value;
 
 struct Doc {
@@ -158,6 +158,9 @@ fn main() {
     eprintln!("вещей: {}; считаю векторы…", docs.len());
     let vecs: Vec<Vec<f32>> = docs.iter().map(|d| embed::embed_passage(&d.passage).unwrap()).collect();
     let records: Vec<SearchRecord> = docs.iter().map(|d| SearchRecord::from_text(&d.id, &d.name, &d.body)).collect();
+    let built = std::time::Instant::now();
+    let index = SearchIndex::new(&records);
+    eprintln!("индекс собран за {:.0} мс", built.elapsed().as_secs_f64() * 1000.0);
     let by_id: HashMap<&str, &Doc> = docs.iter().map(|d| (d.id.as_str(), d)).collect();
 
     // Прежний поиск в браузере дополнял найденное словарём порядком смыслового
@@ -180,6 +183,79 @@ fn main() {
         }
         std::fs::write(path, serde_json::to_string(&Value::Object(out)).unwrap()).unwrap();
         eprintln!("порядок выгружен: {path}");
+        return;
+    }
+
+    // `--bench N`: сколько времени уходит на запрос: вектор запроса отдельно, слова отдельно.
+    if let Some(n) = args.iter().position(|a| a == "--bench").and_then(|i| args.get(i + 1)).and_then(|v| v.parse::<usize>().ok()) {
+        let qs = ["ведьма с метлой", "гном с топором", "bruja con escoba", "красная шапочка", "pizza recipe", "old woman with cats"];
+        let t = std::time::Instant::now();
+        let vecs_q: Vec<Vec<f32>> = qs.iter().map(|q| embed::embed_query(q).unwrap()).collect();
+        println!("вектор запроса: {:.0} мс на запрос (e5-small, CPU)", t.elapsed().as_secs_f64() * 1000.0 / qs.len() as f64);
+        let scored: Vec<Vec<(String, f32)>> = vecs_q.iter().map(|qv| docs.iter().zip(&vecs).map(|(d, v)| (d.id.clone(), embed::dot(qv, v))).collect()).collect();
+        let boost = SiteBoost { name: 0.01, any: 0.01, common: 0.25 };
+        println!("bench начат");
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            for (q, sc) in qs.iter().zip(&scored) {
+                let _ = index.site(q, sc, 40, boost);
+            }
+        }
+        println!("слова и триграммы: {:.0} мс на запрос ({} записей)", t.elapsed().as_secs_f64() * 1000.0 / (n * qs.len()) as f64, records.len());
+        let tokens: usize = docs.iter().map(|d| d.body.split_whitespace().count() + d.name.split_whitespace().count()).sum();
+        println!("слов во всех текстах: {tokens}");
+        return;
+    }
+
+    // `--query "weapon"`: один запрос, весь список с оценкой гибрида и близостью по вектору.
+    if let Some(q) = args.iter().position(|a| a == "--query").and_then(|i| args.get(i + 1)) {
+        let qv = embed::embed_query(q).unwrap();
+        let mut scores: Vec<(String, f32)> = docs.iter().zip(&vecs).map(|(d, v)| (d.id.clone(), embed::dot(&qv, v))).collect();
+        let cos: HashMap<String, f32> = scores.iter().map(|(i, c)| (i.clone(), *c)).collect();
+        let all_scores = scores.clone();
+        // `--no-vector`: показать только то, что дают слова и триграммы.
+        if args.iter().any(|a| a == "--no-vector") {
+            scores.clear();
+        }
+        let boost = SiteBoost { name: 0.01, any: 0.01, common: 0.25 };
+        let hits = index.site(q, &scores, 12, boost);
+        println!("«{q}»: гибрид (порог сервера 0,02 отбрасывает всё, что ниже)");
+        for h in &hits {
+            let d = by_id[h.id.as_str()];
+            let mark = if h.score >= 0.02 { "показано" } else { "скрыто  " };
+            println!("  {mark} оценка {:.4}  близость {:.3}  [{}] {}", h.score, cos[&h.id], d.kind, d.label);
+        }
+        // `--find dbb7c363`: где стоит эта вещь по вектору, по словам и в итоге.
+        if let Some(prefix) = args.iter().position(|a| a == "--find").and_then(|i| args.get(i + 1)) {
+            let mut sorted: Vec<&(String, f32)> = all_scores.iter().collect();
+            sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            let pos = sorted.iter().position(|(id, _)| id.starts_with(prefix.as_str()));
+            let d = docs.iter().find(|d| d.id.starts_with(prefix.as_str())).unwrap();
+            println!("--- {} [{}] ---", d.label, d.kind);
+            println!("текст, по которому считается вектор: {}", d.passage.chars().take(400).collect::<String>());
+            match pos {
+                Some(p) => println!("по вектору: место {} из {}, близость {:.3} (лучшая {:.3})", p + 1, sorted.len(), sorted[p].1, sorted[0].1),
+                None => println!("по вектору: нет"),
+            }
+            let lex = index.hybrid(q, &[], records.len());
+            match lex.iter().position(|h| h.id.starts_with(prefix.as_str())) {
+                Some(p) => println!("по словам и триграммам: место {}", p + 1),
+                None => println!("по словам и триграммам: НЕТ В СПИСКЕ (в тексте нет ни слова запроса, ни похожего)"),
+            }
+            let full = index.hybrid(q, &all_scores, records.len());
+            match full.iter().position(|h| h.id.starts_with(prefix.as_str())) {
+                Some(p) => println!("итог гибрида: место {}, оценка {:.4} (порог показа 0.02)", p + 1, full[p].score),
+                None => println!("итог гибрида: нет"),
+            }
+            println!("слова запроса в тексте вещи: {}", q.split_whitespace().map(|w| format!("«{w}» — {}", if d.passage.to_lowercase().contains(&w.to_lowercase()) || d.name.to_lowercase().contains(&w.to_lowercase()) || d.body.to_lowercase().contains(&w.to_lowercase()) {"есть"} else {"НЕТ"})).collect::<Vec<_>>().join(", "));
+            return;
+        }
+        let mut by_cos: Vec<&(String, f32)> = all_scores.iter().collect();
+        by_cos.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        println!("лучшие по одной близости:");
+        for (id, c) in by_cos.iter().take(8) {
+            println!("  близость {c:.3}  [{}] {}", by_id[id.as_str()].kind, by_id[id.as_str()].label);
+        }
         return;
     }
 
@@ -215,9 +291,10 @@ fn main() {
     /// Прогон одной настройки: (подбор: чётные фразы, проверка: нечётные, по видам).
     fn run(
         prepared: &[Prepared],
-        records: &[SearchRecord],
+        index: &SearchIndex,
         boost: SiteBoost,
         floor: f32,
+        vonly: f32,
     ) -> (Tally, Tally, HashMap<String, Tally>, usize) {
         let (mut tune, mut eval) = (Tally::new(), Tally::new());
         let mut by_tag: HashMap<String, Tally> = HashMap::new();
@@ -226,9 +303,9 @@ fn main() {
             if p.expect.is_empty() {
                 continue;
             }
-            let mut hits = site_search(&p.q, records, &p.scores, 40, boost);
+            let hits = index.site(&p.q, &p.scores, 40, boost);
             // Порог на каждую вещь: ниже него вещь подтверждена одним списком из трёх.
-            hits.retain(|h| h.score >= floor);
+            let hits = keep_hits(hits, &p.scores, floor, vonly);
             shown += hits.len();
             let order: Vec<String> = hits.iter().map(|h| h.id.clone()).collect();
             let r = rank_of(&order, &p.expect);
@@ -256,7 +333,7 @@ fn main() {
             for any in [0.0f32, 0.01] {
                 for common in [0.25f32, 0.4] {
                     let b = SiteBoost { name, any, common };
-                    let (tune, eval, _, _) = run(&prepared, &records, b, 0.0);
+                    let (tune, eval, _, _) = run(&prepared, &index, b, 0.0, 0.0);
                     let mrr = tune.rr / tune.n.max(1) as f32;
                     rows.push((mrr, b, tune, eval));
                 }
@@ -267,7 +344,7 @@ fn main() {
         for (_, b, tune, eval) in rows.iter().take(8) {
             println!("name {:.3} any {:.3} common {:.2}\n    подбор  {}\n    проверка {}", b.name, b.any, b.common, tune.line(""), eval.line(""));
         }
-        let (tune, eval, _, _) = run(&prepared, &records, SiteBoost::NONE, 0.0);
+        let (tune, eval, _, _) = run(&prepared, &index, SiteBoost::NONE, 0.0, 0.0);
         println!("\nбез бонуса:\n    подбор  {}\n    проверка {}", tune.line(""), eval.line(""));
         return;
     }
@@ -278,7 +355,10 @@ fn main() {
         common: arg_f32(&args, "--common").unwrap_or(1.0),
     };
     let floor = arg_f32(&args, "--floor").unwrap_or(0.0);
-    let (tune, eval, by_tag, shown) = run(&prepared, &records, boost, floor);
+    let vonly = arg_f32(&args, "--vonly").unwrap_or(0.0);
+    let started = std::time::Instant::now();
+    let (tune, eval, by_tag, shown) = run(&prepared, &index, boost, floor, vonly);
+    println!("время поиска без вектора: {:.0} мс на фразу", started.elapsed().as_secs_f64() * 1000.0 / (tune.n + eval.n).max(1) as f64);
     println!("\nнастройка: {boost:?}, порог на вещь {floor}; в среднем вещей в ответе {:.1}", shown as f32 / (tune.n + eval.n).max(1) as f32);
     println!("{}", tune.line("подбор"));
     println!("{}", eval.line("проверка"));
@@ -294,7 +374,7 @@ fn main() {
             if p.expect.is_empty() {
                 continue;
             }
-            let hits = site_search(&p.q, &records, &p.scores, 40, boost);
+            let hits = index.site(&p.q, &p.scores, 40, boost);
             let order: Vec<String> = hits.iter().map(|h| h.id.clone()).collect();
             let r = rank_of(&order, &p.expect);
             if r.is_none_or(|r| r >= 1) {
@@ -308,12 +388,31 @@ fn main() {
         }
     }
 
+    // Мусорные запросы не должны ничего показывать; «оружие» и подобные — должны.
+    let mut shown_for = |qs: &[&str]| -> Vec<(String, usize)> {
+        qs.iter()
+            .map(|q| {
+                let qv = embed::embed_query(q).unwrap();
+                let scores: Vec<(String, f32)> = docs.iter().zip(&vecs).map(|(d, v)| (d.id.clone(), embed::dot(&qv, v))).collect();
+                let hits = index.site(q, &scores, 40, boost);
+                (q.to_string(), keep_hits(hits, &scores, floor, vonly).len())
+            })
+            .collect()
+    };
+    let junk = ["pizza recipe", "bitcoin price", "football score", "dragon", "weather tomorrow", "how to fix a car", "asdf qwer zxcv", "курс доллара", "ракетный двигатель", "президент франции", "футбол", "квантовая физика формулы", "best laptop 2026", "space rocket", "stock market"];
+    let junk_shown = shown_for(&junk);
+    println!("\n=== мусорные запросы: сколько вещей показано (нужно 0) ===");
+    println!("{}", junk_shown.iter().map(|(q, n)| format!("{q}: {n}")).collect::<Vec<_>>().join(" · "));
+    let wanted = shown_for(&["weapon", "weapons", "оружие", "sword", "axe", "меч", "топор"]);
+    println!("=== запросы про оружие: сколько показано (нужно > 0) ===");
+    println!("{}", wanted.iter().map(|(q, n)| format!("{q}: {n}")).collect::<Vec<_>>().join(" · "));
+
     println!("\n=== фразы без верного ответа: оценка лучшей вещи ===");
     for p in &prepared {
         if !p.expect.is_empty() {
             continue;
         }
-        let hits = site_search(&p.q, &records, &p.scores, 40, boost);
+        let hits = index.site(&p.q, &p.scores, 40, boost);
         let top = hits.first();
         let name = top.and_then(|h| by_id.get(h.id.as_str())).map(|d| d.label.clone()).unwrap_or_default();
         println!("{:<20} оценка {:.4}  лучшая: {name}", p.q, top.map(|h| h.score).unwrap_or(0.0));
@@ -322,7 +421,7 @@ fn main() {
     let mut lows: Vec<(f32, String)> = prepared
         .iter()
         .filter(|p| !p.expect.is_empty())
-        .map(|p| (site_search(&p.q, &records, &p.scores, 1, boost).first().map(|h| h.score).unwrap_or(0.0), p.q.clone()))
+        .map(|p| (index.site(&p.q, &p.scores, 1, boost).first().map(|h| h.score).unwrap_or(0.0), p.q.clone()))
         .collect();
     lows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     for (sc, q) in lows.iter().take(8) {

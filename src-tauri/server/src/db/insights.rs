@@ -19,6 +19,14 @@ fn exit_group_sql() -> String {
     PATH_GROUP_SQL.replace("split_part(path,", "split_part(exit_to,")
 }
 
+/// Where a visit came from, as one short word. Own pages and direct arrivals stay as the
+/// kind of source; anything else is the campaign named in the link, else the host that
+/// linked, else the kind. Lower-cased and cut short: it is read from a browser.
+const ORIGIN_SQL: &str = r#"left(
+    CASE WHEN source IN ('direct', 'internal') THEN source
+         ELSE COALESCE(NULLIF(lower(utm_source), ''), NULLIF(regexp_replace(referrer_host, '^www\.', ''), ''), source)
+    END, 60)"#;
+
 // ── Rollups ──────────────────────────────────────────────────────────────
 
 /// Recompute the signal rollups for `from..=to` inside the aggregate
@@ -31,6 +39,7 @@ pub(super) async fn refresh_signal_rollups(
     for table in [
         "site_engagement_daily",
         "site_exits_daily",
+        "site_engagement_source_daily",
         "site_interactions_daily",
         "site_errors_daily",
         "site_vitals_daily",
@@ -105,6 +114,81 @@ pub(super) async fn refresh_signal_rollups(
     ))
     .bind(from)
     .bind(to)
+    .execute(&mut **tx)
+    .await?;
+
+    // Quick exits by where the visitor came from and what they looked on. Rooms report
+    // through `page_engaged`; a work page reports through its own `figurine_view` /
+    // `figurine_engaged` pair (and `page_engaged` is not sent there at all), so a work
+    // visit is a view, and it is quick unless its engaged snapshot says ten seconds.
+    // Capped per day like the acts: `origin` is a referrer host, i.e. free text.
+    sqlx::query(&format!(
+        r#"
+        INSERT INTO site_engagement_source_daily (
+            day, path_group, origin, device_class,
+            visits, quick, quick_unscrolled, engaged, updated_at
+        )
+        SELECT day, path_group, origin, device_class,
+               visits, quick, quick_unscrolled, engaged, NOW()
+        FROM (
+            SELECT
+                day, path_group, origin, device_class,
+                COUNT(*)::int AS visits,
+                COUNT(*) FILTER (WHERE is_quick)::int AS quick,
+                COUNT(*) FILTER (WHERE is_quick AND scroll < 25)::int AS quick_unscrolled,
+                COUNT(*) FILTER (WHERE dur >= 30000)::int AS engaged,
+                ROW_NUMBER() OVER (
+                    PARTITION BY day
+                    ORDER BY COUNT(*) DESC, path_group, origin, device_class
+                ) AS rn
+            FROM (
+                SELECT
+                    event_date AS day,
+                    {pg} AS path_group,
+                    {origin} AS origin,
+                    COALESCE(device_class, 'unknown') AS device_class,
+                    COALESCE(duration_ms < $3, FALSE) AS is_quick,
+                    COALESCE(scroll_depth, 0) AS scroll,
+                    COALESCE(duration_ms, 0) AS dur
+                FROM figurine_analytics_events
+                WHERE event_date BETWEEN $1 AND $2
+                  AND event_type = 'page_engaged'
+                  AND figurine_id IS NULL
+                UNION ALL
+                SELECT
+                    event_date AS day,
+                    {pg} AS path_group,
+                    {origin} AS origin,
+                    COALESCE(device_class, 'unknown') AS device_class,
+                    (e.duration_ms IS NULL OR e.duration_ms < $3) AS is_quick,
+                    COALESCE(e.scroll_depth, 0) AS scroll,
+                    COALESCE(e.duration_ms, 0) AS dur
+                FROM (
+                    SELECT event_date, path, source, utm_source, referrer_host,
+                           device_class, page_view_id
+                    FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2
+                      AND event_type = 'figurine_view'
+                      AND page_view_id IS NOT NULL
+                ) v
+                LEFT JOIN (
+                    SELECT page_view_id, duration_ms, scroll_depth
+                    FROM figurine_analytics_events
+                    WHERE event_date BETWEEN $1 AND $2::date + 1
+                      AND event_type = 'figurine_engaged'
+                      AND page_view_id IS NOT NULL
+                ) e USING (page_view_id)
+            ) visit
+            GROUP BY day, path_group, origin, device_class
+        ) t
+        WHERE rn <= 1500
+        "#,
+        pg = PATH_GROUP_SQL,
+        origin = ORIGIN_SQL,
+    ))
+    .bind(from)
+    .bind(to)
+    .bind(crate::analytics::QUICK_EXIT_MS)
     .execute(&mut **tx)
     .await?;
 

@@ -48,3 +48,7 @@ export function toAbsoluteUrl(path: string | null | undefined): string | null {
     if (value.startsWith('http://') || value.startsWith('https://')) return value;
     return `${SITE_URL}${value.startsWith('/') ? '' : '/'}${value}`;
 }
+
+// Магазин на Etsy: туда ведёт «Приобрести», если у работы нет своей страницы
+// (`Figurine.etsyUrl`). Оплату и доставку сайт не принимает.
+export const ETSY_SHOP_URL = 'https://www.etsy.com/shop/JustaSculpture';

@@ -80,7 +80,7 @@ declare global {
 			readonly statusUi: {
 				label: string; title: string; note: string;
 				mobileSubtitle: string; mobileCtaLabel: string;
-				mobileIcon: string; defaultIntent: string;
+				mobileIcon: string;
 			};
 			selectImage(index: number): void;
 			openLightbox(index: number): void;
@@ -92,6 +92,8 @@ declare global {
 			toggleRaking(): void;
 			setImageViewMode(mode: 'fit' | 'detail'): void;
 			openRequestModal(intent?: string): void;
+			/** Диалог «Приобрести»: оплата через Etsy. */
+			openBuyDialog(): void;
 			openGrimoire(): void;
 			closeGrimoire(): void;
 			handlePersonalRecordToggle(e: Event): void;

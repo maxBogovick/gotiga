@@ -1255,5 +1255,199 @@
   "lang": "ru",
   "expect": [],
   "tag": "none"
+ },
+ {
+  "q": "гномы с топорами",
+  "lang": "ru",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "гнома с топором",
+  "lang": "ru",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "бабушки с котами",
+  "lang": "ru",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "бабушку с котами",
+  "lang": "ru",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "красную шапочку",
+  "lang": "ru",
+  "expect": [
+   "ca0303c9"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "горбуна",
+  "lang": "ru",
+  "expect": [
+   "1456bf23",
+   "b3404457",
+   "b1213c6a"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "мушкетёры",
+  "lang": "ru",
+  "expect": [
+   "4bf6aa33"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "рыжие ведьмы",
+  "lang": "ru",
+  "expect": [
+   "7badb2e2"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "ведьму с метлой и книгой заклинаний",
+  "lang": "ru",
+  "expect": [
+   "be5b562e"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "дедушку с собакой",
+  "lang": "ru",
+  "expect": [
+   "0825d87e"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "девочку с воробьём",
+  "lang": "ru",
+  "expect": [
+   "22d14531"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "гномов поваров",
+  "lang": "ru",
+  "expect": [
+   "00c6c3a9",
+   "25d875bc"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "змея",
+  "lang": "ru",
+  "expect": [
+   "fbc7154d"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "обезьяну",
+  "lang": "ru",
+  "expect": [
+   "6b0cd0ad"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "привидения",
+  "lang": "ru",
+  "expect": [
+   "4387a661"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "дровосека",
+  "lang": "ru",
+  "expect": [
+   "78e6b2db",
+   "7e186e11"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "гноми з сокирами",
+  "lang": "uk",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "бабусі з котами",
+  "lang": "uk",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "gnomes with axes",
+  "lang": "en",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "grannies with cats",
+  "lang": "en",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "gnomos con hachas",
+  "lang": "es",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "abuelas con gatos",
+  "lang": "es",
+  "expect": [
+   "62e23e47"
+  ],
+  "tag": "inflection"
+ },
+ {
+  "q": "gnomi con asce",
+  "lang": "it",
+  "expect": [
+   "dbb7c363",
+   "3c448b3e"
+  ],
+  "tag": "inflection"
  }
 ]

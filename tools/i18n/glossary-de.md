@@ -184,3 +184,14 @@ Haltungen (Hold): Bound **Erstarrt**, Silenced **Verstummt**, Disarmed **Entwaff
 | keeper in Admin / Etüden | **Hüterin** | § 9.11 erlaubt es nur dort; im Spiel immer **Gegner** |
 | Training / Campaign (Etüden-Modi) | **Übung** / **Feldzug** | |
 | frames 1–5 | **Schlicht · Solide · Denkwürdig · Selten · Episch** | |
+
+## Kauf über Etsy und Anfragen (Oktober 2026)
+
+| ru | de |
+|---|---|
+| Приобрести (Knopf; führt zur Werkseite auf Etsy) | **Kaufen** |
+| Хочу похожую | **Ich möchte eine ähnliche** |
+| Заявка (unverbindlich) | **Anfrage** |
+| Заказать фигурку | **Figur anfragen** |
+| Почему оплата через Etsy | **Warum die Zahlung über Etsy läuft** |
+| В наличии | **Verfügbar** |

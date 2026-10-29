@@ -90,7 +90,7 @@ export const WORKS: Forms = { en: ['work', 'works'], ru: ['работа', 'ра�
 export const TALES: Forms = { en: ['tall tale', 'tall tales'], ru: ['небылица', 'небылицы', 'небылиц'], uk: ['небилиця', 'небилиці', 'небилиць'], es: ['cuento', 'cuentos'], de: ['Geschichte', 'Geschichten'], it: ['racconto', 'racconti'] };
 export const LEAVES: Forms = { en: ['gazette leaf', 'gazette leaves'], ru: ['лист вестника', 'листа вестника', 'листов вестника'], uk: ['аркуш вісника', 'аркуші вісника', 'аркушів вісника'], es: ['hoja de la Gaceta', 'hojas de la Gaceta'], de: ['Blatt der Zeitung', 'Blätter der Zeitung'], it: ['foglio della Gazzetta', 'fogli della Gazzetta'] };
 export const CARDS: Forms = { en: ['card', 'cards'], ru: ['карта', 'карты', 'карт'], uk: ['карта', 'карти', 'карт'], es: ['carta', 'cartas'], de: ['Karte', 'Karten'], it: ['carta', 'carte'] };
-export const ETUDES: Forms = { en: ['study', 'studies'], ru: ['этюд', 'этюда', 'этюдов'], uk: ['етюд', 'етюди', 'етюдів'], es: ['étude', 'études'], de: ['Etüde', 'Etüden'], it: ['étude', 'étude'] };
+export const ETUDES: Forms = { en: ['battle', 'battles'], ru: ['битва', 'битвы', 'битв'], uk: ['битва', 'битви', 'битв'], es: ['batalla', 'batallas'], de: ['Schlacht', 'Schlachten'], it: ['battaglia', 'battaglie'] };
 export const MINUTES: Forms = { en: ['minute', 'minutes'], ru: ['минута', 'минуты', 'минут'], uk: ['хвилина', 'хвилини', 'хвилин'], es: ['minuto', 'minutos'], de: ['Minute', 'Minuten'], it: ['minuto', 'minuti'] };
 
 export const n_works = (lang: Lang, n: number) => amount(lang, n, WORKS);
@@ -166,7 +166,7 @@ export function cardLink(c: BattleCard, lang: Lang): AskLink {
 }
 
 export function etudeLink(e: BattleChallenge, lang: Lang): AskLink {
-  return { kind: 'etude', label: etudeTitle(e, lang), hint: say(lang, 'этюд', 'етюд', 'study', 'étude', 'Etüde', 'étude'), href: etudeHref(e) };
+  return { kind: 'etude', label: etudeTitle(e, lang), hint: say(lang, 'битва', 'битва', 'battle', 'batalla', 'Schlacht', 'battaglia'), href: etudeHref(e) };
 }
 
 

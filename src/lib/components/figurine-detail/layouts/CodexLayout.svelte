@@ -9,6 +9,7 @@
   import PlateGestures from '$lib/components/figurine-detail/PlateGestures.svelte';
   import BrassLens from '$lib/components/BrassLens.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
+  import WorkPrimaryDeed from '../WorkPrimaryDeed.svelte';
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
   import SecretText from '$lib/components/SecretText.svelte';
@@ -135,13 +136,14 @@
       <!-- Статус и запись — прижаты ко дну левой колонки -->
       <div class="cx-section-rule" aria-hidden="true"></div>
 
+      <WorkPrimaryDeed />
+
       <FigurineStatusPanel
         figurine={ctx.figurine}
         id={ctx.id}
         hasActiveShowing={ctx.hasActiveShowing}
         nextAvailableDate={ctx.nextAvailableDate}
         scheduleLoadFailed={ctx.scheduleLoadFailed}
-        onOpenModal={ctx.openRequestModal}
         analyticsClient={ctx.analyticsClient}
         queueJoin={ctx.queueJoin}
         notifyJoin={ctx.notifyJoin}

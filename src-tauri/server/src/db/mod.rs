@@ -4,13 +4,19 @@ use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
+mod digest;
 mod insights;
+mod jobs;
 mod prepared;
+mod push;
 
+pub use digest::{DIGEST_MAX_TRIES, DigestRow};
+pub use jobs::JobRow;
 pub use insights::{
     BattleFunnelRow, DataTrust, DeadLinkSource, EngagementShape, ErrorRow, ExitRow,
     InteractionRow, SectionRow, TaleReadRow, VitalsRow,
 };
+pub use push::{PUSH_MAX_FAILURES, PushSubscriber};
 pub use prepared::{clear_stale_prepared_statements, note_stale_cached_plan};
 
 /// Parse an optional `YYYY-MM-DD` deadline. Empty/absent → None; a present but
@@ -2679,6 +2685,16 @@ impl Repository {
             .bind(step_id).bind(id).bind(&step.step_type)
             .bind(&step.description).bind(&step.image_url).bind(*sort)
             .execute(&mut *tx).await?;
+        }
+
+        // Ссылка на Etsy: не прислана — прежняя остаётся; пустая — очистить.
+        if let Some(url) = &f.etsy_url {
+            let url = url.trim();
+            sqlx::query("UPDATE figurines SET etsy_url = NULLIF($2, '') WHERE id = $1")
+                .bind(id)
+                .bind(url)
+                .execute(&mut *tx)
+                .await?;
         }
 
         if let Some(picked) = &similar_rows {
@@ -7131,8 +7147,10 @@ impl Repository {
     pub async fn create_commission(
         &self,
         req: &crate::models::CommissionRequest,
+        prepared: &crate::services::PreparedCommission,
+        guest_photos: bool,
     ) -> Result<crate::models::Commission> {
-        let deadline = parse_optional_deadline(req.deadline.as_deref())?;
+        let deadline = prepared.deadline;
         let claim_token = Self::generate_claim_token();
 
         let mut tx = self.pg_pool.begin().await?;
@@ -7173,13 +7191,15 @@ impl Repository {
             r#"INSERT INTO commissions
                (claim_token, requester_name, requester_email, requester_phone,
                 title, description, size_note, mood, deadline, budget_note, occasion,
-                source_figurine_id, similar_keep_note, similar_change_note, similar_tags, lang)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                source_figurine_id, similar_keep_note, similar_change_note, similar_tags, lang,
+                contacts, wish, choices, size_key, deadline_kind, budget_key, budget_currency)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                       $17, $18, $19, $20, $21, $22, $23)
                RETURNING *"#,
         )
         .bind(&claim_token)
         .bind(req.requester_name.clone().unwrap_or_default())
-        .bind(&req.requester_email)
+        .bind(&prepared.email)
         .bind(&req.requester_phone)
         .bind(req.title.clone().unwrap_or_default())
         .bind(&req.description)
@@ -7193,19 +7213,88 @@ impl Repository {
         .bind(&similar_change_note)
         .bind(&similar_tags)
         .bind(lang)
+        .bind(serde_json::to_value(&prepared.contacts).unwrap_or_else(|_| serde_json::json!([])))
+        .bind(&prepared.wish)
+        .bind(serde_json::to_value(&prepared.choices).unwrap_or_else(|_| serde_json::json!({})))
+        .bind(&prepared.size_key)
+        .bind(&prepared.deadline_kind)
+        .bind(&prepared.budget_key)
+        .bind(&prepared.budget_currency)
         .fetch_one(&mut *tx)
         .await?;
 
         for att in &req.attachment_urls {
+            let (url, thumb) = if guest_photos {
+                // Фото гостя — только то, что он загрузил через `/commissions/uploads`
+                // и что ещё не занято: занимается в этой же транзакции.
+                let Some(path) = Self::commission_upload_path(&att.url) else {
+                    return Err(AppError::BadRequest("Invalid attachment URL".into()));
+                };
+                let claimed = sqlx::query(
+                    "UPDATE commission_uploads SET claimed_at = NOW()
+                     WHERE url = $1 AND claimed_at IS NULL",
+                )
+                .bind(&path)
+                .execute(&mut *tx)
+                .await?;
+                if claimed.rows_affected() != 1 {
+                    return Err(AppError::BadRequest(
+                        "A photo was not uploaded here or is already used".into(),
+                    ));
+                }
+                (path.clone(), Some(path))
+            } else {
+                (att.url.clone(), att.thumb_url.clone())
+            };
             sqlx::query(
                 "INSERT INTO commission_attachments (commission_id, url, thumb_url) VALUES ($1, $2, $3)"
             )
-            .bind(commission.id).bind(&att.url).bind(&att.thumb_url)
+            .bind(commission.id).bind(&url).bind(&thumb)
             .execute(&mut *tx).await?;
         }
 
         tx.commit().await?;
         Ok(commission)
+    }
+
+    /// `/static/commission/…` из адреса, каким бы его ни вернула страница
+    /// (с доменом или без). Другого адреса у загруженного гостем фото нет.
+    pub fn commission_upload_path(url: &str) -> Option<String> {
+        let at = url.find("/static/commission/")?;
+        let path = &url[at..];
+        (path.len() <= 300 && !path.contains(['?', '#']) && !path.contains("..")).then(|| path.to_string())
+    }
+
+    /// Записывает фото, загруженное гостем до отправки заявки.
+    pub async fn record_commission_upload(&self, url: &str) -> Result<()> {
+        sqlx::query("INSERT INTO commission_uploads (url) VALUES ($1)")
+            .bind(url)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Не занятые заявкой фото старше `hours` часов; удаляются вместе со строками.
+    pub async fn stale_commission_uploads(&self, hours: i64) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT url FROM commission_uploads
+             WHERE claimed_at IS NULL AND created_at < NOW() - make_interval(hours => $1::int)
+             ORDER BY created_at LIMIT 500",
+        )
+        .bind(hours)
+        .fetch_all(&self.pg_pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    /// Стирает строку фото, если оно всё ещё не занято (заявка могла занять его
+    /// между выборкой и стиранием).
+    pub async fn drop_unclaimed_commission_upload(&self, url: &str) -> Result<bool> {
+        let r = sqlx::query("DELETE FROM commission_uploads WHERE url = $1 AND claimed_at IS NULL")
+            .bind(url)
+            .execute(&self.pg_pool)
+            .await?;
+        Ok(r.rows_affected() == 1)
     }
 
     pub async fn get_commission_attachments(

@@ -8,25 +8,29 @@
   import { t } from '$lib/i18n';
 
   const ctx = getContext<App.FigurineDetailContext>('figurine-detail');
-  let similarHref = $derived(`/commission?source=${encodeURIComponent(ctx.id)}`);
+  // Для работы в наличии главная кнопка — «Приобрести», а «Хочу похожую» вторая;
+  // у прочих «Хочу похожую» уже главная кнопка, второй такой не нужно.
+  let showSimilar = $derived(ctx.figurine.status === 'available');
 </script>
 
 <div class="catalog-title-deeds">
-  <a
-    class="deed catalog-title-deed"
-    href={similarHref}
-    onclick={() => ctx.analyticsClient?.cta('create_similar')}
-  >
-    <span class="deed-ico" aria-hidden="true">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="5" cy="4.2" r="1.6"/>
-        <path d="M2.4 10.6c.3-1.8 1.4-2.8 2.6-2.8s2.3 1 2.6 2.8"/>
-        <circle cx="9.4" cy="4.6" r="1.35"/>
-        <path d="M11.8 10.6c-.2-1.4-.9-2.2-1.9-2.4"/>
-      </svg>
-    </span>
-    <span class="deed-label">{$t('commissionCreateSimilarShort')}</span>
-  </a>
+  {#if showSimilar}
+    <button
+      type="button"
+      class="deed catalog-title-deed"
+      onclick={() => ctx.openRequestModal('similar')}
+    >
+      <span class="deed-ico" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="5" cy="4.2" r="1.6"/>
+          <path d="M2.4 10.6c.3-1.8 1.4-2.8 2.6-2.8s2.3 1 2.6 2.8"/>
+          <circle cx="9.4" cy="4.6" r="1.35"/>
+          <path d="M11.8 10.6c-.2-1.4-.9-2.2-1.9-2.4"/>
+        </svg>
+      </span>
+      <span class="deed-label">{$t('commissionCreateSimilarShort')}</span>
+    </button>
+  {/if}
 
   <a
     class="deed catalog-title-deed"

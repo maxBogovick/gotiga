@@ -42,12 +42,14 @@
     import StudioPanel from '$lib/components/admin/StudioPanel.svelte';
     import LogsPanel from '$lib/components/admin/LogsPanel.svelte';
     import ToolsPanel from '$lib/components/admin/ToolsPanel.svelte';
+    import MechanismsPanel from '$lib/components/admin/MechanismsPanel.svelte';
     import { t, registerAdminDicts, type TranslationKey } from '$lib/i18n';
     import { adminDicts } from '$lib/i18n/admin-dicts';
 
     registerAdminDicts(adminDicts());
     import FigurineForm from '$lib/components/admin/FigurineForm.svelte';
     import SlugsPanel from '$lib/components/admin/SlugsPanel.svelte';
+    import SearchCaptionPanel from '$lib/components/admin/SearchCaptionPanel.svelte';
     import ShowingRoomsPanel from '$lib/components/admin/ShowingRoomsPanel.svelte';
     import ReadinessPanel from '$lib/components/admin/ReadinessPanel.svelte';
     import { adminReadiness, workGapText, workGapHint } from '$lib/stores/admin-readiness.svelte';
@@ -124,6 +126,7 @@
                 ['registry',  'adminTabRegistry'],
                 ['todo',      'adminTabTodo'],
                 ['slugs',     'adminTabSlugs'],
+                ['captions',  'adminTabCaptions'],
                 ['media',     'adminTabMedia'],
                 ['rooms',     'adminTabShowingRooms'],
                 ['showings',  'adminTabShowings'],
@@ -180,6 +183,7 @@
                 ['analytics',     'adminTabAnalytics'],
                 ['logs',          'adminTabLogs'],
                 ['server',        'adminTabServer'],
+                ['mechanisms',    'adminTabMechanisms'],
                 ['tools',         'adminTabTools'],
                 ['contact',       'adminTabContact'],
                 ['booking-rules', 'adminTabBookingRules'],
@@ -1045,6 +1049,9 @@
         {:else if activeTab === 'slugs'}
             <SlugsPanel {figurines} onReload={loadFigurines} onMessage={showMessage} />
 
+        {:else if activeTab === 'captions'}
+            <SearchCaptionPanel {figurines} onMessage={showMessage} />
+
         {:else if activeTab === 'rooms'}
             <ShowingRoomsPanel rooms={showingRoomsList} onReload={loadShowingRooms} />
 
@@ -1131,6 +1138,13 @@
             <div in:fade class="h-full overflow-y-auto"><SmtpSettingsPanel /></div>
         {:else if activeTab === 'logs'}
             <div in:fade class="h-full overflow-hidden"><LogsPanel /></div>
+        {:else if activeTab === 'mechanisms'}
+            <div in:fade class="h-full overflow-y-auto">
+                <MechanismsPanel
+                    tabs={TAB_GROUPS.flatMap((g) => g.tabs.map(([id, key]) => ({ id, label: $t(key) })))}
+                    onOpenTab={(id) => { if (TAB_IDS.includes(id)) activeTab = id as AdminTab; }}
+                />
+            </div>
         {:else if activeTab === 'tools'}
             <div in:fade class="h-full overflow-y-auto"><ToolsPanel /></div>
         {:else if activeTab === 'waitlist'}

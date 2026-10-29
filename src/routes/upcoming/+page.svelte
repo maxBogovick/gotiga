@@ -5,7 +5,7 @@
     import { t, brandName, lang, LANG_META } from '$lib/i18n';
     import { localizeList, workBase } from '$lib/workText';
     import { SITE_URL } from '$lib/site';
-    import OrderModal from '$lib/components/OrderModal.svelte';
+    import RequestWizard from '$lib/components/RequestWizard.svelte';
     import AppImage from '$lib/components/AppImage.svelte';
 
     // Data from the universal load (+page.ts): real items at prerender time so bots see
@@ -13,16 +13,15 @@
     let { data } = $props();
     let items = $derived(localizeList(data.items ?? [], $lang));
 
-    let modalOpen = $state(false);
-    let modalFigurineId = $state('');
-    let modalFigurineName = $state('');
-    let modalDisplayName = $state('');
+    let wizardSource = $state<{ id: string; name: string; displayName: string; photo: string | null } | null>(null);
 
     function openBook(fig: FigurineListItem) {
-        modalFigurineId = fig.id;
-        modalFigurineName = workBase(fig, 'name');
-        modalDisplayName = fig.name;
-        modalOpen = true;
+        wizardSource = {
+            id: fig.id,
+            name: workBase(fig, 'name'),
+            displayName: fig.name,
+            photo: fig.faceImageUrl,
+        };
     }
 
 </script>
@@ -132,14 +131,9 @@
     </div>
 </div>
 
-<OrderModal
-    isOpen={modalOpen}
-    figurineId={modalFigurineId}
-    figurineName={modalFigurineName}
-    displayName={modalDisplayName}
-    mode="request"
-    onClose={() => { modalOpen = false; }}
-/>
+{#if wizardSource}
+    <RequestWizard mode="dialog" source={wizardSource} onClose={() => { wizardSource = null; }} />
+{/if}
 
 <style>
     :root {

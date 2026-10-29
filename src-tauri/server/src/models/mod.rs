@@ -151,6 +151,8 @@ pub struct Figurine {
     pub ambience_path: Option<String>,
     pub video_url: Option<String>,
     pub secret_text: Option<String>,
+    /// Страница работы на Etsy (https, etsy.com / etsy.me); NULL — нет.
+    pub etsy_url: Option<String>,
     /// Backstage, search-only AI visual caption (see the migration). Folded into
     /// the semantic-search embedding text; never serialised to the public DTO.
     pub visual_caption: Option<String>,
@@ -277,6 +279,9 @@ pub struct FigurineListItemDto {
     /// True when the slug was hand-typed (differs from the name-derived auto slug).
     #[serde(default)]
     pub slug_manual: bool,
+    /// Страница работы на Etsy; null — кнопка ведёт в магазин.
+    #[serde(default)]
+    pub etsy_url: Option<String>,
     pub status: FigurineStatus,
     /// The work's one-line note. Carried on the LIST item on purpose: the home page
     /// renders it under each plate, and without it here the client had to fire one
@@ -589,6 +594,9 @@ pub struct FigurineDto {
     pub ambience_path: Option<String>,
     pub video_url: Option<String>,
     pub secret_text: Option<String>,
+    /// Страница работы на Etsy; null — работы там нет, кнопка ведёт в магазин.
+    #[serde(default)]
+    pub etsy_url: Option<String>,
     pub status: FigurineStatus,
     pub sort_order: i32,
     pub is_visible: bool,
@@ -1355,6 +1363,10 @@ pub struct SaveFigurineRequest {
     pub ambience_path: Option<String>,
     pub video_url: Option<String>,
     pub secret_text: Option<String>,
+    /// Страница работы на Etsy. `None` — поле не прислано, прежнее значение
+    /// остаётся; пустая строка — очистить. Проверяет `normalize_etsy_url`.
+    #[serde(default)]
+    pub etsy_url: Option<String>,
     pub status: FigurineStatus,
     pub sort_order: i32,
     pub is_visible: bool,
@@ -3117,6 +3129,41 @@ pub struct TelegramSubscriber {
     pub unsubscribed_at: Option<DateTime<Utc>>,
 }
 
+/// Ключи подписки, как их отдаёт браузер (`PushSubscription.toJSON().keys`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PushKeys {
+    pub p256dh: String,
+    pub auth: String,
+}
+
+/// Подписка устройства на уведомления о новом на сайте.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushSubscribeRequest {
+    pub endpoint: String,
+    pub keys: PushKeys,
+    /// Язык сайта у читателя: на нём приходит текст.
+    #[serde(default)]
+    pub lang: String,
+    /// `works`, `tales`, `gazette`. Нет — при смене подписки браузером: берутся из прежней.
+    #[serde(default)]
+    pub topics: Vec<String>,
+    /// Прежний адрес, если браузер сам выдал новую подписку.
+    #[serde(default)]
+    pub old_endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PushUnsubscribeRequest {
+    pub endpoint: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushConfigResponse {
+    pub public_key: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TelegramSubscribeRequest {
@@ -3350,10 +3397,18 @@ pub struct Commission {
     pub user_id: Option<Uuid>,
     pub claim_token: String,
     pub requester_name: String,
-    pub requester_email: String,
+    pub requester_email: Option<String>,
     pub requester_phone: Option<String>,
     pub title: String,
     pub description: String,
+    /// Способы связи (`[{channel, value}]`), уже приведённые к одному виду.
+    pub contacts: serde_json::Value,
+    pub wish: Option<String>,
+    pub choices: serde_json::Value,
+    pub size_key: Option<String>,
+    pub deadline_kind: Option<String>,
+    pub budget_key: Option<String>,
+    pub budget_currency: Option<String>,
     pub size_note: Option<String>,
     pub mood: Option<String>,
     pub deadline: Option<chrono::NaiveDate>,
@@ -3422,10 +3477,33 @@ pub struct AttachmentInput {
 #[serde(rename_all = "camelCase")]
 pub struct CommissionRequest {
     pub requester_name: Option<String>,
-    pub requester_email: String,
+    /// Не обязательна: нужен хотя бы один способ связи — почта или `contacts`.
+    #[serde(default)]
+    pub requester_email: Option<String>,
     pub requester_phone: Option<String>,
     pub title: Option<String>,
+    /// Может быть пустым: у мастера заявки только необязательная строка.
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub contacts: Vec<crate::commission_wizard::ContactInput>,
+    /// 'similar' | 'new'
+    #[serde(default)]
+    pub wish: Option<String>,
+    #[serde(default)]
+    pub choices: Option<crate::commission_wizard::Choices>,
+    /// 'xs' | 's' | 'm' | 'l' | 'xl' | 'unsure'
+    #[serde(default)]
+    pub size_key: Option<String>,
+    /// 'none' | 'date' | 'asap'
+    #[serde(default)]
+    pub deadline_kind: Option<String>,
+    /// 'lt100' | '100_200' | '200_400' | 'gt400' | 'discuss'
+    #[serde(default)]
+    pub budget_key: Option<String>,
+    /// 'USD' | 'EUR'
+    #[serde(default)]
+    pub budget_currency: Option<String>,
     pub size_note: Option<String>,
     pub mood: Option<String>,
     pub deadline: Option<String>,
@@ -3471,10 +3549,17 @@ pub struct CommissionDto {
     pub id: String,
     pub claim_token: String,
     pub requester_name: String,
-    pub requester_email: String,
+    pub requester_email: Option<String>,
     pub requester_phone: Option<String>,
     pub title: String,
     pub description: String,
+    pub contacts: Vec<crate::commission_wizard::Contact>,
+    pub wish: Option<String>,
+    pub choices: crate::commission_wizard::Choices,
+    pub size_key: Option<String>,
+    pub deadline_kind: Option<String>,
+    pub budget_key: Option<String>,
+    pub budget_currency: Option<String>,
     pub size_note: Option<String>,
     pub mood: Option<String>,
     pub deadline: Option<String>,
@@ -3487,6 +3572,8 @@ pub struct CommissionDto {
     pub figurine_id: Option<String>,
     pub status: CommissionStatus,
     pub admin_notes: Option<String>,
+    /// Язык, на котором человек оставил заявку.
+    pub lang: String,
     pub created_at: String,
     pub updated_at: String,
     pub attachments: Vec<AttachmentDto>,

@@ -14,7 +14,7 @@
 
 use super::*;
 use crate::models::{SiteHit, SiteKind};
-use crate::search::{site_search, SearchRecord, SiteBoost};
+use crate::search::{SearchIndex, SearchRecord, SiteBoost};
 
 /// Бонусы за покрытие слов запроса и порог «молчать». Подбор — `search_probe --sweep`.
 pub(crate) const BOOST: SiteBoost = SiteBoost { name: 0.01, any: 0.01, common: 0.25 };
@@ -25,6 +25,15 @@ pub(crate) const BOOST: SiteBoost = SiteBoost { name: 0.01, any: 0.01, common: 0
 /// верная остаётся (с моделью — кроме одной фразы из 129).
 pub(crate) const FLOOR: f32 = 0.02;
 const INDEX_TTL: Duration = Duration::from_secs(180);
+/// Как долго держится разобранный набор работ и остальных вещей.
+const LEXICAL_TTL: Duration = Duration::from_secs(60);
+
+/// Все вещи сайта, разобранные для поиска по словам, и работы, которые сейчас на людях.
+pub(super) struct SiteLexical {
+    built: Instant,
+    index: SearchIndex,
+    visible: HashSet<Uuid>,
+}
 
 /// Вещи, кроме работ: записи для поиска по словам и вектор каждой.
 pub(super) struct SiteIndex {
@@ -169,7 +178,25 @@ impl AppService {
             .collect())
     }
 
-    async fn site_search_uncached(&self, query: &str, limit: usize) -> Result<Vec<SemanticHit>> {
+    /// Сбросить разобранный набор: сохранённая работа или подпись видна в поиске сразу.
+    pub(super) async fn forget_site_lexical(&self) {
+        *self.site_lexical.write().await = None;
+    }
+
+    /// Работы и остальные вещи, разобранные для поиска по словам. Работы читаются из
+    /// базы, остальное берётся из `site_index`.
+    async fn site_lexical(&self) -> Result<Arc<SiteLexical>> {
+        if let Some(l) = self.site_lexical.read().await.as_ref()
+            && l.built.elapsed() < LEXICAL_TTL
+        {
+            return Ok(l.clone());
+        }
+        let mut slot = self.site_lexical.write().await;
+        if let Some(l) = slot.as_ref()
+            && l.built.elapsed() < LEXICAL_TTL
+        {
+            return Ok(l.clone());
+        }
         let index = self.site_index().await?;
 
         let fq = FigurineQuery { status: None, search: None, sort: None, page: None, per_page: None };
@@ -193,6 +220,19 @@ impl AppService {
             .collect();
         records.extend(index.records.iter().cloned());
 
+        let search = tokio::task::spawn_blocking(move || SearchIndex::new(&records))
+            .await
+            .map_err(|e| AppError::Internal(format!("site lexical task: {e}")))?;
+        let lexical = Arc::new(SiteLexical { built: Instant::now(), index: search, visible });
+        *slot = Some(lexical.clone());
+        Ok(lexical)
+    }
+
+    async fn site_search_uncached(&self, query: &str, limit: usize) -> Result<Vec<SemanticHit>> {
+        let index = self.site_index().await?;
+        let lexical = self.site_lexical().await?;
+        let visible = &lexical.visible;
+
         let mut scores: Vec<(String, f32)> = Vec::new();
         if crate::embed::is_available() {
             let model = crate::embed::model_name();
@@ -213,7 +253,7 @@ impl AppService {
             scores.extend(index.vectors.iter().map(|(id, v)| (id.clone(), crate::embed::dot(&qv, v))));
         }
 
-        let mut hits = site_search(query, &records, &scores, limit.clamp(1, 100), BOOST);
+        let mut hits = lexical.index.site(query, &scores, limit.clamp(1, 100), BOOST);
         // Порог один и с моделью, и без неё: без вектора оценки ниже, но вещь с
         // оценкой меньше 0,02 всё так же подтверждена одним списком из двух.
         hits.retain(|h| h.score >= FLOOR);

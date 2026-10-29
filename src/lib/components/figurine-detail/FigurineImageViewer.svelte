@@ -121,6 +121,7 @@
               alt={ctx.altTextFor(ctx.currentImage)}
               class="w-full h-full"
               imageFit={plateFit}
+              coverNarrow
               objectPosition={ctx.currentImage?.focalX != null && ctx.currentImage?.focalY != null
                 ? `${ctx.currentImage.focalX * 100}% ${ctx.currentImage.focalY * 100}%`
                 : 'center center'}

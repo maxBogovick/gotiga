@@ -8,6 +8,9 @@
   import type {
     BattleReport,
     BehaviourReport,
+    DigestFinding,
+    DigestHint,
+    DigestWeek,
     EngagementShape,
     GazetteLeaf,
     HealthReport,
@@ -28,6 +31,9 @@
   let battlesError = $state('');
   let loading = $state(true);
   let owner = $state(false);
+  let digests = $state<DigestWeek[]>([]);
+  let digestError = $state('');
+  let rebuilding = $state(false);
 
   // A slow reply for a range the admin has since left must not overwrite a
   // faster one for the range now on screen.
@@ -55,7 +61,36 @@
 
   onMount(() => {
     owner = isOwnerBrowser();
+    void loadDigests();
   });
+
+  // The digests are one per week and do not follow the panel's date range.
+  async function loadDigests() {
+    try {
+      digests = await api.getQuickExitDigests();
+      digestError = '';
+    } catch (e) {
+      digestError = String((e as Error)?.message ?? e);
+    }
+  }
+
+  async function rebuildDigest() {
+    if (
+      !confirm(
+        'Make last week\'s digest again and send it to Telegram again? Do this after backfilling the analytics, when the first digest was made on too little data.',
+      )
+    )
+      return;
+    rebuilding = true;
+    try {
+      digests = await api.rebuildQuickExitDigest();
+      digestError = '';
+    } catch (e) {
+      digestError = String((e as Error)?.message ?? e);
+    } finally {
+      rebuilding = false;
+    }
+  }
   $effect(() => {
     void load(range.from, range.to);
   });
@@ -112,6 +147,40 @@
     if (exitTo.startsWith('to:')) return `→ ${room(exitTo.slice(3))}`;
     return exitTo;
   }
+
+
+  // ── Digest of quick exits ─────────────────────────────────────────────
+  const DEVICES: Record<string, string> = { mobile: 'phone', desktop: 'computer', tablet: 'tablet' };
+  const ORIGINS: Record<string, string> = {
+    direct: 'direct visit',
+    internal: 'from this site\'s own pages',
+    search: 'search',
+  };
+  function digestWho(f: DigestFinding): string {
+    const parts = [room(f.pathGroup)];
+    if (f.origin) parts.push(ORIGINS[f.origin] ?? f.origin);
+    if (f.deviceClass) parts.push(DEVICES[f.deviceClass] ?? 'device unknown');
+    return parts.join(' · ');
+  }
+  function hintText(h: DigestHint): string {
+    switch (h.code) {
+      case 'slow_load':
+        return `loads slowly (main picture in ${(h.lcpMs / 1000).toFixed(1)} s)`;
+      case 'errors':
+        return `${h.events} errors on this page that week`;
+      case 'no_scroll':
+        return `${Math.round(h.share * 100)}% of those who left did not scroll`;
+      case 'in_app_browser':
+        return 'opened inside a social app, where people leave sooner anyway';
+    }
+  }
+  const weekLabel = (start: string) => {
+    const from = new Date(`${start}T00:00:00Z`);
+    const to = new Date(from.getTime() + 6 * 86_400_000);
+    const f = (d: Date) => d.toLocaleDateString($locale, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    return `${f(from)} – ${f(to)}`;
+  };
+  let newestDigest = $derived(digests[0] ?? null);
 
   // ── Behaviour: do they stay ───────────────────────────────────────────
   const TIME_BUCKETS: { key: keyof EngagementShape; label: string; tone: string }[] = [
@@ -475,6 +544,92 @@
   {#if loading && !behaviour && !health}
     <div class="state">Loading behaviour…</div>
   {/if}
+
+  <!-- ── WEEKLY DIGEST OF QUICK EXITS ─────────────────────────────────── -->
+  <section class="a-block">
+    <h3 class="block-label"><span>Who leaves within 10 seconds</span></h3>
+    <p class="section-note">
+      Once a week, for the last full Monday–Sunday: every room, by where people came from and what
+      they looked on, set against the same group's four earlier weeks or against the rest of the
+      room. Groups under 30 visits are not judged. It lists what <strong>sits next to</strong> a
+      quick exit — slow loading, errors, no scrolling — and cannot know why anyone left. The same
+      text goes to Telegram. Counting starts when this was first deployed; run the analytics
+      backfill (up to 30 days) and then "Make again" to get a first digest on real data.
+    </p>
+    {#if digestError}
+      <p class="state state--error">{digestError}</p>
+    {:else if !newestDigest}
+      <p class="empty">No digest yet. The first one is made within an hour of the next Monday after deployment.</p>
+    {:else}
+      <p class="digest-head">
+        <strong>{weekLabel(newestDigest.weekStart)}</strong>
+        <span class="muted">
+          · {fmt(newestDigest.visits)} visits, {pct(newestDigest.quick, newestDigest.visits)} left within 10 s
+          · {newestDigest.telegramAt ? 'sent to Telegram' : 'not sent to Telegram'}
+        </span>
+      </p>
+      {#if newestDigest.findings.length === 0}
+        <p class="empty">
+          {newestDigest.visits === 0
+            ? 'No visits in the measured data for that week.'
+            : 'Nothing stands out. On few visitors this is also what "not enough to judge" looks like.'}
+        </p>
+      {:else}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Where</th>
+                <th class="right">Left within 10 s</th>
+                <th class="right">Compared with</th>
+                <th>Next to it</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each newestDigest.findings as f (digestWho(f))}
+                <tr>
+                  <td>{digestWho(f)}</td>
+                  <td class="right">{fmt(f.quick)} of {fmt(f.visits)} ({pct(f.quick, f.visits)})</td>
+                  <td class="right" title={f.against === 'past' ? 'The same group over the four weeks before' : 'Everyone else on the same page this week'}>
+                    {Math.round(f.referenceRate * 100)}%
+                    <span class="muted">{f.against === 'past' ? 'before' : 'rest of page'}</span>
+                  </td>
+                  <td class="hints">{f.hints.length ? f.hints.map(hintText).join('; ') : '—'}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {/if}
+      {#if digests.length > 1}
+        <details class="digest-older">
+          <summary>Earlier weeks</summary>
+          <ul>
+            {#each digests.slice(1) as w (w.weekStart)}
+              <li>
+                <strong>{weekLabel(w.weekStart)}</strong>
+                <span class="muted">· {fmt(w.visits)} visits, {pct(w.quick, w.visits)} quick</span>
+                {#if w.findings.length}
+                  <ul>
+                    {#each w.findings as f (digestWho(f))}
+                      <li>{digestWho(f)} — {pct(f.quick, f.visits)} of {fmt(f.visits)}</li>
+                    {/each}
+                  </ul>
+                {:else}
+                  <span class="muted">· nothing stood out</span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </details>
+      {/if}
+    {/if}
+    <p class="small">
+      <button type="button" class="quiet-btn" onclick={rebuildDigest} disabled={rebuilding}>
+        {rebuilding ? 'Making…' : 'Make last week again'}
+      </button>
+    </p>
+  </section>
 
   <!-- ── DO THEY STAY ─────────────────────────────────────────────────── -->
   <section class="a-block">
@@ -1098,6 +1253,23 @@
   .section-note { margin-bottom: 0.7rem; color: #5f4636; font-size: 0.74rem; line-height: 1.5; max-width: 62rem; }
   .empty, .state { padding: 0.9rem; border: 1px dashed #d8c6b1; color: #8a6f5c; background: #fff; }
   .state--error { color: #9a2d1c; border-color: #c65f3c; }
+
+  .digest-head { margin-bottom: 0.5rem; font-size: 0.78rem; }
+  .hints { max-width: 26rem; font-size: 0.72rem; line-height: 1.45; color: #5f4636; }
+  .digest-older { margin-top: 0.6rem; font-size: 0.74rem; }
+  .digest-older summary { cursor: pointer; color: #6f3b24; }
+  .digest-older ul { margin: 0.4rem 0 0 1rem; padding: 0; }
+  .digest-older li { margin-bottom: 0.3rem; }
+  .quiet-btn {
+    padding: 0.35rem 0.7rem;
+    border: 1px solid #d8c6b1;
+    background: #fff;
+    color: #6f3b24;
+    font: inherit;
+    font-size: 0.72rem;
+    cursor: pointer;
+  }
+  .quiet-btn:disabled { opacity: 0.5; cursor: default; }
 
   .owner-row {
     display: flex;

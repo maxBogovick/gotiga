@@ -118,6 +118,19 @@ function geoAnswer(): { suggest: Lang | null } | null {
 	}
 }
 
+/** Двухбуквенный код страны посетителя из последнего ответа сервера (на три дня),
+ *  или null, если страну не спрашивали или ответ остыл. Нужен тем, кому от
+ *  страны зависит не язык, а, например, валюта ориентира в заявке. */
+export function knownCountry(): string | null {
+	try {
+		const raw = JSON.parse(localStorage.getItem(GEO_KEY) ?? 'null');
+		if (!raw || typeof raw.at !== 'number' || Date.now() - raw.at > GEO_TTL_MS) return null;
+		return typeof raw.country === 'string' && /^[A-Z]{2}$/.test(raw.country) ? raw.country : null;
+	} catch {
+		return null;
+	}
+}
+
 /** English is what a browser says when nobody set it: most browsers ship with
  *  `en-US`. So English from the browser is the one answer a country may
  *  overrule; any other language the browser asks for is a decision, and a
@@ -175,14 +188,16 @@ export async function suggestLangByCountry(
 	if (typeof window === 'undefined') return null;
 	if (chosenLang() || browserSettlesIt() || geoAnswer()) return null;
 	let suggest: Lang | null = null;
+	let country: string | null = null;
 	try {
-		const answer = await ask();
+		const answer = (await ask()) as { suggest?: string | null; country?: string | null };
 		suggest = isLang(answer?.suggest) ? answer.suggest : null;
+		country = typeof answer?.country === 'string' ? answer.country.toUpperCase() : null;
 	} catch {
 		return null; // no answer is no guess; the page stays as it is
 	}
 	try {
-		localStorage.setItem(GEO_KEY, JSON.stringify({ suggest, at: Date.now() }));
+		localStorage.setItem(GEO_KEY, JSON.stringify({ suggest, country, at: Date.now() }));
 	} catch { /* storage may be closed */ }
 	// The reader may have used the switcher while the answer was on its way.
 	if (!suggest || chosenLang() || get(lang) !== initialLang) return null;

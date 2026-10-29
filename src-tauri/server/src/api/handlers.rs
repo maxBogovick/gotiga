@@ -821,6 +821,24 @@ pub async fn admin_get_behaviour(
     Ok(Json(service.admin_behaviour(query).await?))
 }
 
+pub async fn admin_get_jobs(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::services::JobStatus>>> {
+    Ok(Json(service.admin_jobs().await?))
+}
+
+pub async fn admin_get_digests(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::db::DigestRow>>> {
+    Ok(Json(service.admin_digests().await?))
+}
+
+pub async fn admin_rebuild_digest(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::db::DigestRow>>> {
+    Ok(Json(service.admin_rebuild_digest().await?))
+}
+
 pub async fn admin_get_health(
     State(service): State<AppService>,
     Query(query): Query<AdminAnalyticsQuery>,
@@ -1897,19 +1915,6 @@ pub async fn update_order_status(
 
 // === COMMISSIONS ===
 
-fn looks_like_email(s: &str) -> bool {
-    let s = s.trim();
-    match s.split_once('@') {
-        Some((local, domain)) => {
-            !local.is_empty()
-                && domain.contains('.')
-                && !domain.starts_with('.')
-                && !domain.ends_with('.')
-        }
-        None => false,
-    }
-}
-
 pub async fn create_commission(
     State(service): State<AppService>,
     headers: HeaderMap,
@@ -1931,12 +1936,8 @@ pub async fn create_commission(
     let ip = extract_ip(&headers);
     service.check_commission_rate_limit(&ip).await?;
 
-    if !looks_like_email(&req.requester_email) {
-        return Err(AppError::BadRequest("A valid email is required.".into()));
-    }
-    if req.description.trim().is_empty() {
-        return Err(AppError::BadRequest("Description is required.".into()));
-    }
+    // Способы связи, описание и выбранные признаки проверяет служба
+    // (`create_commission`): те же проверки нужны и тестам, и любой другой двери.
     if req.description.chars().count() > 5000 {
         return Err(AppError::BadRequest("Description is too long.".into()));
     }
@@ -1977,7 +1978,8 @@ pub async fn create_commission(
         None
     };
 
-    let created = service.create_commission(&req).await?;
+    // Гость прикладывает только фото, загруженные через `/commissions/uploads`.
+    let created = service.create_commission(&req, user.is_some()).await?;
     if let Some(u) = user {
         let _ = service.claim_commission(&created.claim_token, u.id).await;
     }
@@ -2098,6 +2100,80 @@ pub async fn user_upload_file(
             let payload = save_image_variants(&config.upload_dir, &data, None).await?;
             return Ok(Json(payload));
         }
+    }
+    Err(AppError::BadRequest("No file field found".to_string()))
+}
+
+/// Longest side of a photo a guest attaches to a request.
+const COMMISSION_PHOTO_PX: u32 = 2000;
+
+/// Guest photo for a request: no sign-in, one file per call, decoded and
+/// re-encoded to WebP under `commission/`. The row in `commission_uploads` is
+/// what lets a submission claim it (and lets the daily sweep remove it when
+/// nobody does).
+pub async fn commission_upload(
+    State(service): State<AppService>,
+    State(config): State<Config>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>> {
+    let ip = extract_ip(&headers);
+    service
+        .check_rate_limit("commission_upload_hour", &ip, 10, 3600)
+        .await?;
+    service
+        .check_rate_limit("commission_upload_day", &ip, 30, 86_400)
+        .await?;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?
+    {
+        if field.name().unwrap_or("") != "file" {
+            continue;
+        }
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        if data.len() > 8 * 1024 * 1024 {
+            return Err(AppError::BadRequest("Image is too large (max 8MB).".into()));
+        }
+        let data = data.to_vec();
+        let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+            let image = image::load_from_memory(&data).map_err(|_| {
+                AppError::BadRequest("Only JPEG, PNG or WebP images are allowed.".into())
+            })?;
+            if (image.width() as u64) * (image.height() as u64) > MAX_IMAGE_PIXELS {
+                return Err(AppError::BadRequest("Image dimensions are too large".into()));
+            }
+            let image = if image.width().max(image.height()) > COMMISSION_PHOTO_PX {
+                image.resize(
+                    COMMISSION_PHOTO_PX,
+                    COMMISSION_PHOTO_PX,
+                    FilterType::Lanczos3,
+                )
+            } else {
+                image
+            };
+            encode_webp_bytes(&image.to_rgb8())
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("Image processing task failed: {}", e)))??;
+
+        let relative = format!("commission/{}.webp", Uuid::new_v4());
+        write_bytes(&config.upload_dir, &relative, &bytes).await?;
+        let url = public_static_url(&relative);
+        if let Err(e) = service.record_commission_upload(&url).await {
+            let _ = fs::remove_file(std::path::Path::new(&config.upload_dir).join(&relative)).await;
+            return Err(e);
+        }
+        return Ok(Json(serde_json::json!({
+            "url": url,
+            "thumbUrl": url,
+            "webpUrl": url,
+        })));
     }
     Err(AppError::BadRequest("No file field found".to_string()))
 }
@@ -4876,6 +4952,36 @@ pub async fn subscribe_via_telegram(
             .subscribe_via_telegram(body, user.as_ref(), client_ip(&ip))
             .await?,
     ))
+}
+
+/// Открытый ключ сервера для подписки на уведомления. Заводит пару ключей, если её ещё нет.
+pub async fn push_config(
+    State(service): State<AppService>,
+) -> Result<Json<crate::models::PushConfigResponse>> {
+    Ok(Json(crate::models::PushConfigResponse {
+        public_key: service.push_public_key().await?,
+    }))
+}
+
+/// Подписка устройства на уведомления. Без входа: подписка принадлежит устройству.
+pub async fn push_subscribe(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::PushSubscribeRequest>,
+) -> Result<StatusCode> {
+    // Предел «новых подписок в час» проверяет сама служба: обновления известных подписок
+    // под него не попадают.
+    service.push_subscribe(body, &extract_ip(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn push_unsubscribe(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::models::PushUnsubscribeRequest>,
+) -> Result<StatusCode> {
+    service.push_unsubscribe(&body.endpoint, &extract_ip(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Ссылка из письма «подтвердите адрес». POST, а не GET: почтовые сканеры

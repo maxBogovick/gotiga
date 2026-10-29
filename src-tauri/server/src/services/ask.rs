@@ -11,14 +11,15 @@
 use super::*;
 use crate::ask::{self, AskAnswer, AskRoute, Decision};
 use crate::lang::Lang;
-use crate::search::{hybrid_search, SearchRecord};
+use crate::search::SearchRecord;
 
 /// Каталог, готовый к подбору: все записи и вектор каждой формулировки.
 pub(super) struct AskIndex {
     entries: Vec<AskAnswer>,
     /// (номер записи, вектор формулировки). Пусто, если модели нет.
     vectors: Vec<(usize, Vec<f32>)>,
-    records: Vec<SearchRecord>,
+    /// Формулировки, разобранные для поиска по словам: один раз при сборке каталога.
+    search: crate::search::SearchIndex,
     embedded: bool,
 }
 
@@ -110,7 +111,7 @@ impl AppService {
         } else {
             Vec::new()
         };
-        let index = Arc::new(AskIndex { entries, vectors, records, embedded });
+        let index = Arc::new(AskIndex { entries, vectors, search: crate::search::SearchIndex::new(&records), embedded });
         *slot = Some(index.clone());
         Ok(index)
     }
@@ -152,13 +153,13 @@ impl AppService {
             }
             let scores: Vec<(String, f32)> =
                 index.entries.iter().zip(&levels).map(|(e, s)| (e.key.clone(), *s)).collect();
-            let hits = hybrid_search(&words, &index.records, &scores, index.entries.len());
+            let hits = index.search.hybrid(&words, &scores, index.entries.len());
             let lexical_top = hits
                 .first()
                 .and_then(|h| index.entries.iter().position(|e| e.key == h.id));
             ask::decide(&levels, lexical_top)
         } else {
-            let hits = hybrid_search(&words, &index.records, &[], index.entries.len());
+            let hits = index.search.hybrid(&words, &[], index.entries.len());
             let ranked: Vec<usize> = hits
                 .iter()
                 .filter_map(|h| index.entries.iter().position(|e| e.key == h.id))

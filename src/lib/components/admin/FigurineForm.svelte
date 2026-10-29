@@ -1252,6 +1252,12 @@
         <SimilarPicker selfId={figurine.id} {figurines} bind:value={figurine.similarIds} />
 
         <label class="block">
+            <span class="label">{$t('adminFieldEtsyUrl')}</span>
+            <input type="url" bind:value={() => figurine.etsyUrl ?? '', (v) => (figurine.etsyUrl = v)} class="input-gothic" placeholder="https://www.etsy.com/listing/…" autocomplete="off" spellcheck="false" />
+            <span class="mt-1 block text-xs opacity-70">{$t('adminFieldEtsyUrlHint')}</span>
+        </label>
+
+        <label class="block">
             <span class="label">{$t('adminFieldSlug')}</span>
             <input bind:value={figurine.slug} class="input-gothic" placeholder={$t('adminFieldSlugPlaceholder')} autocomplete="off" spellcheck="false" />
             <span class="block mt-1 text-[10px] text-[#5f4636]/60">{$t('adminFieldSlugHint')}</span>

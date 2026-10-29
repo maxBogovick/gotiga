@@ -1,0 +1,8 @@
+torch
+transformers
+sentence-transformers
+numpy
+pillow
+pillow_heif
+sentencepiece
+protobuf

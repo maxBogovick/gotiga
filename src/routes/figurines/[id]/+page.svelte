@@ -12,12 +12,27 @@
   import { formatFigurineAlt, altLabelsFrom, siblingPosition } from '$lib/figurine-alt';
   import { jsonLdSafe } from '$lib/jsonld';
   import { IMAGE_RIGHTS_PATH } from '$lib/site';
-  import type { FigurineImage } from '$lib/types/api';
+  import type { FigurineImage, GazetteLeaf } from '$lib/types/api';
   import '$lib/styles/figurine-detail.css';
 
   let { data } = $props();
   // Тексты на языке читателя (`workText`); английский — та же запись.
   let figurine = $derived(data.figurine ? localizeWork(data.figurine, $lang) : data.figurine);
+  // Leaves about the work that did not come with the page (see +page.ts) arrive here.
+  let laterLeaves = $state<GazetteLeaf[] | null>(null);
+  $effect(() => {
+    const pending = data.gazetteLater;
+    laterLeaves = null;
+    if (!pending) return;
+    let current = true;
+    void pending.then((leaves) => {
+      if (current) laterLeaves = leaves;
+    });
+    return () => {
+      current = false;
+    };
+  });
+  let gazetteLeaves = $derived(laterLeaves ?? data.gazetteLeaves ?? []);
   let prevWork = $derived(data.prev ? localizeListItem(data.prev, $lang) : null);
   let nextWork = $derived(data.next ? localizeListItem(data.next, $lang) : null);
 
@@ -281,7 +296,7 @@
   <NotFound backHref="/figurines" backLabel={$t('figurineBackToArchive')} />
 {:else}
   {#key id}
-    <FigurineDetailView {figurine} {id} prev={prevWork} next={nextWork} gazetteLeaves={data.gazetteLeaves ?? []} />
+    <FigurineDetailView {figurine} {id} prev={prevWork} next={nextWork} {gazetteLeaves} />
   {/key}
 {/if}
 

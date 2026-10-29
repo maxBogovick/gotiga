@@ -5,9 +5,8 @@
   // Разделы стоят печатями, как в шапке на компьютере: оттиск в бумаге,
   // текущий — сургуч (`SectionSeal`).
   //
-  // Прячется вниз, когда страницу листают вперёд, и возвращается при малейшем
-  // движении назад, у верха, у низа страницы и когда в неё попал фокус
-  // клавиатуры: закреплённая панель не должна отнимать фото у того, кто листает.
+  // Стоит на экране всегда, при любой прокрутке: прежде она пряталась при
+  // прокрутке вперёд, и разделы приходилось искать, листнув страницу назад.
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { fade, fly } from 'svelte/transition';
@@ -17,6 +16,8 @@
   import LangSwitcher from '$lib/components/LangSwitcher.svelte';
   import NavCount from '$lib/components/NavCount.svelte';
   import SectionSeal from '$lib/components/SectionSeal.svelte';
+  import PwaInstallButton from '$lib/components/pwa/PwaInstallButton.svelte';
+  import PushSettings from '$lib/components/pwa/PushSettings.svelte';
 
   let pathname = $derived(page.url.pathname);
 
@@ -25,7 +26,6 @@
   ] as const;
 
   let moreOpen = $state(false);
-  let away = $state(false);
   let reduceMotion = $state(false);
 
   // Пока открыт лист «Ещё», горит только он: два горящих пункта сразу не отвечают, где человек.
@@ -33,43 +33,6 @@
 
   // «Ещё» горит, когда человек находится в одном из его разделов.
   let moreActive = $derived(MORE.some((m) => isNavActive(pathname, m.href)));
-
-  // Прокрутка вперёд дальше этого порога прячет панель; ближе к верху она нужна всегда.
-  const HIDE_AFTER = 160;
-  // Шаг меньше этого — дрожь пальца, а не намерение.
-  const STEP = 6;
-  let lastY = 0;
-
-  // Высота страницы читается при изменении размера, а не на каждом событии
-  // прокрутки: `scrollHeight` — принудительный расчёт раскладки.
-  let pageHeight = 0;
-  let sizeWatch: ResizeObserver | null = null;
-  function measure() {
-    pageHeight = document.documentElement.scrollHeight;
-  }
-
-  let frame = 0;
-  function onScroll() {
-    if (frame) return;
-    frame = requestAnimationFrame(() => {
-      frame = 0;
-      step();
-    });
-  }
-
-  function step() {
-    const y = window.scrollY;
-    const delta = y - lastY;
-    const atBottom = window.innerHeight + y >= pageHeight - 48;
-    if (y < 80 || atBottom) {
-      away = false;
-      lastY = y;
-      return;
-    }
-    if (Math.abs(delta) < STEP) return;
-    away = delta > 0 && y > HIDE_AFTER && !moreOpen;
-    lastY = y;
-  }
 
   // Нажатия на панель считаются тем же `header_click`, что и в шапке компьютера:
   // иначе решение о весе пунктов принималось бы по половине посетителей.
@@ -95,29 +58,27 @@
     if (e.key === 'Escape' && moreOpen) closeMore();
   }
 
-  // Новая страница — панель на виду и закрытый лист «Ещё».
+  // Сколько панели видно: всегда её высота. По этой переменной стоят вещи, закреплённые
+  // над панелью (полоса «Установить», сообщения об обновлении и о сети).
+  $effect(() => {
+    document.documentElement.style.setProperty(
+      '--dock-visible-h',
+      'calc(64px + env(safe-area-inset-bottom, 0px))',
+    );
+  });
+
+  // Новая страница — закрытый лист «Ещё».
   $effect(() => {
     void pathname;
     moreOpen = false;
-    away = false;
-    lastY = typeof window === 'undefined' ? 0 : window.scrollY;
   });
 
   onMount(() => {
     reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    lastY = window.scrollY;
-    measure();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', measure, { passive: true });
     document.addEventListener('keydown', onKey);
-    sizeWatch = new ResizeObserver(measure);
-    sizeWatch.observe(document.body);
     return () => {
-      window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', measure);
       document.removeEventListener('keydown', onKey);
-      sizeWatch?.disconnect();
-      cancelAnimationFrame(frame);
+      document.documentElement.style.removeProperty('--dock-visible-h');
     };
   });
 </script>
@@ -150,6 +111,10 @@
         </li>
       {/each}
     </ul>
+    <!-- Приложение: установка стоит первой, уведомления — под ней. Обе вещи показываются
+         только там, где возможны (приложение ещё не стоит; браузер и сервер умеют). -->
+    <PwaInstallButton variant="row" where="sheet" onpress={closeMore} />
+    <div class="sheet-push"><PushSettings id="push-sheet" /></div>
     <div class="sheet-lang">
       <LangSwitcher variant="light" layout="strip" />
     </div>
@@ -158,9 +123,7 @@
 
 <nav
   class="bar"
-  class:is-away={away && !moreOpen}
   aria-label={$t('dockSections')}
-  onfocusin={() => (away = false)}
   use:countClicks
 >
   <a
@@ -236,11 +199,6 @@
       background: var(--color-canvas-base, #f8f1e7);
       border-top: 1px solid var(--border, #d8c6b1);
       box-shadow: 0 -6px 20px color-mix(in srgb, var(--color-ink-primary, #34251c) 6%, transparent);
-      transition: transform 0.22s ease;
-    }
-
-    .bar.is-away {
-      transform: translateY(100%);
     }
 
     .tab {
@@ -404,6 +362,17 @@
 
     .sheet-lang {
       padding-top: 12px;
+    }
+
+    .sheet-push {
+      padding-top: 12px;
+      color: var(--color-ink-secondary, #5b4638);
+    }
+    /* Пока панели уведомлений нет, в листе остаётся только невидимая метка, и отступа тоже
+       нет. Скрывать её `display: none` нельзя: наблюдатель за видимостью не увидит метку и
+       панель не спросит сервер, то есть не появится никогда. */
+    .sheet-push:not(:has(.push)) {
+      padding-top: 0;
     }
   }
 

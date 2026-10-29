@@ -16,6 +16,8 @@
             $t('privacyDataAccount'),
             $t('privacyDataTale'),
             $t('privacyDataStudio'),
+            $t('privacyDataPush'),
+            $t('privacyDataOffline'),
             $t('privacyDataAsk'),
             $t('privacyDataLanguage'),
         ] },

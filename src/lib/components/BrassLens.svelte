@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
   import { resolveWebpUrl, resolveSrcset } from '$lib/api';
   import { repairPicture, repairSrc } from '$lib/hydrate-image';
@@ -12,6 +12,7 @@
     alt,
     class: className = '',
     imageFit = 'cover',
+    coverNarrow = false,
     objectPosition = 'center 20%',
     lensEnabled = false,
     onSwipeLeft = () => {},
@@ -26,6 +27,10 @@
     alt?: string;
     class?: string;
     imageFit?: 'cover' | 'contain';
+    /** On a narrow screen (max-width 859px) fill the box whatever `imageFit` says. Done in
+     *  CSS rather than from JS state, so the prerendered HTML already has the phone's fit
+     *  and the photo doesn't change frame when the page hydrates. */
+    coverNarrow?: boolean;
     objectPosition?: string;
     lensEnabled?: boolean;
     onSwipeLeft?: () => void;
@@ -38,9 +43,17 @@
   let imageFailed = $state(false);
   let mainLoaded = $state(false);
 
+  // The photo the page was first drawn with. Until the visitor pages to another one the
+  // main <img> is never hidden: the prerendered HTML cannot know whether the photo has
+  // arrived, and hiding it until JS ran left a blurred thumb on screen for as long as
+  // the scripts took, however early the photo itself was downloaded. Hiding is only
+  // for a swap, where the old photo would otherwise stay on top of the new one's thumb.
+  const firstSrc = untrack(() => src);
+  let swapped = $state(false);
+
   $effect(() => {
     const img = mainImg;
-    void src;
+    if (src !== firstSrc) swapped = true;
     imageFailed = false;
     mainLoaded = Boolean(img?.complete && (img.naturalWidth ?? 0) > 0);
   });
@@ -182,6 +195,7 @@
       aria-hidden="true"
       use:repairSrc={thumbSrc}
       class="absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
+      class:brass-cover-narrow={coverNarrow}
       style="
         object-position: {objectPosition};
         filter: {mainLoaded && !imageFailed ? 'none' : 'blur(18px) saturate(1.05)'};
@@ -218,14 +232,16 @@
         sizes={responsive ? sizes : undefined}
         {alt}
         bind:this={mainImg}
-        class="absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
+        class="brass-main absolute inset-0 w-full h-full pointer-events-none select-none {imageFit === 'contain' ? 'object-contain' : 'object-cover'}"
+        class:brass-cover-narrow={coverNarrow}
         style="
           object-position: {objectPosition};
           transform: scale({scale}) translate({panX / scale}px, {panY / scale}px);
-          opacity: {mainLoaded || imageFailed || !thumbSrc ? 1 : 0};
+          {swapped && !(mainLoaded || imageFailed || !thumbSrc) ? 'opacity: 0;' : ''}
           transition: {transitioning ? 'transform 0.28s cubic-bezier(0.22,0.1,0.2,1)' : 'none'}, opacity 0.35s ease;
           {scale > 1.05 || transitioning ? 'will-change: transform;' : ''}
         "
+        fetchpriority="high"
         decoding="async"
         onload={() => (mainLoaded = true)}
         onerror={() => (imageFailed = true)}
@@ -284,6 +300,17 @@
 </div>
 
 <style>
+  /* The photo shows as soon as the browser has painted it, with no script and no
+     animation involved: a fade-in from the first paint would hold back the moment the
+     photo counts as shown, and does nothing for a photo that arrives later. */
+  .brass-main {
+    color: transparent;
+  }
+
+  @media (max-width: 859px) {
+    .brass-cover-narrow { object-fit: cover; }
+  }
+
   .bg-noise {
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
   }

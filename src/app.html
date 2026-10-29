@@ -7,7 +7,57 @@
   <link rel="icon" href="%sveltekit.assets%/favicon-32x32.png" sizes="32x32" type="image/png" />
   <link rel="icon" href="%sveltekit.assets%/favicon-16x16.png" sizes="16x16" type="image/png" />
   <link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
-  <link rel="manifest" href="%sveltekit.assets%/site.webmanifest" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <!-- Манифест на языке читателя, пока браузер его не запросил: Chrome строит окно установки
+       по тому манифесту, который успел прочитать, и подмена после загрузки страницы
+       (`+layout.svelte`) могла опоздать — приложение ставилось бы с английским названием.
+       Порядок тот же, что у сайта: `?lang=`, выбор читателя, язык браузера. Язык страны
+       приходит позже; его поправляет подмена в раскладке. -->
+  <script>
+    (function () {
+      try {
+        var langs = ['en', 'ru', 'uk', 'es', 'de', 'it'];
+        var pick = null;
+        var asked = /[?&]lang=([a-z]{2})/.exec(location.search);
+        if (asked && langs.indexOf(asked[1]) > -1) pick = asked[1];
+        if (!pick) {
+          var saved = localStorage.getItem('gotiga_lang');
+          if (saved && langs.indexOf(saved) > -1) pick = saved;
+        }
+        if (!pick) {
+          var wanted = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language];
+          for (var i = 0; i < wanted.length; i++) {
+            var base = String(wanted[i] || '').toLowerCase().split('-')[0];
+            if (langs.indexOf(base) > -1) { pick = base; break; }
+          }
+        }
+        if (pick) document.querySelector('link[rel="manifest"]').href = '/pwa/manifest.' + pick + '.webmanifest';
+      } catch (e) {}
+    })();
+  </script>
+  <!-- Приложение на экране «Домой» (iOS не читает всё из манифеста). Заставки — пергамент
+       и медаль по центру, `tools/pwa/make_icons.py`; на странице их не загружают,
+       Safari берёт нужную при запуске приложения. -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Ritunia" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1320x2868.png" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1206x2622.png" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1242x2688.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/828x1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1242x2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/640x1136.png" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/2048x2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1668x2388.png" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1640x2360.png" media="(device-width: 820px) and (device-height: 1180px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1668x2224.png" media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
+  <link rel="apple-touch-startup-image" href="/pwa/splash/1536x2048.png" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- No default page description here on purpose: every prerendered route sets its
          own meta description in its head block, and a hardcoded default would duplicate

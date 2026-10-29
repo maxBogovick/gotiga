@@ -6,15 +6,12 @@
   import { t, locale } from '$lib/i18n';
   import { createFigurineAnalytics } from '$lib/analytics';
 
-  type RequestIntent = 'request' | 'reserve' | 'waitlist' | 'viewing' | 'similar' | 'question' | 'notify';
-
   let {
     figurine,
     id,
     hasActiveShowing,
     nextAvailableDate,
     scheduleLoadFailed,
-    onOpenModal,
     analyticsClient,
     queueJoin = null,
     notifyJoin = null,
@@ -25,7 +22,6 @@
     hasActiveShowing: boolean;
     nextAvailableDate: Date | null;
     scheduleLoadFailed: boolean;
-    onOpenModal: (intent: RequestIntent) => void;
     analyticsClient: ReturnType<typeof createFigurineAnalytics> | null;
     queueJoin?: { token: string; position: number } | null;
     notifyJoin?: string | null;
@@ -227,18 +223,6 @@
     </div>
     {/if}
 
-    <a
-      class="commission-similar-btn"
-      href="/commission?source={encodeURIComponent(id)}"
-      onclick={() => analyticsClient?.cta('create_similar')}
-    >
-      <span class="commission-similar-btn-label">{$t('commissionCreateSimilarCta')}</span>
-      <span class="commission-similar-btn-icon" aria-hidden="true">
-        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1.5 6h9M7 2.5L10.5 6 7 9.5"/>
-        </svg>
-      </span>
-    </a>
   </div>
 
   {#if !omitLead}

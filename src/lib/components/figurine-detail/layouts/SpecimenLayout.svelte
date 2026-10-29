@@ -10,6 +10,7 @@
   import CatalogPlateMarks from '../CatalogPlateMarks.svelte';
   import PlateGestures from '../PlateGestures.svelte';
   import CatalogDeeds from '../CatalogDeeds.svelte';
+  import WorkPrimaryDeed from '../WorkPrimaryDeed.svelte';
   import FigurineStatusPanel from '$lib/components/FigurineStatusPanel.svelte';
   import FigurineClaimRow from '$lib/components/FigurineClaimRow.svelte';
   import BecomingReveal from '$lib/components/BecomingReveal.svelte';
@@ -170,6 +171,7 @@
           {#if ctx.hasText(ctx.figurine.dimensions)}
             <p class="catalog-dims">{$t('catalogDimsPrefix')} {ctx.figurine.dimensions}</p>
           {/if}
+          <WorkPrimaryDeed />
           <CatalogTitleDeeds />
         </header>
 
@@ -329,7 +331,6 @@
       hasActiveShowing={ctx.hasActiveShowing}
       nextAvailableDate={ctx.nextAvailableDate}
       scheduleLoadFailed={ctx.scheduleLoadFailed}
-      onOpenModal={ctx.openRequestModal}
       analyticsClient={ctx.analyticsClient}
       queueJoin={ctx.queueJoin}
       notifyJoin={ctx.notifyJoin}

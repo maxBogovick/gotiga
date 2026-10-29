@@ -769,6 +769,20 @@ export const api = {
         return webFetch(`/admin/analytics/behaviour${qs}`, { headers: authHeaders() });
     },
 
+    /** Когда каждый фоновый проход шёл в последний раз и чем кончился. */
+    async getJobs(): Promise<import('./types/api').JobStatus[]> {
+        return webFetch('/admin/jobs', { headers: authHeaders() });
+    },
+
+    async getQuickExitDigests(): Promise<import('./types/api').DigestWeek[]> {
+        return webFetch('/admin/analytics/digests', { headers: authHeaders() });
+    },
+
+    /** Make the last full week's digest again and send it to the owner again. */
+    async rebuildQuickExitDigest(): Promise<import('./types/api').DigestWeek[]> {
+        return webFetch('/admin/analytics/digests/rebuild', { method: 'POST', headers: authHeaders() });
+    },
+
     async getHealthReport(opts?: AdminAnalyticsQuery): Promise<import('./types/api').HealthReport> {
         const p = new URLSearchParams();
         if (opts?.from) p.set('from', opts.from);
@@ -1659,6 +1673,34 @@ export const api = {
         });
     },
 
+    // === PUSH (уведомления о новом на сайте) ===
+
+    /** Открытый ключ сервера; `null` — уведомления на этом сервере не настроены. */
+    async getPushConfig(): Promise<{ publicKey: string } | null> {
+        try {
+            return await webFetch('/push/config');
+        } catch (err) {
+            if (isNotFoundError(err)) return null;
+            throw err;
+        }
+    },
+
+    async pushSubscribe(req: import('./types/api').PushSubscribeRequest): Promise<void> {
+        await webFetch('/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req),
+        });
+    },
+
+    async pushUnsubscribe(endpoint: string): Promise<void> {
+        await webFetch('/push/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint }),
+        });
+    },
+
     async getSubscriptionByToken(token: string): Promise<import('./types/api').SubscriberInfo | null> {
         try {
             return await webFetch(`/subscribe/leave/${token}`);
@@ -2141,6 +2183,19 @@ export const api = {
             body: form,
         });
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const data = await res.json();
+        return {
+            url: webPublicUrl(data.url) ?? '',
+            thumbUrl: webPublicUrl(data.thumbUrl),
+        };
+    },
+
+    /** Guest photo for a request: no sign-in, one file, re-encoded to WebP. Echo the result in `attachmentUrls`. */
+    async uploadCommissionPhoto(file: File): Promise<AttachmentInput> {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await fetch(`${webApiBase()}/commissions/uploads`, { method: 'POST', body: form });
+        if (!res.ok) throw Object.assign(new Error(`Upload failed: ${res.status}`), { status: res.status });
         const data = await res.json();
         return {
             url: webPublicUrl(data.url) ?? '',
