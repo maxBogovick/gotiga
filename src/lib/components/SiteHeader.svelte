@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { stripLang } from '$lib/i18n/path';
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -209,7 +210,7 @@
 
   // Объявлен раньше всего, что его читает: при отрисовке на сервере `$derived` считается
   // сразу, и чтение `pathname` до его объявления роняло пререндер главной.
-  let pathname = $derived(page.url.pathname);
+  let pathname = $derived(stripLang(page.url.pathname));
 
   let isHome = $derived(pathname === '/');
 

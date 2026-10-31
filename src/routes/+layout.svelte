@@ -1,7 +1,7 @@
 <script lang="ts">
   import '../app.css';
-  import { onMount, onDestroy } from 'svelte';
-  import { beforeNavigate, onNavigate } from '$app/navigation';
+  import { onMount, onDestroy, untrack } from 'svelte';
+  import { beforeNavigate, onNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import SiteHeader from '$lib/components/SiteHeader.svelte';
   import SiteFooter from '$lib/components/SiteFooter.svelte';
@@ -24,32 +24,62 @@
   import { matchChrome } from '$lib/stores/match-chrome.svelte';
   import { enterRoom, leaveRoom, noteNavigation, installErrorReporting, startVitals, interact } from '$lib/analytics';
   import type { Lang } from '$lib/i18n';
+  import { browser } from '$app/environment';
+  import { LANGS, LANG_META, setLang } from '$lib/i18n';
+  import { langFromPath, stripLang, withLang, isLocalizedPath } from '$lib/i18n/path';
 
   type ViewTransition = { finished: Promise<void>; ready: Promise<void> };
   type VTDocument = Document & {
     startViewTransition(cb: () => void | Promise<void>): ViewTransition;
   };
 
+  let { children, data } = $props();
+
+  // Язык страницы называет её адрес: `/ru/…` — русская, без приставки — английская.
+  // На сервере (пререндер) хранилище языка выставляется здесь, до отрисовки детей:
+  // отрисовка одной страницы синхронна, так что соседняя страница язык не подменит.
+  if (!browser) lang.set(data.lang as Lang);
+  // Страница с приставкой открыта по ссылке: язык читателя становится её языком.
+  // Страница без приставки язык не меняет: читатель мог выбрать другой раньше.
+  // Следит только за адресом: выбор языка в переключателе меняет `$lang` раньше, чем
+  // адрес, и не должен откатываться к языку прежнего адреса.
+  $effect(() => {
+    const fromAddress = data.lang as Lang;
+    if (browser && fromAddress !== 'en' && fromAddress !== untrack(() => $lang)) void setLang(fromAddress);
+  });
+
+  // Адрес страницы без языковой приставки: по нему шапка и подвал находят «свой» раздел.
+  let routePath = $derived(stripLang(page.url.pathname));
   // A page may override the canonical path via its load data (e.g. a figurine
   // reached by UUID canonicalises to its slug URL); otherwise use the live path.
+  // Адрес на языке страницы: canonical называет именно эту версию, а не английскую.
+  let canonicalBase = $derived(stripLang(page.data?.canonicalPath ?? page.url.pathname));
   let canonicalUrl = $derived(
-    `${page.url.origin}${page.data?.canonicalPath ?? page.url.pathname}`
+    `${page.url.origin}${isLocalizedPath(canonicalBase) ? withLang(canonicalBase, data.lang) : canonicalBase}`
   );
-  let { children } = $props();
+  // Те же страницы на всех шести языках: поисковик подставляет читателю его язык.
+  let alternates = $derived(
+    isLocalizedPath(canonicalBase)
+      ? LANGS.map((l) => ({
+          hreflang: LANG_META[l].locale.split('-')[0],
+          href: `${page.url.origin}${withLang(canonicalBase, l)}`,
+        }))
+      : [],
+  );
   // Стол студии — рабочая поверхность, а не страница дома: он занимает весь
   // экран и носит свою шапку с дверью назад. С шапкой и подвалом сайта поверх
   // него стол не помещался бы никогда, и человек резал бы раму, прокручивая
   // страницу. Вход в студию (`/studio`) — обычная страница дома, шапка на ней
   // остаётся: это витрина, с неё уходят в другие комнаты.
-  let atDesk = $derived(/^\/studio\/frames\//.test(page.url.pathname));
+  let atDesk = $derived(/^\/studio\/frames\//.test(routePath));
   let showSiteHeader = $derived(
-    !page.url.pathname.startsWith('/admin') && !atDesk && !matchChrome.covering,
+    !routePath.startsWith('/admin') && !atDesk && !matchChrome.covering,
   );
-  let hasHeaderOffset = $derived(showSiteHeader && page.url.pathname !== '/');
+  let hasHeaderOffset = $derived(showSiteHeader && routePath !== '/');
 
   // Нижняя панель разделов (телефон): везде, где есть шапка сайта, кроме страницы
   // работы — там внизу закреплена кнопка действия, а разделы остаются в меню шапки.
-  let atWorkLeaf = $derived(WORK_LEAF_RE.test(page.url.pathname) && Boolean((page.data as { figurine?: unknown } | undefined)?.figurine));
+  let atWorkLeaf = $derived(WORK_LEAF_RE.test(routePath) && Boolean((page.data as { figurine?: unknown } | undefined)?.figurine));
   let showSectionBar = $derived(showSiteHeader && !atWorkLeaf);
 
   // Док работы (компьютер): подключается, только когда страница сообщила хранилищу
@@ -65,7 +95,7 @@
   // House-descent scroll dimmer: every public page EXCEPT the figurine detail /
   // passport routes, which run their own candle vignette (stacking a second
   // scroll-linked dimmer there would over-darken the specimen).
-  let showDescent = $derived(showSiteHeader && !page.url.pathname.startsWith('/figurines/'));
+  let showDescent = $derived(showSiteHeader && !routePath.startsWith('/figurines/'));
 
   // Visit tracking lives here and only here. A page that has to remember to
   // call analytics is a page that will one day be added without calling it,
@@ -82,7 +112,7 @@
   // `enterRoom` could see that the path is the same one. The room is closed by
   // `onDestroy` below and by the instance's own `pagehide` listener.
   $effect(() => {
-    enterRoom(page.url.pathname, page.route.id);
+    enterRoom(routePath, page.route.id);
   });
 
   // Where the visitor came from and where they are going, said before the
@@ -91,6 +121,56 @@
   // visit report exists to give.
   beforeNavigate((navigation) => {
     noteNavigation(navigation.from?.url, navigation.to?.url);
+  });
+
+  // ── Язык читателя в адресе ────────────────────────────────────────────────
+  // Плитки работ, шапка и подвал рисуют ссылки без приставки (`/figurines/x`), а
+  // после загрузки главная ещё и перерисовывает плитки из ответа сервера. Поэтому
+  // язык в адрес ставится здесь, один раз для всего сайта, а не в каждой ссылке.
+  /** Адрес на языке читателя, если у страницы есть версии на языках; иначе null. */
+  function inReaderLang(href: string): string | null {
+    let url: URL;
+    try {
+      url = new URL(href, window.location.origin);
+    } catch {
+      return null;
+    }
+    if (url.origin !== window.location.origin) return null;
+    // Страница без версий на языках — как есть. Приставка другого языка (готовый HTML
+    // был нарисован на прежнем языке) заменяется приставкой языка читателя.
+    if (!isLocalizedPath(url.pathname)) return null;
+    const target = withLang(url.pathname, $lang);
+    if (target === url.pathname) return null;
+    return `${target}${url.search}${url.hash}`;
+  }
+
+  // Ссылка поправляется, когда к ней тянутся (наведение, касание, фокус, щелчок):
+  // тогда верный адрес и в «Открыть в новой вкладке», и в «Копировать ссылку».
+  function localizeAnchor(e: Event) {
+    const a = (e.target as Element | null)?.closest?.('a[href]');
+    if (!a) return;
+    const next = inReaderLang(a.getAttribute('href') ?? '');
+    if (next) a.setAttribute('href', next);
+  }
+
+  onMount(() => {
+    const events = ['pointerover', 'pointerdown', 'touchstart', 'focusin', 'click'] as const;
+    for (const name of events) document.addEventListener(name, localizeAnchor, { capture: true, passive: true });
+    return () => {
+      for (const name of events) document.removeEventListener(name, localizeAnchor, { capture: true });
+    };
+  });
+
+  // Переход без ссылки (`goto('/figurines/x')` из плитки или кнопки) тоже идёт на языке
+  // читателя. Кнопка «назад» (`popstate`) адрес не меняет: человек возвращается туда, где был.
+  beforeNavigate((navigation) => {
+    if (!navigation.to || navigation.willUnload || navigation.type === 'popstate') return;
+    // Адрес с приставкой назван явно (переключатель языка, ссылка): его не меняют.
+    if (langFromPath(navigation.to.url.pathname) !== 'en') return;
+    const next = inReaderLang(navigation.to.url.href);
+    if (!next) return;
+    navigation.cancel();
+    void goto(next, { noScroll: false });
   });
 
   // Keep <html lang> in sync with the active language. app.html hard-codes lang="ru",
@@ -227,6 +307,16 @@
     if (typeof document !== 'undefined') applyThemeHighlight(null);
   });
 
+  // Переход по ссылке на другую страницу открывает её сверху. Safari берёт снимок новой
+  // страницы с прокруткой прежней (главная прокручена вглубь, работа короче) и показывает
+  // её внизу, поэтому сброс ставится здесь, до снимка, а не после перехода.
+  function resetScroll(navigation: { type: string; from: { url: URL } | null; to: { url: URL } | null }) {
+    if (navigation.type === 'popstate' || !navigation.to || navigation.to.url.hash) return;
+    if (navigation.from && navigation.from.url.pathname === navigation.to.url.pathname) return;
+    // `scroll-behavior: smooth` на html (app.css) растянул бы сброс на секунды.
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }
+
   onNavigate((navigation) => {
     if (!('startViewTransition' in document)) {
       pageTurn.disarm();
@@ -263,6 +353,7 @@
         const transition = vtDocument.startViewTransition(async () => {
           resolve();
           await navigation.complete;
+          resetScroll(navigation);
         });
         transition.finished.finally(() => {
           root.classList.remove('gt-page-turn', 'gt-forward', 'gt-backward');
@@ -285,6 +376,7 @@
         const transition = vtDocument.startViewTransition(async () => {
           resolve();
           await navigation.complete;
+          resetScroll(navigation);
         });
         // Card→detail morph can leave the WebGL plate holding a discarded buffer.
         transition.finished.finally(nudgePlateRedraw);
@@ -309,6 +401,7 @@
       const transition = vtDocument.startViewTransition(async () => {
         resolve();
         await navigation.complete;
+        resetScroll(navigation);
       });
       transition.finished.finally(() => {
         root.classList.remove(
@@ -326,6 +419,12 @@
 
 <svelte:head>
   <link rel="canonical" href={canonicalUrl} />
+  {#each alternates as alt (alt.hreflang)}
+    <link rel="alternate" hreflang={alt.hreflang} href={alt.href} />
+  {/each}
+  {#if alternates.length}
+    <link rel="alternate" hreflang="x-default" href={`${page.url.origin}${canonicalBase}`} />
+  {/if}
   <!-- Theme override CSS is applied via injectStyle in the script above (safe textContent),
        NOT emitted here as {@html <style>} — see the effect's comment. -->
 </svelte:head>

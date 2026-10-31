@@ -1,3 +1,5 @@
+import { STATIC_PAGE_PATHS } from './site-routes.js';
+
 // Public site origin used to build absolute URLs in SEO output (sitemap.xml, OG
 // tags). Kept in sync with the `Sitemap:` line in static/robots.txt.
 export const SITE_URL = 'https://ritunia.com';
@@ -14,31 +16,7 @@ export const IMPRESSIONS_PATH = '/impressions';
 // Public, prerendered routes with real HTML. Listed in sitemap.xml and (the
 // subset that belongs in a prose map) in llms.txt. /commission is omitted on
 // purpose: it reads a ?source query param so it cannot be prerendered.
-export const SITEMAP_STATIC_ROUTES = [
-    '/',
-    '/figurines',
-    '/gazette',
-    '/tales',
-    '/workshop',
-    '/author',
-    '/upcoming',
-    '/cellar',
-    // Комната карт: не в шапке, но со своим canonical, og и CollectionPage.
-    // Страница, у которой есть адрес и нет его ни в одной карте сайта, —
-    // это адрес, который знает только тот, кто его уже знает. Этюды
-    // (`/battles/etude`) сюда не идут: они noindex и принадлежат человеку.
-    '/battles',
-    // Студия: галерея и сезон — публичные и ради них всё затевалось. Сам стол,
-    // склад и вход в студию сюда не идут: они за именем.
-    '/studio/gallery',
-    '/studio/season',
-    '/studio/market',
-    ACQUIRE_PATH,
-    IMPRESSIONS_PATH,
-    PRIVACY_PATH,
-    TERMS_PATH,
-    IMAGE_RIGHTS_PATH,
-] as const;
+export const SITEMAP_STATIC_ROUTES = STATIC_PAGE_PATHS;
 
 /** Turn a media path (possibly relative) into an absolute URL under SITE_URL. */
 export function toAbsoluteUrl(path: string | null | undefined): string | null {

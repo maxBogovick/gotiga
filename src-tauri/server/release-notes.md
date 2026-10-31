@@ -12,6 +12,28 @@
 Новые работы, байки, карты и битвы в пункты не пишутся — сервер считает их
 сам по журналу.
 
+## 2026-10-29 · Уведомления об игре
+
+### en
+new: Notifications have a fourth topic, “Cards and battles”: a message when a new card or battle appears
+better: Existing subscribers are not asked anything and are not sent old cards; the topic is theirs to switch on
+
+### de
+new: Die Benachrichtigungen haben ein viertes Thema, „Karten und Schlachten“: eine Nachricht, wenn eine neue Karte oder Schlacht erscheint
+better: Bestehende Abonnenten werden nicht gefragt und bekommen keine alten Karten; das Thema schalten sie selbst ein
+
+### es
+new: Las notificaciones tienen un cuarto tema, «Cartas y batallas»: un aviso cuando aparece una carta o una batalla nueva
+better: A quienes ya están suscritos no se les pregunta nada ni se les envían cartas antiguas; el tema lo activan ellos
+
+### it
+new: Le notifiche hanno un quarto tema, «Carte e battaglie»: un avviso quando compare una carta o una battaglia nuova
+better: Agli iscritti non si chiede nulla e non si inviano carte vecchie; il tema lo attivano loro
+
+### ru
+new: У уведомлений появилась четвёртая тема, «Карты и битвы»: сообщение, когда выходит новая карта или битва
+better: Уже подписанным ничего не навязывается и старые карты не присылаются; тему они включают сами
+
 ## 2026-10-22 · Каналы по языкам
 
 ### en

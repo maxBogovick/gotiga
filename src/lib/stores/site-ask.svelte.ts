@@ -1,3 +1,4 @@
+import { stripLang } from '$lib/i18n/path';
 // Разговор в окне «Спросить сайт»: вопросы, ответы и то, дописан ли ответ.
 //
 // Ответ собирается сразу, а выдерживается пауза (`THINK_MS`) и печатается по
@@ -225,7 +226,7 @@ class SiteAskStore {
           meaning,
           gazetteTotal,
           text: (key) => say(key as Parameters<typeof say>[0]),
-          page: { path: page.url.pathname, card: page.url.searchParams.get('card') },
+          page: { path: stripLang(page.url.pathname), card: page.url.searchParams.get('card') },
           quiz,
         });
       // Каталог не уверен: вместо «не умею» — три ближайших вопроса, а под

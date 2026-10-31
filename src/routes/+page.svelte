@@ -27,7 +27,7 @@
     import { visitorMarks } from '$lib/stores/visitor-marks.svelte';
     import { houseClock } from '$lib/stores/house-clock.svelte';
     import { showingRooms } from '$lib/stores/showing-rooms.svelte';
-    import { SITE_URL } from '$lib/site';
+    import { SITE_URL, ETSY_SHOP_URL } from '$lib/site';
     import { jsonLdSafe } from '$lib/jsonld';
     import {
         HOME_MAIN_BLOCK_IDS,
@@ -69,6 +69,8 @@
                     '@type': 'ImageObject',
                     url: `${SITE_URL}/favicon.png`,
                 },
+                // Тот же автор в других местах: поисковик сводит их в одну сущность.
+                sameAs: [ETSY_SHOP_URL],
             },
         ],
     }));
@@ -588,7 +590,7 @@
     <meta property="og:description" content={metaDescription} />
     <meta property="og:image" content={data.ogImage} />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content={SITE_URL} />
+    <meta property="og:url" content={`${SITE_URL}/`} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={metaTitle} />
     <meta name="twitter:image" content={data.ogImage} />

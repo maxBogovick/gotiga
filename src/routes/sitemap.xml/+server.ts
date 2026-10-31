@@ -2,6 +2,7 @@ import { api } from '$lib/api';
 import { SITE_URL, SITEMAP_STATIC_ROUTES, toAbsoluteUrl } from '$lib/site';
 import type { Figurine, FigurineListItem } from '$lib/types/api';
 import { LANGS, LANG_META } from '$lib/i18n';
+import { stripLang, withLang } from '$lib/i18n/path';
 
 // Prerendered to a static sitemap.xml in the web build (matches the Sitemap line in
 // robots.txt). The dev/SPA profile has no SEO surface, so it's excluded.
@@ -11,14 +12,15 @@ export const prerender = import.meta.env.VITE_BUILD_TARGET === 'web';
 // on purpose: it reads a ?source query param so it can't be prerendered, and listing
 // a JS-only shell here would point crawlers at a thin page. Acquisition is /acquire.
 
-/** Every public page answers in six languages through `?lang=`; the bare address
- *  is the default (`x-default`). One `xhtml:link` per language. */
-function alternates(loc: string): string {
-    const sep = loc.includes('?') ? '&' : '?';
+/** Каждая публичная страница есть на шести языках, у каждого языка свой адрес
+ *  (`/ru/…`, английский без приставки); `x-default` — английский. Ссылки
+ *  взаимные: каждая версия называет все шесть, включая себя. Адреса с `?lang=`
+ *  сюда не идут: у них тот же HTML и canonical на английскую страницу. */
+function alternates(path: string): string {
     const links = LANGS.map(
-        (l) => `<xhtml:link rel="alternate" hreflang="${LANG_META[l].locale.split('-')[0]}" href="${xmlEscape(`${loc}${sep}lang=${l}`)}"/>`,
+        (l) => `<xhtml:link rel="alternate" hreflang="${LANG_META[l].locale.split('-')[0]}" href="${xmlEscape(`${SITE_URL}${withLang(path, l)}`)}"/>`,
     );
-    links.push(`<xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(loc)}"/>`);
+    links.push(`<xhtml:link rel="alternate" hreflang="x-default" href="${xmlEscape(`${SITE_URL}${stripLang(path)}`)}"/>`);
     return links.join('');
 }
 
@@ -134,14 +136,16 @@ export async function GET({ fetch }: { fetch: typeof globalThis.fetch }) {
         `<?xml version="1.0" encoding="UTF-8"?>\n` +
         `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n` +
         entries
-            .map(({ loc, lastmod, image, imageTitle, imageCaption }) => {
+            .flatMap((entry) => LANGS.map((l) => ({ ...entry, path: entry.loc.slice(SITE_URL.length) || '/', l })))
+            .map(({ loc, lastmod, image, imageTitle, imageCaption, path, l }) => {
                 const imageXml = image
                     ? `<image:image><image:loc>${xmlEscape(image)}</image:loc>` +
                       (imageTitle ? `<image:title>${xmlEscape(imageTitle)}</image:title>` : '') +
                       (imageCaption ? `<image:caption>${xmlEscape(imageCaption)}</image:caption>` : '') +
                       `</image:image>`
                     : '';
-                return `  <url><loc>${xmlEscape(loc)}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}${alternates(loc)}${imageXml}</url>`;
+                const here = `${SITE_URL}${withLang(path, l)}`;
+                return `  <url><loc>${xmlEscape(here)}</loc>${lastmod ? `<lastmod>${lastmod}</lastmod>` : ''}${alternates(path)}${imageXml}</url>`;
             })
             .join('\n') +
         `\n</urlset>\n`;

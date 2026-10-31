@@ -17,6 +17,10 @@ const VAPID_KEY: &str = "push_vapid";
 /// Ключ настройки: «когда рассылку подключили». Всё, что уже стоит на сайте, к этому дню
 /// отмечается ушедшим: иначе первая же подписка получила бы архив.
 const PUSH_SINCE_KEY: &str = "push_since";
+/// Ключ настройки: «когда подключили тему «Игра»». Карты и битвы, что к этому дню уже на
+/// сайте, отмечаются ушедшими под своим ключом: `push_since` старше темы, и без второго
+/// ключа первый же проход после выкладки разослал бы подписавшимся на игру всю полку.
+const PUSH_GAME_SINCE_KEY: &str = "push_game_since";
 /// Выдержка: работу показывают и ещё правят, а уведомление не поправить.
 const PUSH_GRACE_SECS: i64 = 600;
 /// Вещей за проход: три уведомления подряд — это уже поток.
@@ -37,7 +41,7 @@ const PUSH_PARALLEL: usize = 16;
 const PUSH_LEAD_CHARS: usize = 140;
 
 /// Темы, о которых просят: ровно те, что в `CHECK` таблицы.
-const TOPICS: [&str; 3] = ["works", "tales", "gazette"];
+const TOPICS: [&str; 4] = ["works", "tales", "gazette", "game"];
 
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
@@ -56,8 +60,7 @@ fn topic_of(group: crate::channel::Group) -> Option<&'static str> {
         Group::Works => Some("works"),
         Group::Tales => Some("tales"),
         Group::Other => Some("gazette"),
-        // Игра в уведомлениях не обещана: о ней канал и пост о релизе.
-        Group::Game => None,
+        Group::Game => Some("game"),
     }
 }
 
@@ -233,7 +236,8 @@ impl AppService {
                 .map(|((_, id), _)| *id)
                 .collect()
         };
-        let kinds = ["work", "leaf"];
+        let kinds = ["work", "leaf", "card", "etude"];
+        let game_kinds = ["card", "etude"];
 
         // Первый проход после подключения: всё, что уже на сайте, считается ушедшим.
         if self.repo.get_setting(PUSH_SINCE_KEY).await?.is_none() {
@@ -241,12 +245,27 @@ impl AppService {
             for kind in kinds {
                 n += self.repo.push_note_seen(kind, &ids_of(kind), true).await?;
             }
-            self.repo.upsert_setting(PUSH_SINCE_KEY, &Utc::now().to_rfc3339()).await?;
+            let now = Utc::now().to_rfc3339();
+            self.repo.upsert_setting(PUSH_SINCE_KEY, &now).await?;
+            self.repo.upsert_setting(PUSH_GAME_SINCE_KEY, &now).await?;
             tracing::info!(
                 "Push notifications connected: {n} works and leaves already on the site are left \
                  unannounced; everything that appears from now on goes out"
             );
             return Ok(0);
+        }
+        // Рассылка работала до темы «Игра»: карты и битвы, уже стоящие на сайте, — не новость.
+        // Отметка стоит до общего обхода ниже, иначе он завёл бы их как ждущие отправки.
+        if self.repo.get_setting(PUSH_GAME_SINCE_KEY).await?.is_none() {
+            let mut n = 0;
+            for kind in game_kinds {
+                n += self.repo.push_note_seen(kind, &ids_of(kind), true).await?;
+            }
+            self.repo.upsert_setting(PUSH_GAME_SINCE_KEY, &Utc::now().to_rfc3339()).await?;
+            tracing::info!(
+                "Push topic “game” connected: {n} cards and battles already on the site are left \
+                 unannounced; everything that appears from now on goes out"
+            );
         }
         for kind in kinds {
             self.repo.push_note_seen(kind, &ids_of(kind), false).await?;
@@ -521,9 +540,9 @@ mod tests {
     #[test]
     fn choice_comes_from_the_request_or_the_previous_record() {
         // Из запроса; чужая тема отбрасывается, порядок — как в таблице.
-        let (lang, got) = resolve_choice(&topics(&["gazette", "games", "works"]), "ru", None).unwrap();
+        let (lang, got) = resolve_choice(&topics(&["game", "gazette", "games", "works"]), "ru", None).unwrap();
         assert_eq!(lang, Lang::Ru);
-        assert_eq!(got, topics(&["works", "gazette"]));
+        assert_eq!(got, topics(&["works", "gazette", "game"]));
         // Смена подписки: запрос пуст, берётся прежняя запись.
         let prior = Some(("de".to_string(), topics(&["tales"])));
         let (lang, got) = resolve_choice(&[], "", prior.clone()).unwrap();
@@ -539,11 +558,15 @@ mod tests {
     }
 
     #[test]
-    fn game_things_are_not_announced() {
+    fn every_group_has_a_topic() {
         use crate::channel::Group;
         assert_eq!(topic_of(Group::Works), Some("works"));
         assert_eq!(topic_of(Group::Tales), Some("tales"));
         assert_eq!(topic_of(Group::Other), Some("gazette"));
-        assert_eq!(topic_of(Group::Game), None);
+        assert_eq!(topic_of(Group::Game), Some("game"));
+        // Каждая тема, в которую ведёт `topic_of`, есть в списке допустимых.
+        for group in [Group::Works, Group::Tales, Group::Other, Group::Game] {
+            assert!(TOPICS.contains(&topic_of(group).unwrap()));
+        }
     }
 }

@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+  import { stripLang } from '$lib/i18n/path';
   import { figurineNameIn } from '$lib/workText';
   // Поиск в шапке. Два вида одного и того же:
   //   · `field` — строка с лупой в верхней строке шапки на компьютере; лист
@@ -330,13 +331,13 @@
 
   // Пустое поле: несколько вопросов автору и самая свежая небылица. Входы в
   // разделы здесь не повторяются: они стоят в шапке над полем.
-  let onPage = $derived(kit ? kit.hasPageContext({ path: page.url.pathname, card: page.url.searchParams.get('card') }) : false);
+  let onPage = $derived(kit ? kit.hasPageContext({ path: stripLang(page.url.pathname), card: page.url.searchParams.get('card') }) : false);
   // Что в пустом поле: первым делом вопросы про страницу, на которой человек стоит
   // (каталог отмечает их сам), затем темы и «все вопросы». Нет вопросов страницы
   // или список не пришёл — прежние четыре.
   let startMode = $state<'home' | 'all' | AskTopic>('home');
   let pageQuestions = $derived.by(() => {
-    const here = pageKeyOf(page.url.pathname);
+    const here = pageKeyOf(stripLang(page.url.pathname));
     return here ? forPage(askList, here, 3) : [];
   });
   let homeQuestions = $derived(

@@ -15,6 +15,9 @@
   // (`html.gt-lang` в app.css, переход видов браузера). Там, где перехода
   // нет, и при `prefers-reduced-motion` язык меняется сразу, без всего этого.
   import { tick } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
+  import { isLocalizedPath, stripLang, withLang } from '$lib/i18n/path';
   import { lang, loadLang, t, LANGS, LANG_META, type Lang } from '$lib/i18n';
 
   let {
@@ -41,6 +44,17 @@
     startViewTransition(cb: () => void | Promise<void>): { finished: Promise<void> };
   };
 
+  /** Страница, у которой есть версия на каждом языке, переходит на адрес с приставкой
+   *  выбранного языка (`/ru/…`): так читатель делится ссылкой на своём языке, а
+   *  поисковик находит эту версию по адресу. Остальные страницы остаются на месте. */
+  function followInAddress(next: Lang) {
+    const here = page.url.pathname;
+    if (!isLocalizedPath(stripLang(here))) return;
+    const target = withLang(here, next);
+    if (target === here) return;
+    void goto(`${target}${page.url.search}${page.url.hash}`, { replaceState: true, noScroll: true, keepFocus: true });
+  }
+
   async function choose(next: Lang, origin: HTMLElement | null) {
     open = false;
     if (next === $lang) {
@@ -55,6 +69,7 @@
     await loadLang(next);
     if (reduce || !canMorph || !origin) {
       lang.set(next);
+      followInAddress(next);
       trigger?.focus();
       return;
     }
@@ -71,6 +86,7 @@
       lang.set(next);
       await tick();
     });
+    followInAddress(next);
     run.finished.finally(() => {
       html.classList.remove('gt-lang');
     });

@@ -7,10 +7,11 @@
   import { pwa, PUSH_TOPICS } from '$lib/stores/pwa.svelte';
   import type { PushTopic } from '$lib/types/api';
 
-  const LABEL: Record<PushTopic, 'pwaTopicWorks' | 'pwaTopicTales' | 'pwaTopicGazette'> = {
+  const LABEL: Record<PushTopic, 'pwaTopicWorks' | 'pwaTopicTales' | 'pwaTopicGazette' | 'pwaTopicGame'> = {
     works: 'pwaTopicWorks',
     tales: 'pwaTopicTales',
     gazette: 'pwaTopicGazette',
+    game: 'pwaTopicGame',
   };
 
   let { id = 'push' }: { id?: string } = $props();

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { stripLang } from '$lib/i18n/path';
   import { onMount } from 'svelte';
   import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
@@ -414,7 +415,7 @@
   const FILTER_KEY  = 'figurines-filters';
 
   beforeNavigate(({ to }) => {
-    if (to?.url.pathname.startsWith('/figurines/')) {
+    if (stripLang(to?.url.pathname ?? '').startsWith('/figurines/')) {
       sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
       sessionStorage.setItem(FILTER_KEY, JSON.stringify({
         searchQuery, mainFilter, sortMode,

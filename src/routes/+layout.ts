@@ -6,4 +6,16 @@
 //     is what the app is written against (stores read localStorage at init).
 // Driving both the layout `ssr` and each public page's `prerender` from the same flag
 // avoids relying on a child re-enabling SSR after a parent disabled it.
+import { loadLang } from '$lib/i18n';
+import { langFromPath } from '$lib/i18n/path';
+
 export const ssr = import.meta.env.VITE_BUILD_TARGET === 'web';
+
+// Язык страницы называет её адрес (`/ru/…`). Словарь приезжает до отрисовки и до
+// гидрации: иначе страница на русском в браузере сначала нарисовалась бы
+// английским словарём и не совпала бы с готовым HTML.
+export const load = async ({ url }: { url: URL }) => {
+  const lang = langFromPath(url.pathname);
+  await loadLang(lang);
+  return { lang };
+};

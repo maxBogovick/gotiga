@@ -2,6 +2,11 @@ User-agent: *
 Allow: /
 Disallow: /admin
 Disallow: /api/
+# The pages fetch their data from /api/v1 while rendering; Googlebot obeys robots.txt
+# for those requests, so without this the page renders as "archive could not be reached".
+# The longer rule wins, so the admin API stays closed.
+Allow: /api/v1/
+Disallow: /api/v1/admin
 # Personal cancel tokens for gazette watch letters — not a public page.
 Disallow: /gazette/watch/
 

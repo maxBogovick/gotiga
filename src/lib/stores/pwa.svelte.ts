@@ -11,7 +11,7 @@ import type { PushTopic } from '$lib/types/api';
 //
 // Сам Service Worker — `src/pwa/sw.js`; здесь только то, что нужно странице.
 
-export const PUSH_TOPICS: readonly PushTopic[] = ['works', 'tales', 'gazette'];
+export const PUSH_TOPICS: readonly PushTopic[] = ['works', 'tales', 'gazette', 'game'];
 
 /** Событие Chrome/Edge/Android: браузер готов показать собственный диалог установки. */
 interface InstallPrompt extends Event {

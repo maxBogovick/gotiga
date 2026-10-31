@@ -220,9 +220,12 @@
   // captures the long-tail query ("handmade miniature sculpture") where an unknown
   // brand can actually surface. Invisible on the page — only the browser tab, Google
   // snippet and share previews consume it.
-  const SEO_DESCRIPTOR = 'Handmade Miniature Sculpture';
+  // Два экземпляра с одним названием различаются только номером в адресе
+  // (`…-gnome`, `…-gnome-2`): без него у них одинаковый заголовок, и поисковик
+  // выбирает один из двух, а второй считает повтором. Обход боевого sitemap нашёл три такие пары.
+  let copyNumber = $derived(/-(\d{1,2})$/.exec(data.canonicalPath ?? '')?.[1] ?? null);
   let seoTitle = $derived(
-    `${figurine?.name ?? $t('zoneShowcase')} — ${SEO_DESCRIPTOR} | ${$brandName}`
+    `${figurine?.name ?? $t('zoneShowcase')}${copyNumber ? ` #${copyNumber}` : ''} — ${$t('figurineSeoDescriptor')} | ${$brandName}`
   );
 </script>
 

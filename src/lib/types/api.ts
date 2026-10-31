@@ -1949,8 +1949,8 @@ export interface SubscriptionCreatedResponse {
     alreadySubscribed: boolean;
 }
 
-/** О чём присылать уведомления: новые работы, небылицы, листы вестника. */
-export type PushTopic = 'works' | 'tales' | 'gazette';
+/** О чём присылать уведомления: новые работы, небылицы, листы вестника, карты и битвы. */
+export type PushTopic = 'works' | 'tales' | 'gazette' | 'game';
 
 export interface PushSubscribeRequest {
     endpoint: string;

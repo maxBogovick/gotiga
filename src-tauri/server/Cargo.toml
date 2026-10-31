@@ -67,3 +67,13 @@ rust-stemmers = "1.2.0"
 [dev-dependencies]
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate", "macros"] }
 reqwest = { version = "0.11", features = ["json", "rustls-tls", "multipart"], default-features = false }
+
+# Отладочная сборка на macOS по умолчанию оставляет в target/debug/deps все
+# промежуточные `.o` (сотни тысяч файлов). Строки кода для бэктрейсов остаются,
+# полная отладочная информация нужна только зависимостям при отладчике — выключена.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
+[profile.dev.package."*"]
+debug = false

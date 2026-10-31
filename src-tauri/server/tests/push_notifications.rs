@@ -101,6 +101,36 @@ async fn seed_work(pool: &PgPool, name: &str, visible: bool) -> Uuid {
     .expect("завести работу")
 }
 
+async fn seed_card(pool: &PgPool, slug: &str) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO battle_cards (slug, status, tier, title_en, title_ru, cost, power, health, price_dust)
+         VALUES ($1, 'published', 1, 'Ghost', 'Призрак', 1, 2, 2, 10) RETURNING id",
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await
+    .expect("завести карту")
+}
+
+async fn seed_battle(pool: &PgPool, slug: &str) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO battle_challenges (slug, title_en, title_ru, setup, status)
+         VALUES ($1, 'Gate', 'Ворота', '{}', 'published') RETURNING id",
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await
+    .expect("завести битву")
+}
+
+async fn setting(pool: &PgPool, key: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT value FROM settings WHERE key = $1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .expect("настройка")
+}
+
 /// Состояние строки журнала: ушла ли вещь и сколько раз пытались.
 async fn ledger(pool: &PgPool, id: Uuid) -> Option<(bool, i32)> {
     sqlx::query_as("SELECT sent_at IS NOT NULL, attempts FROM push_posts WHERE target_id = $1")
@@ -289,4 +319,82 @@ async fn failed_attempts_are_counted_in_the_ledger(pool: PgPool) {
     assert_eq!(repo.push_attempt("work", id).await.unwrap(), 1);
     assert_eq!(repo.push_attempt("work", id).await.unwrap(), 2);
     assert_eq!(ledger(&pool, id).await, Some((false, 2)));
+}
+
+/// Четвёртая тема «Игра» принимается как есть; подписка без неё её не получает.
+#[sqlx::test]
+async fn the_game_topic_is_accepted_and_never_added_by_itself(pool: PgPool) {
+    let svc = service(&pool);
+    let new = format!("{FCM}new");
+    svc.push_subscribe(request(&new, "en", &["works", "game"], None), "1.1.1.1")
+        .await
+        .expect("подписка с игрой");
+    assert_eq!(row(&pool, &new).await, Some(("en".into(), vec!["works".into(), "game".into()])));
+    // Старая подписка (до темы) остаётся при своих; обновление записи игры ей не добавляет.
+    let old = format!("{FCM}old");
+    svc.push_subscribe(request(&old, "de", &["works", "tales", "gazette"], None), "1.1.1.1")
+        .await
+        .unwrap();
+    svc.push_subscribe(request(&old, "de", &["works", "tales", "gazette"], None), "1.1.1.1")
+        .await
+        .unwrap();
+    assert_eq!(
+        row(&pool, &old).await,
+        Some(("de".into(), vec!["works".into(), "tales".into(), "gazette".into()]))
+    );
+}
+
+/// Рассылка работала до темы «Игра»: карты и битвы, уже стоящие на сайте, не уходят;
+/// новая карта и новая битва — уходят, и только после выдержки.
+#[sqlx::test]
+async fn cards_and_battles_already_on_the_site_are_not_announced(pool: PgPool) {
+    let svc = service(&pool);
+    // Рассылка уже подключена до выкладки темы: ключ игры ещё не стоит.
+    let work = seed_work(&pool, "Старый страж", true).await;
+    svc.announce_news().await.expect("подключение");
+    sqlx::query("DELETE FROM settings WHERE key = 'push_game_since'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ledger(&pool, work).await, Some((true, 0)));
+
+    let old_card = seed_card(&pool, "staraya").await;
+    let old_battle = seed_battle(&pool, "staraya-bitva").await;
+    svc.push_subscribe(request(&format!("{FCM}reader"), "ru", &["game"], None), "1.1.1.1")
+        .await
+        .unwrap();
+
+    // Первый проход с темой: старое отмечено ушедшим, ключ поставлен.
+    assert_eq!(svc.announce_news().await.expect("тик"), (0, 0));
+    assert_eq!(ledger(&pool, old_card).await, Some((true, 0)), "старая карта");
+    assert_eq!(ledger(&pool, old_battle).await, Some((true, 0)), "старая битва");
+    assert!(setting(&pool, "push_game_since").await.is_some());
+
+    // Новое замечается и ждёт выдержку, затем уходит.
+    let new_card = seed_card(&pool, "novaya").await;
+    let new_battle = seed_battle(&pool, "novaya-bitva").await;
+    svc.announce_news().await.expect("тик");
+    assert_eq!(ledger(&pool, new_card).await, Some((false, 0)));
+    assert_eq!(ledger(&pool, new_battle).await, Some((false, 0)));
+    age(&pool, new_card, 1).await;
+    age(&pool, new_battle, 1).await;
+    svc.announce_news().await.expect("тик");
+    assert_eq!(ledger(&pool, new_card).await, Some((true, 0)));
+    assert_eq!(ledger(&pool, new_battle).await, Some((true, 0)));
+}
+
+/// Игру получают только подписанные на неё: подписчик без темы «Игра» вещь не задерживает
+/// и не получает, а вещь отмечается ушедшей.
+#[sqlx::test]
+async fn a_card_goes_only_to_the_game_topic(pool: PgPool) {
+    let svc = service(&pool);
+    svc.announce_news().await.expect("подключение");
+    svc.push_subscribe(request(&format!("{FCM}works"), "en", &["works"], None), "1.1.1.1")
+        .await
+        .unwrap();
+    let card = seed_card(&pool, "tolko-igre").await;
+    svc.announce_news().await.expect("тик");
+    age(&pool, card, 1).await;
+    svc.announce_news().await.expect("тик");
+    assert_eq!(ledger(&pool, card).await, Some((true, 0)), "получателей нет, вещь закрыта");
 }

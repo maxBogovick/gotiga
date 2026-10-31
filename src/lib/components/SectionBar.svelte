@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { stripLang } from '$lib/i18n/path';
   // Нижняя панель разделов — только на телефоне и планшете (до 1024 px, как и
   // переключение шапки). Заменяет гамбургер: разделы всегда на виду и под большим
   // пальцем. На компьютере меню остаётся в шапке, и панель скрыта стилем.
@@ -19,7 +20,7 @@
   import PwaInstallButton from '$lib/components/pwa/PwaInstallButton.svelte';
   import PushSettings from '$lib/components/pwa/PushSettings.svelte';
 
-  let pathname = $derived(page.url.pathname);
+  let pathname = $derived(stripLang(page.url.pathname));
 
   const MORE = [
     { href: '/studio', key: 'navStudio' },

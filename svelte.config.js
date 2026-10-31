@@ -4,6 +4,7 @@
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 import adapter from "@sveltejs/adapter-static";
 import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+import { langEntries } from "./scripts/lang-entries.mjs";
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -23,6 +24,8 @@ const config = {
       // prerendered. Crawling is off so the prerenderer never wanders into SPA-only
       // routes (admin, profile, the /admin link in the header, etc.).
       crawl: false,
+      // Страницы на языках (`/ru/…`): ссылки сборка не обходит, адреса называются здесь.
+      entries: ["*", ...(await langEntries())],
       // An empty catalog (entries() → []) must not fail the build. A genuinely
       // unreachable API still fails loudly because entries() itself throws.
       handleUnseenRoutes: 'ignore',

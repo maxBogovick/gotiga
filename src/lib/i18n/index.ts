@@ -1,6 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { en, type TranslationKey as PublicKey } from './en';
 import type { AdminTranslationKey } from './en.admin';
+import { langFromPath } from './path';
 
 export const LANGS = ['en', 'ru', 'uk', 'es', 'de', 'it'] as const;
 export type Lang = (typeof LANGS)[number];
@@ -95,6 +96,11 @@ function browserLang(): Lang | null {
 
 /** What the reader chose themselves: an explicit `?lang=` or the switcher. */
 function chosenLang(): Lang | null {
+	// Приставка в адресе (`/ru/…`) — самый явный выбор: читатель пришёл по ссылке на этом языке.
+	try {
+		const fromPath = langFromPath(window.location.pathname);
+		if (fromPath !== 'en' && isLang(fromPath)) return fromPath;
+	} catch { /* an unreadable address is not a reason to fail */ }
 	try {
 		const asked = new URLSearchParams(window.location.search).get('lang');
 		if (isLang(asked)) return asked;
