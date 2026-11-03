@@ -5484,3 +5484,68 @@ export interface AdminChannelOverview {
     channels: AdminChannelInfo[];
     release: AdminRelease | null;
 }
+
+/** Подпись фото, которой не хватает на каких-то языках (вкладка «Переводы»). */
+export interface TranslationImageTask {
+    id: string;
+    /** Английская подпись. */
+    altText: string;
+    langs: string[];
+}
+
+/** Работа, у которой на выбранных языках не хватает текстов. */
+export interface TranslationTask {
+    id: string;
+    name: string;
+    slug: string | null;
+    /** Английский текст, только поля, которых не хватает хотя бы на одном языке. */
+    source: Record<string, string>;
+    /** Язык → поля, которые надо перевести. */
+    need: Record<string, string[]>;
+    images: TranslationImageTask[];
+}
+
+export interface MissingTranslations {
+    total: number;
+    items: TranslationTask[];
+}
+
+/** Одна запись вставки: работа + язык + переведённые поля (+ подписи фото). */
+export interface TranslationImportItem {
+    id: string;
+    lang: string;
+    alts?: Record<string, string>;
+    [field: string]: unknown;
+}
+
+export interface TranslationImportReport {
+    saved: number;
+    skipped: number;
+    alts: number;
+    errors: string[];
+}
+
+/** Раздел вкладки «Переводы», кроме работ: сколько записей без перевода. */
+export interface TranslationSectionCount {
+    id: string;
+    missing: number;
+}
+
+/** Запись раздела, которой не хватает текстов (байка, карта, правка текста сайта…). */
+export interface SectionTask {
+    /** `{часть}:{ключ}`; по нему вставка находит запись. */
+    id: string;
+    part: string;
+    name: string;
+    /** Поле → язык → текст. */
+    source: Record<string, Record<string, string>>;
+    /** Язык → поля, которые надо перевести. */
+    need: Record<string, string[]>;
+    /** Поле → предел длины в знаках. */
+    limits: Record<string, number>;
+}
+
+export interface SectionMissing {
+    total: number;
+    items: SectionTask[];
+}

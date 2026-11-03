@@ -65,17 +65,28 @@ async function convert(htmlPath) {
 	}
 }
 
-async function walk(dir) {
+// Collect paths first, then convert a few at a time. Converting every page at once
+// (Promise.all over ~900 files) held each page's HTML and parsed tree in memory
+// simultaneously and hit Node's default heap limit in the Docker build.
+async function collect(dir, out) {
 	const entries = await readdir(dir, { withFileTypes: true });
-	await Promise.all(
-		entries.map((entry) => {
-			const full = join(dir, entry.name);
-			if (entry.isDirectory()) return walk(full);
-			if (entry.isFile() && extname(entry.name) === '.html' && !SKIP_FILES.has(entry.name)) {
-				return convert(full);
-			}
-		})
-	);
+	for (const entry of entries) {
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) await collect(full, out);
+		else if (entry.isFile() && extname(entry.name) === '.html' && !SKIP_FILES.has(entry.name)) {
+			out.push(full);
+		}
+	}
+}
+
+async function walk(dir) {
+	const files = [];
+	await collect(dir, files);
+	let next = 0;
+	const worker = async () => {
+		while (next < files.length) await convert(files[next++]);
+	};
+	await Promise.all(Array.from({ length: 8 }, worker));
 }
 
 console.log(`→ generating markdown twins under ${BUILD_DIR}/`);

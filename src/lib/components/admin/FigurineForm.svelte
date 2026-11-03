@@ -1249,7 +1249,7 @@
 
         <HomePlacement {figurine} {figurines} />
 
-        <SimilarPicker selfId={figurine.id} {figurines} bind:value={figurine.similarIds} />
+        <SimilarPicker selfId={figurine.id} {figurines} bind:value={() => figurine.similarIds ?? [], (v) => (figurine.similarIds = v)} />
 
         <label class="block">
             <span class="label">{$t('adminFieldEtsyUrl')}</span>
@@ -1333,7 +1333,7 @@
     {:else if activeFormTab === 'catalog'}
     <div class="p-8 max-w-4xl" in:fade={{ duration: 120 }}>
         {#key figurine.id}
-            <CatalogListsEditor bind:value={figurine.catalogLists as (string | null)} {figurine} />
+            <CatalogListsEditor bind:value={() => (figurine.catalogLists as string | null) ?? null, (v) => (figurine.catalogLists = v as any)} {figurine} />
         {/key}
     </div>
 
@@ -1356,7 +1356,7 @@
         <!-- Display config -->
         <div>
             <span class="label">{$t('adminDisplayConfig')}</span>
-            <DisplayConfigEditor bind:value={figurine.displayConfig as (string | null)} />
+            <DisplayConfigEditor bind:value={() => (figurine.displayConfig as string | null) ?? null, (v) => (figurine.displayConfig = v as any)} />
         </div>
 
         <!-- Showing window -->

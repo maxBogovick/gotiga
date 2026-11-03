@@ -10,6 +10,8 @@ declare global {
 			arrange?: string;
 			/** Расстановка открыта из «ещё раз»: бой начнётся заново. */
 			arrangeFresh?: boolean;
+			/** Открыт просмотр этой работы в архиве (`/figurines`), без перехода на её страницу. */
+			peek?: string;
 		}
 		// interface Platform {}
 

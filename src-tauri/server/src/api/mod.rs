@@ -318,6 +318,36 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 ),
             )
             .route(
+                "/admin/translations/missing",
+                get(handlers::admin_missing_translations).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/translations/sections",
+                get(handlers::admin_translation_sections).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/translations/sections/import",
+                post(handlers::admin_import_section).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/translations/sections/:section/missing",
+                get(handlers::admin_missing_section).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
+                "/admin/translations/import",
+                post(handlers::admin_import_translations).route_layer(
+                    middleware::from_fn_with_state(config.clone(), auth_middleware),
+                ),
+            )
+            .route(
                 "/admin/figurines/:id/caption",
                 get(handlers::admin_get_figurine_caption)
                     .put(handlers::admin_set_figurine_caption)

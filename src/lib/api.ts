@@ -2,6 +2,11 @@
 import { formOutcome, reportApiFailure } from '$lib/analytics';
 import type {
     FigurineListItem,
+    MissingTranslations,
+    SectionMissing,
+    TranslationSectionCount,
+    TranslationImportItem,
+    TranslationImportReport,
     Figurine,
     AuthorText,
     WorkshopItem,
@@ -1133,6 +1138,42 @@ export const api = {
             headers: authHeaders(),
         });
         return res?.caption ?? null;
+    },
+
+    /** Admin: works that lack texts or photo captions on the given languages. */
+    async getMissingTranslations(langs: string[], limit: number, skip = 0): Promise<MissingTranslations> {
+        const q = new URLSearchParams({ langs: langs.join(','), limit: String(limit), skip: String(skip) });
+        return webFetch<MissingTranslations>(`/admin/translations/missing?${q}`, { headers: authHeaders() });
+    },
+
+    /** Admin: per section, how many records lack a translation on the given languages. */
+    async getTranslationSections(langs: string[]): Promise<TranslationSectionCount[]> {
+        const q = new URLSearchParams({ langs: langs.join(',') });
+        return webFetch<TranslationSectionCount[]>(`/admin/translations/sections?${q}`, { headers: authHeaders() });
+    },
+
+    /** Admin: records of one section (tales, cards, site…) that lack texts on the given languages. */
+    async getMissingSection(section: string, langs: string[], limit: number, skip = 0): Promise<SectionMissing> {
+        const q = new URLSearchParams({ langs: langs.join(','), limit: String(limit), skip: String(skip) });
+        return webFetch<SectionMissing>(`/admin/translations/sections/${section}/missing?${q}`, { headers: authHeaders() });
+    },
+
+    /** Admin: save translations of one section's records at once. */
+    async importSection(section: string, items: TranslationImportItem[], overwrite: boolean): Promise<TranslationImportReport> {
+        return webFetch<TranslationImportReport>('/admin/translations/sections/import', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ section, items, overwrite }),
+        });
+    },
+
+    /** Admin: save translations of many works at once (fills only the empty unless `overwrite`). */
+    async importTranslations(items: TranslationImportItem[], overwrite: boolean): Promise<TranslationImportReport> {
+        return webFetch<TranslationImportReport>('/admin/translations/import', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items, overwrite }),
+        });
     },
 
     /** Admin: set (blank clears) a work's backstage visual caption; re-embeds it. */

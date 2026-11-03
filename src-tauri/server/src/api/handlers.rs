@@ -1222,6 +1222,70 @@ pub async fn admin_readiness(
     Ok(Json(service.admin_readiness().await?))
 }
 
+#[derive(serde::Deserialize)]
+pub struct MissingTranslationsQuery {
+    /// Языки через запятую: `es,de,it`.
+    pub langs: String,
+    pub limit: Option<usize>,
+    pub skip: Option<usize>,
+}
+
+/// Admin: работы, у которых на выбранных языках не хватает текстов или подписей фото.
+pub async fn admin_missing_translations(
+    State(service): State<AppService>,
+    Query(q): Query<MissingTranslationsQuery>,
+) -> Result<Json<crate::services::MissingTranslations>> {
+    let langs: Vec<String> = q.langs.split(',').map(str::to_string).collect();
+    Ok(Json(service.missing_translations(&langs, q.limit, q.skip).await?))
+}
+
+#[derive(serde::Deserialize)]
+pub struct TranslationSectionsQuery {
+    pub langs: String,
+}
+
+/// Admin: сколько записей каждого раздела вкладки «Переводы» без перевода.
+pub async fn admin_translation_sections(
+    State(service): State<AppService>,
+    Query(q): Query<TranslationSectionsQuery>,
+) -> Result<Json<Vec<crate::services::TranslationSectionCount>>> {
+    let langs: Vec<String> = q.langs.split(',').map(str::to_string).collect();
+    Ok(Json(service.translation_section_counts(&langs).await?))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SectionMissingQuery {
+    pub langs: String,
+    pub limit: Option<usize>,
+    pub skip: Option<usize>,
+}
+
+/// Admin: записи раздела, которым не хватает текстов на выбранных языках.
+pub async fn admin_missing_section(
+    State(service): State<AppService>,
+    Path(section): Path<String>,
+    Query(q): Query<SectionMissingQuery>,
+) -> Result<Json<crate::services::SectionMissing>> {
+    let langs: Vec<String> = q.langs.split(',').map(str::to_string).collect();
+    Ok(Json(service.missing_section(&section, &langs, q.limit, q.skip).await?))
+}
+
+/// Admin: сохранить переводы записей раздела разом.
+pub async fn admin_import_section(
+    State(service): State<AppService>,
+    Json(body): Json<crate::services::SectionImport>,
+) -> Result<Json<crate::services::TranslationImportReport>> {
+    Ok(Json(service.import_section(body).await?))
+}
+
+/// Admin: сохранить переводы многих работ разом.
+pub async fn admin_import_translations(
+    State(service): State<AppService>,
+    Json(body): Json<crate::services::TranslationImport>,
+) -> Result<Json<crate::services::TranslationImportReport>> {
+    Ok(Json(service.import_translations(body).await?))
+}
+
 /// Admin: read a work's backstage visual caption (search-only; never public).
 pub async fn admin_get_figurine_caption(
     State(service): State<AppService>,

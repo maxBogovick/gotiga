@@ -33,3 +33,8 @@ live_drop/
 src-tauri/server/test_uploads**
 # окружение утилиты вырезания фигурок (ставится само при первом запуске)
 tools/cutout/.venv/
+python-lab/**
+docs/**
+design/**
+.claude/**
+c-lab/**

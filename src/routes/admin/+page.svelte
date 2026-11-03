@@ -50,6 +50,7 @@
     import FigurineForm from '$lib/components/admin/FigurineForm.svelte';
     import SlugsPanel from '$lib/components/admin/SlugsPanel.svelte';
     import SearchCaptionPanel from '$lib/components/admin/SearchCaptionPanel.svelte';
+    import TranslationsPanel from '$lib/components/admin/TranslationsPanel.svelte';
     import ShowingRoomsPanel from '$lib/components/admin/ShowingRoomsPanel.svelte';
     import ReadinessPanel from '$lib/components/admin/ReadinessPanel.svelte';
     import { adminReadiness, workGapText, workGapHint } from '$lib/stores/admin-readiness.svelte';
@@ -127,6 +128,7 @@
                 ['todo',      'adminTabTodo'],
                 ['slugs',     'adminTabSlugs'],
                 ['captions',  'adminTabCaptions'],
+                ['translations', 'adminTabTranslations'],
                 ['media',     'adminTabMedia'],
                 ['rooms',     'adminTabShowingRooms'],
                 ['showings',  'adminTabShowings'],
@@ -1051,6 +1053,8 @@
 
         {:else if activeTab === 'captions'}
             <SearchCaptionPanel {figurines} onMessage={showMessage} />
+        {:else if activeTab === 'translations'}
+            <TranslationsPanel onMessage={showMessage} />
 
         {:else if activeTab === 'rooms'}
             <ShowingRoomsPanel rooms={showingRoomsList} onReload={loadShowingRooms} />

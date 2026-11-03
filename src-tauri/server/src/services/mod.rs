@@ -25,6 +25,10 @@ mod oauth_login;
 mod push;
 mod release;
 mod readiness;
+mod translations;
+mod translations_parts;
+pub use translations_parts::{SectionImport, SectionMissing, TranslationSectionCount};
+pub use translations::{MissingTranslations, TranslationImport, TranslationImportReport};
 pub use insights::{BattleReport, BehaviourReport, HealthReport, PipelineHealth};
 pub use jobs::JobStatus;
 

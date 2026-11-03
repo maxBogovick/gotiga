@@ -1,17 +1,18 @@
 <script lang="ts">
   import { stripLang } from '$lib/i18n/path';
-  import { onMount } from 'svelte';
-  import { beforeNavigate, afterNavigate, invalidateAll, goto } from '$app/navigation';
+  import { onMount, tick } from 'svelte';
+  import { beforeNavigate, afterNavigate, invalidateAll, goto, pushState, replaceState } from '$app/navigation';
   import { fade, slide } from 'svelte/transition';
   import { t, lang, brandName, LANG_META, quote } from '$lib/i18n';
   import { SITE_URL, toAbsoluteUrl } from '$lib/site';
   import { figurineHref } from '$lib/figurineHref';
   import { interact, observeWork } from '$lib/analytics';
   import { api } from '$lib/api';
+  import { loadFigurine } from '$lib/figurineFull';
   import AppImage from '$lib/components/AppImage.svelte';
   import SealedDoor from '$lib/components/SealedDoor.svelte';
-  import Lightbox from '$lib/components/Lightbox.svelte';
   import EtsyBuyDialog from '$lib/components/EtsyBuyDialog.svelte';
+  import FigurinePeek from '$lib/components/FigurinePeek.svelte';
   import FilterPopover from '$lib/components/FilterPopover.svelte';
   import { savedFigurines } from '$lib/stores/saved-figurines.svelte';
   import { houseClock } from '$lib/stores/house-clock.svelte';
@@ -129,6 +130,37 @@
 
   let visible = $derived(resultList.slice(0, displayLimit));
   let hasMore = $derived(resultList.length > displayLimit);
+
+  // Крупные плитки журнальной сетки: одна на каждые шесть показанных работ, то есть две на
+  // порцию из двенадцати, при любом фильтре и сортировке. В блоке сначала берётся новинка или
+  // «любимая» работа, иначе первая, у которой есть лицевое фото и открытая дверь.
+  let wideIds = $derived.by(() => {
+    const ids = new Set<string>();
+    for (let i = 0; i < visible.length; i += 6) {
+      const block = visible.slice(i, i + 6).filter((f) => !!f.faceImageUrl && !doorShut(f));
+      const pick = block.find((f) => f.houseFavorite || isNewArrival(f)) ?? block[0];
+      if (pick) ids.add(pick.id);
+    }
+    return ids;
+  });
+
+  // Ракурсы крупной плитки: полный список снимков берётся с сервера, пока он не
+  // пришёл, плитка показывает два снимка из списка.
+  let angleShots = $state<Record<string, { url: string; thumb: string }[]>>({});
+  $effect(() => {
+    for (const id of wideIds) {
+      if (angleShots[id]) continue;
+      void loadFigurine(id).then((f) => {
+        const imgs = f?.images ?? [];
+        if (imgs.length < 2) return;
+        const rank = (type: string) => (type === 'face' ? 0 : type === 'full' ? 1 : 2);
+        angleShots[id] = imgs
+          .slice()
+          .sort((a, b) => rank(a.imageType) - rank(b.imageType))
+          .map((i) => ({ url: i.url, thumb: i.thumbUrl ?? i.url }));
+      });
+    }
+  });
 
   let searchDebounce: ReturnType<typeof setTimeout> | undefined;
 
@@ -260,6 +292,20 @@
     availableSeries.map((s) => ({ value: s, label: s, count: countBy('series', s) }))
   );
 
+  // Серии обложками: три снимка стопкой и число работ. В наличии — наверху стопки.
+  let seriesCards = $derived(
+    seriesOptions.map((o) => {
+      const works = (figurines as FigItem[])
+        .filter((f) => f.series === o.value)
+        .sort((a, b) => Number(b.status === 'available') - Number(a.status === 'available'));
+      const thumbs = works
+        .map((f) => f.thumbUrl ?? f.faceImageUrl)
+        .filter((u): u is string => !!u)
+        .slice(0, 3);
+      return { value: o.value, count: o.count, thumbs };
+    }),
+  );
+
   // Secondary axes only exist if there is more than one value to choose between.
   let hasRefineAxes = $derived(
     availableYears.length > 0 || techniqueOptions.length > 0 ||
@@ -271,7 +317,9 @@
   );
   let refineOpen = $state(false);
   // Keep refinements visible whenever one is active (e.g. restored on back-nav).
-  $effect(() => { if (secondaryActive) refineOpen = true; });
+  $effect(() => {
+    if (secondaryActive || sortMode !== 'curated' || ['reserved', 'sold', 'saved', 'viewed'].includes(mainFilter)) refineOpen = true;
+  });
 
   // Значения техники, серии и материала — слова на языке читателя; после смены
   // языка прежнее слово ничего не нашло бы, поэтому эти три отбора снимаются.
@@ -294,20 +342,9 @@
     displayLimit += PAGE_SIZE;
   }
 
-  let countText = $derived(() => {
-    const total = (figurines as FigItem[]).length;
-    const shown = resultList.length;
-    if (total === 0) return $t('archiveEmpty');
-    if (keeperHits !== null || mainFilter !== 'all' || searchQuery.trim()) return `${shown} / ${toRoman(total)}`;
-    return toRoman(total);
-  });
-
-  function toRoman(num: number): string {
-    const lookup: Record<string, number> = {M:1000,CM:900,D:500,CD:400,C:100,XC:90,L:50,XL:40,X:10,IX:9,V:5,IV:4,I:1};
-    let roman = '', i;
-    for (i in lookup) { while (num >= lookup[i]) { roman += i; num -= lookup[i]; } }
-    return roman;
-  }
+  // Число найденных работ показывается только при отборе; весь архив назван на фишке «Все».
+  let isNarrowed = $derived(keeperHits !== null || mainFilter !== 'all' || !!searchQuery.trim() ||
+    yearFilter !== 'all' || techniqueFilter !== 'all' || seriesFilter !== 'all' || materialFilter !== 'all');
 
   function clearFilters() {
     searchQuery = ''; mainFilter = 'all'; sortMode = 'curated';
@@ -315,8 +352,81 @@
     keeperHits = null; keeperError = false; keeperSeq++;   // the query effect also clears it
   }
 
+  // ── Список работ для поисковика ──────────────────────────────────────────
+  // «Ещё 12» — кнопка, поэтому адреса работ с 13-й видны роботу только отсюда.
+  // Product здесь не годится: у работ нет цены на странице, а без неё разметка неполная.
+  const ldJson = (o: unknown) => JSON.stringify(o).replace(/</g, '\\u003c');
+  let archiveList = $derived({
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    numberOfItems: (figurines as FigItem[]).length,
+    itemListElement: (figurines as FigItem[])
+      .slice()
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      .map((f, i) => ({
+        '@type': 'ListItem',
+        position: i + 1,
+        name: f.name,
+        url: `${SITE_URL}${figurineHref(f)}`,
+        ...(f.faceImageUrl ? { image: toAbsoluteUrl(f.faceImageUrl) } : {}),
+      })),
+  });
+
+  // ── Отбор в адресе ──────────────────────────────────────────────────────
+  // Ссылку с отбором можно переслать: ?status, ?series, ?technique, ?material, ?year,
+  // ?sort, ?q и ?page (сколько порций показано). «Сохранённые» и «Просмотренные» —
+  // личные списки и в адрес не попадают.
+  const PUBLIC_STATUS = ['available', 'reserved', 'sold'];
+  const SORTS: SortMode[] = ['available', 'newest', 'oldest', 'name'];
+  const MAX_PAGES = 20;
+  let urlReady = $state(false);
+
+  function filterParams(pageNo: number): URLSearchParams {
+    const sp = new URLSearchParams();
+    const q = searchQuery.trim();
+    if (q) sp.set('q', q.slice(0, 80));
+    if (PUBLIC_STATUS.includes(mainFilter)) sp.set('status', mainFilter);
+    if (yearFilter !== 'all') sp.set('year', yearFilter);
+    if (techniqueFilter !== 'all') sp.set('technique', techniqueFilter);
+    if (seriesFilter !== 'all') sp.set('series', seriesFilter);
+    if (materialFilter !== 'all') sp.set('material', materialFilter);
+    if (sortMode !== 'curated') sp.set('sort', sortMode);
+    if (pageNo > 1) sp.set('page', String(pageNo));
+    return sp;
+  }
+
+  function readUrlFilters() {
+    const sp = page.url.searchParams;
+    searchQuery = sp.get('q') ?? '';
+    const status = sp.get('status');
+    if (status && PUBLIC_STATUS.includes(status)) mainFilter = status as MainFilter;
+    const year = sp.get('year');
+    if (year && availableYears.includes(Number(year))) yearFilter = year;
+    // Слова техники, серии и материала — на языке читателя; чужое слово ничего не найдёт.
+    const technique = sp.get('technique');
+    if (technique && availableTechniques.includes(technique)) techniqueFilter = technique;
+    const series = sp.get('series');
+    if (series && availableSeries.includes(series)) seriesFilter = series;
+    const material = sp.get('material');
+    if (material && availableMaterials.includes(material)) materialFilter = material;
+    const sort = sp.get('sort');
+    if (sort && (SORTS as string[]).includes(sort)) sortMode = sort as SortMode;
+  }
+
+  // Адрес следует за отбором; запись истории не добавляется.
+  $effect(() => {
+    if (!urlReady) return;
+    const sp = filterParams(Math.ceil(displayLimit / PAGE_SIZE));
+    const next = sp.toString();
+    if (next === page.url.searchParams.toString()) return;
+    const url = new URL(page.url);
+    url.search = next;
+    replaceState(url, page.state);
+  });
+
+  let nextHref = $derived('?' + filterParams(Math.ceil(displayLimit / PAGE_SIZE) + 1).toString());
+
   // ── Card actions ─────────────────────────────────────────────────────────
-  let lightboxFig = $state<FigurineListItem | null>(null);
   let buyFig = $state<FigurineListItem | null>(null);
   let shareCopiedId = $state('');
 
@@ -326,13 +436,18 @@
     showingRooms.load();
     // `page.url.searchParams` is forbidden during prerender — seed `?q=` only
     // in the browser, after the static archive HTML has been written.
-    searchQuery = page.url.searchParams.get('q') ?? '';
     // `?status=available` — ссылка «Смотреть работы в наличии» со страницы «Как приобрести».
-    if (page.url.searchParams.get('status') === 'available') mainFilter = 'available';
+    readUrlFilters();
     try {
       const viewed: string[] = JSON.parse(localStorage.getItem('gotiga_viewed') ?? '[]');
       viewedIds = new Set(viewed);
     } catch {}
+    // Отбор из адреса сбрасывает порцию до первой; число порций из адреса ставится после этого.
+    const pages = Math.min(Math.max(parseInt(page.url.searchParams.get('page') ?? '1', 10) || 1, 1), MAX_PAGES);
+    void tick().then(() => {
+      displayLimit = pages * PAGE_SIZE;
+      urlReady = true;
+    });
   });
 
   let justSavedId = $state('');
@@ -359,15 +474,29 @@
     try { localStorage.setItem('gotiga_viewed', JSON.stringify([...next])); } catch {}
   }
 
-  function openQuickView(e: MouseEvent, fig: FigurineListItem) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (fig.faceImageUrl) { lightboxFig = fig; markViewed(fig.id); }
+  // Нажатие на фото или название: панель просмотра; с Ctrl/⌘/Shift и средней кнопкой — обычная ссылка.
+  function onCardClick(e: MouseEvent, fig: FigurineListItem, i: number) {
+    if (doorShut(fig)) { e.preventDefault(); return; }
+    interact('work_click', `archive:${i + 1}`, i + 1, false);
+    if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      openPeek(fig);
+    } else markViewed(fig.id);
   }
 
-  async function handleShare(e: MouseEvent, fig: FigurineListItem) {
-    e.preventDefault();
-    e.stopPropagation();
+  // Точки под фото показывают, какой из двух снимков на экране (только там, где листают пальцем).
+  function slideDots(node: HTMLElement) {
+    const onScroll = () => {
+      const i = Math.round(node.scrollLeft / Math.max(node.clientWidth, 1));
+      node.parentElement?.setAttribute('data-i', String(i));
+    };
+    node.addEventListener('scroll', onScroll, { passive: true });
+    return { destroy() { node.removeEventListener('scroll', onScroll); } };
+  }
+
+  async function handleShare(e: Event | null, fig: FigurineListItem) {
+    e?.preventDefault();
+    e?.stopPropagation();
     const url = `${window.location.origin}${figurineHref(fig)}`;
     try {
       if (navigator.share) {
@@ -385,12 +514,12 @@
   // so a relative path would fail) and a keyword-bearing description. Every visitor
   // who pins becomes a distributor, which is the entire reason the archive is worth
   // being on Pinterest. Opened in a small popup so the archive stays put behind it.
-  function pinterestPin(e: MouseEvent, fig: FigurineListItem) {
-    e.preventDefault();
-    e.stopPropagation();
+  function pinterestPin(e: Event | null, fig: FigurineListItem) {
+    e?.preventDefault();
+    e?.stopPropagation();
     const pageUrl = `${window.location.origin}${figurineHref(fig)}`;
     const media = toAbsoluteUrl(fig.faceImageUrl ?? fig.detailImageUrl);
-    const description = `${fig.name} — handmade one-of-a-kind gothic art doll, sculpted and painted by hand. Ritunia.`;
+    const description = `${fig.name} — ${$t('archivePinSuffix')}`;
     const share = `https://www.pinterest.com/pin/create/button/?url=${encodeURIComponent(pageUrl)}`
       + (media ? `&media=${encodeURIComponent(media)}` : '')
       + `&description=${encodeURIComponent(description)}`;
@@ -408,6 +537,65 @@
     e.stopPropagation();
     markViewed(fig.id);
     goto(`/commission?source=${encodeURIComponent(fig.id)}`);
+  }
+
+  // ── Просмотр работы без ухода со страницы ──────────────────────────────────
+  // Запись истории без перехода (`pushState`): «назад» закрывает панель, а
+  // перезагрузка открывает обычный архив. Листают по тому списку, что на экране.
+  let peekWrap = $state<HTMLElement | null>(null);
+  let peekStart = $state(0);
+  let peekAsk = $state(false);
+  let peekId = $derived(page.state.peek ?? null);
+  let peekIndex = $derived(peekId ? resultList.findIndex((f) => f.id === peekId) : -1);
+  let peekWork = $derived(peekId ? (figById.get(peekId) ?? null) : null);
+  let peekSimilar = $derived(
+    (peekWork?.similarIds ?? []).map((id) => figById.get(id)).filter((f): f is FigItem => !!f && f.id !== peekWork?.id),
+  );
+
+  function openPeek(fig: FigurineListItem, photo = 0, ask = false) {
+    peekStart = photo;
+    peekAsk = ask;
+    markViewed(fig.id);
+    if (peekId) replaceState('', { peek: fig.id });
+    else {
+      interact('peek_open', fig.id);
+      pushState('', { peek: fig.id });
+      // Панель прилипает под шапкой, но стоит там, где начинается сетка: если сетка ниже
+      // экрана, подводим страницу к ней. `scrollIntoView` на прилипающем блоке не прокручивает.
+      void tick().then(() => {
+        if (!peekWrap || window.innerWidth < 1024) return;
+        const top = peekWrap.getBoundingClientRect().top;
+        if (top > 90) window.scrollTo({ top: window.scrollY + top - 90, behavior: 'smooth' });
+      });
+    }
+  }
+
+  function closePeek() {
+    if (!page.state.peek) return;
+    history.back();
+    // «Назад» не вернул на запись без панели (например, запись истории не создалась): закрыть самим.
+    setTimeout(() => { if (page.state.peek) replaceState('', {}); }, 300);
+  }
+
+  function stepPeek(dir: 1 | -1) {
+    const n = resultList.length;
+    if (n < 2 || peekIndex < 0) return;
+    const next = resultList[(peekIndex + dir + n) % n];
+    if (displayLimit < resultList.indexOf(next) + 1) displayLimit = resultList.indexOf(next) + 1;
+    openPeek(next);
+    requestAnimationFrame(() => {
+      document.getElementById(`fig-${next.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
+  function onPeekKey(e: KeyboardEvent) {
+    if (!peekId || buyFig || e.defaultPrevented) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const el = e.target as HTMLElement | null;
+    if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+    if (e.key === 'ArrowRight') { e.preventDefault(); stepPeek(1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); stepPeek(-1); }
+    else if (e.key === 'Escape') { e.preventDefault(); closePeek(); }
   }
 
   // ── Scroll + filter state restoration ────────────────────────────────────
@@ -464,30 +652,26 @@
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="{$t('archiveMetaTitle')} — {$brandName}" />
   <meta name="twitter:image" content="{SITE_URL}/images/cabinet-bg.jpeg" />
-  {@html `<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [ { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL }, { '@type': 'ListItem', position: 2, name: 'Archive', item: `${SITE_URL}/figurines` } ] })}<\/script>`}
+  {@html `<script type="application/ld+json">${ldJson({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [ { '@type': 'ListItem', position: 1, name: $brandName, item: SITE_URL }, { '@type': 'ListItem', position: 2, name: $t('archivePageTitle'), item: `${SITE_URL}/figurines` } ] })}<\/script>`}
+  {@html `<script type="application/ld+json">${ldJson(archiveList)}<\/script>`}
   <!-- Fonts loaded once globally in app.html -->
 </svelte:head>
+
+<svelte:window onkeydown={onPeekKey} />
 
 <div class="fixed inset-0 bg-[#f8f1e7] -z-50"></div>
 <div class="fixed inset-0 pointer-events-none z-0 bg-noise opacity-[0.07] mix-blend-overlay"></div>
 <div class="fixed inset-0 pointer-events-none z-0 bg-[radial-gradient(circle_at_50%_50%,transparent_0%,#f8f1e7_90%)]"></div>
 
-<div class="min-h-screen relative z-10 overflow-hidden font-['Instrument Sans'] text-[#34251c]">
+<div class="min-h-screen relative z-10 overflow-x-clip font-['Instrument Sans'] text-[#34251c]">
 
-    <div class="container mx-auto px-6 sm:px-12 py-12">
+    <div class="container mx-auto px-6 sm:px-12 pt-8 pb-12">
       <!-- ── FILTER BAR ─────────────────────────────────────────────── -->
-      <div class="filter-bar" in:fade={{ duration: 1000 }}>
+      <div class="filter-bar" in:fade={{ duration: 250 }}>
 
-        <!-- Row 1: Title + count -->
+        <!-- Row 1: Title -->
         <div class="filter-bar__head">
-          <div>
-            <a href="/" class="filter-bar__back">{$t('archiveBackLink')}</a>
-            <h1 class="filter-bar__title">{$t('archivePageTitle')}</h1>
-          </div>
-          <div class="filter-bar__count">
-            <p class="filter-bar__count-label">{$t('archiveStatusCount')}</p>
-            <p class="filter-bar__count-value">{countText()}</p>
-          </div>
+          <h1 class="filter-bar__title">{$t('archivePageTitle')}</h1>
         </div>
 
         <!-- Row 2: Search + Sort -->
@@ -506,9 +690,9 @@
               bind:value={searchQuery}
               id={ARCHIVE_KEEPER_INPUT_ID}
               name="q"
-              placeholder={$t('archiveKeeperPlaceholder')}
+              placeholder={$t('archiveAskPlaceholder')}
               class="filter-bar__search-input"
-              aria-label={$t('archiveKeeperPlaceholder')}
+              aria-label={$t('archiveAskPlaceholder')}
               onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(searchDebounce); if (searchQuery.trim().length >= 2) runKeeper(searchQuery.trim()); } }}
             />
             {#if searchQuery}
@@ -525,14 +709,6 @@
             {/if}
           </label>
 
-          <!-- Sort — same chip vocabulary, not a native select -->
-          <FilterPopover
-            label={$t('archiveSortLabel')}
-            bind:value={sortMode}
-            options={sortOptions}
-            allValue="curated"
-            allLabel={$t('archiveSortCurated')}
-          />
         </div>
 
         <!-- Row 3: Primary filter chips (status + saved + viewed) -->
@@ -561,6 +737,64 @@
           </button>
           {/if}
 
+        </div>
+
+        <!-- Серии: вход по теме, а не по полю фильтра -->
+        {#if seriesCards.length > 1}
+        <div class="series-strip" role="group" aria-label={$t('archiveSeriesLabel')}>
+          {#each seriesCards as sc (sc.value)}
+            <button
+              type="button"
+              class="series-card {seriesFilter === sc.value ? 'series-card--on' : ''}"
+              aria-pressed={seriesFilter === sc.value}
+              onclick={() => { seriesFilter = seriesFilter === sc.value ? 'all' : sc.value; }}
+            >
+              <span class="series-card__stack" aria-hidden="true">
+                {#each sc.thumbs as th, k (th)}
+                  <span class="series-card__thumb" style="--k:{k}">
+                    <AppImage src={th} alt="" class="w-full h-full object-cover" loading="lazy" sizes="48px" />
+                  </span>
+                {/each}
+              </span>
+              <span class="series-card__name">{sc.value}</span>
+              <span class="series-card__n">{sc.count}</span>
+            </button>
+          {/each}
+        </div>
+        {/if}
+
+        <!-- Row 4: Refine — secondary axes folded as marginalia, calm by default -->
+        {#if true}
+        <div class="filter-refine">
+          <div class="filter-refine__head">
+            {#if true}
+            <button
+              type="button"
+              class="refine-toggle {refineOpen ? 'refine-toggle--open' : ''}"
+              onclick={() => refineOpen = !refineOpen}
+              aria-expanded={refineOpen}
+            >
+              <span class="refine-toggle__mark">{refineOpen ? '–' : '+'}</span>
+              {$t('archiveMoreFilters')}
+            </button>
+            {/if}
+
+            <span class="filter-count" aria-live="polite">{#if isNarrowed}{resultList.length} / {(figurines as FigItem[]).length}{/if}</span>
+
+            {#if hasActiveFilters}
+            <button type="button" onclick={clearFilters} class="filter-clear">
+              <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <path d="M1 5h8M5 1v8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" transform="rotate(45 5 5)"/>
+              </svg>
+              {$t('archiveClearFilters')}
+            </button>
+            {/if}
+          </div>
+
+          {#if refineOpen}
+          <div class="filter-secondary" transition:slide={{ duration: 260 }}>
+
+            <div class="filter-chips filter-chips--inner">
           <!-- Reserved -->
           {#if statusCounts.reserved > 0}
           <button
@@ -596,7 +830,7 @@
             onclick={() => { if (savedCount > 0) mainFilter = mainFilter === 'saved' ? 'all' : 'saved'; }}
             aria-pressed={mainFilter === 'saved'}
             disabled={savedCount === 0}
-            title={savedCount === 0 ? 'Press ♡ on any card to save' : undefined}
+            title={savedCount === 0 ? $t('archiveSaveHint') : undefined}
           >
             <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path
@@ -615,7 +849,7 @@
             onclick={() => { if (viewedCount > 0) mainFilter = mainFilter === 'viewed' ? 'all' : 'viewed'; }}
             aria-pressed={mainFilter === 'viewed'}
             disabled={viewedCount === 0}
-            title={viewedCount === 0 ? 'Open figurines to track viewed' : undefined}
+            title={viewedCount === 0 ? $t('archiveViewedHint') : undefined}
           >
             <svg width="12" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
               <path d="M1 7C1 7 3.5 3 7 3C10.5 3 13 7 13 7C13 7 10.5 11 7 11C3.5 11 1 7 1 7Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
@@ -624,36 +858,8 @@
             {$t('archiveFilterViewed')}
             <span class="fchip__count">{viewedCount}</span>
           </button>
-        </div>
-
-        <!-- Row 4: Refine — secondary axes folded as marginalia, calm by default -->
-        {#if hasRefineAxes || hasActiveFilters}
-        <div class="filter-refine">
-          <div class="filter-refine__head">
-            {#if hasRefineAxes}
-            <button
-              type="button"
-              class="refine-toggle {refineOpen ? 'refine-toggle--open' : ''}"
-              onclick={() => refineOpen = !refineOpen}
-              aria-expanded={refineOpen}
-            >
-              <span class="refine-toggle__mark">{refineOpen ? '–' : '+'}</span>
-              {refineOpen ? $t('archiveRefineHide') : $t('archiveRefine')}
-            </button>
-            {/if}
-
-            {#if hasActiveFilters}
-            <button type="button" onclick={clearFilters} class="filter-clear">
-              <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden="true">
-                <path d="M1 5h8M5 1v8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" transform="rotate(45 5 5)"/>
-              </svg>
-              {$t('archiveClearFilters')}
-            </button>
-            {/if}
-          </div>
-
-          {#if refineOpen && hasRefineAxes}
-          <div class="filter-secondary" transition:slide={{ duration: 260 }}>
+            </div>
+            <span class="filter-secondary__sep" aria-hidden="true"></span>
 
             <!-- Year chips -->
             {#if availableYears.length > 0}
@@ -701,6 +907,14 @@
               allLabel={$t('archiveMaterialAll')}
             />
             {/if}
+
+            <FilterPopover
+              label={$t('archiveSortLabel')}
+              bind:value={sortMode}
+              options={sortOptions}
+              allValue="curated"
+              allLabel={$t('archiveSortCurated')}
+            />
           </div>
           {/if}
         </div>
@@ -709,283 +923,204 @@
       </div>
 
       {#if resultList.length > 0}
-        <ul class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-10">
+        <div bind:this={peekWrap} class={peekWork ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_480px] lg:gap-8 lg:items-start' : ''}>
+        <div class="min-w-0">
+        <ul class="fig-grid {peekWork ? 'fig-grid--peek' : ''}">
           {#each visible as figurine, i (figurine.id)}
-            <li class="group perspective-container fig-tile"
+            {@const wide = wideIds.has(figurine.id)}
+            {@const hasAlt = !!figurine.detailImageUrl && !!figurine.faceImageUrl}
+            {@const focus = `${Math.round((figurine.focalX ?? 0.5) * 100)}% ${Math.round((figurine.focalY ?? 0.12) * 100)}%`}
+            <li class="fig-tile group {wide ? 'fig-tile--wide' : ''}"
+                class:fig-picked={peekId === figurine.id}
+                id="fig-{figurine.id}"
                 use:observeWork={figurine.id}>
-              <a
-                href={doorShut(figurine) ? undefined : figurineHref(figurine)}
-                class="block w-full text-left relative focus:outline-none"
-                aria-label="{figurine.name}"
-                data-sveltekit-preload-data="hover"
-                onclick={(e) => { if (doorShut(figurine)) { e.preventDefault(); return; } interact('work_click', `archive:${i + 1}`, i + 1, false); markViewed(figurine.id); }}
-              >
+              <div class="fig-card">
                 <div
-                  class="fig-media relative aspect-[3/4]"
+                  class="fig-media"
                   style={doorShut(figurine) ? '' : `view-transition-name: figurine-${figurine.id}`}
                 >
-
-                  {#if doorShut(figurine)}
-                    <!-- The sealed-door plate is its own bespoke design (eyebrow,
-                         wax seal, schedule) — left unmasked so its edge text
-                         doesn't fade with the "impressed figure" mask below. -->
-                    <SealedDoor
-                      openFromMin={winOf(figurine).openFromMin}
-                      openUntilMin={winOf(figurine).openUntilMin}
-                      daysMask={winOf(figurine).daysMask}
-                      monthDay={winOf(figurine).monthDay}
-                      dateFrom={winOf(figurine).dateFrom}
-                      dateUntil={winOf(figurine).dateUntil}
-                      imageUrl={figurine.faceImageUrl}
-                      thumbUrl={figurine.thumbUrl}
-                      name={figurine.name}
-                      showSchedule={false}
-                    />
-                  {:else}
-                    <!-- The figure itself — a clean, full-colour photo filling the
-                         tile. Badges/plaque/buttons live outside this wrapper. -->
-                    <div class="fig-photo">
-                    {#if figurine.faceImageUrl}
-                      <!-- Dense archive grid: two cards across on a phone, up to four on a
-                           wide screen. Told to the browser so it can pick the 420px thumb
-                           here rather than a rendition sized for a full-width hero. -->
-                      <AppImage
-                              src={figurine.faceImageUrl}
-                              thumbUrl={figurine.thumbUrl}
-                              alt={figurine.name}
-                              class="fig-img-main w-full h-full object-cover"
-                              loading="lazy"
-                              sizes="(max-width: 680px) 50vw, (max-width: 1024px) 33vw, 25vw"
+                  <a
+                    href={doorShut(figurine) ? undefined : figurineHref(figurine)}
+                    class="fig-photolink"
+                    aria-label={figurine.name}
+                    data-sveltekit-preload-data="hover"
+                    onclick={(e) => onCardClick(e, figurine, i)}
+                  >
+                    {#if doorShut(figurine)}
+                      <SealedDoor
+                        openFromMin={winOf(figurine).openFromMin}
+                        openUntilMin={winOf(figurine).openUntilMin}
+                        daysMask={winOf(figurine).daysMask}
+                        monthDay={winOf(figurine).monthDay}
+                        dateFrom={winOf(figurine).dateFrom}
+                        dateUntil={winOf(figurine).dateUntil}
+                        imageUrl={figurine.faceImageUrl}
+                        thumbUrl={figurine.thumbUrl}
+                        name={figurine.name}
+                        showSchedule={false}
                       />
-                      {#if figurine.detailImageUrl}
-                        <!-- a second angle, held in reserve for a lingering look -->
-                        <AppImage
-                          src={figurine.detailImageUrl}
-                          alt=""
-                          class="fig-img-alt"
-                          loading="lazy"
-                          sizes="(max-width: 680px) 50vw, (max-width: 1024px) 33vw, 25vw"
-                        />
-                      {/if}
                     {:else}
-                      <div class="w-full h-full flex items-center justify-center opacity-20">
-                        <span class="font-['Fraunces'] text-2xl text-[#34251c]">?</span>
+                      <!-- Два снимка: на телефоне листаются пальцем, на компьютере второй
+                           проявляется при наведении. Точка фокуса берётся из работы, чтобы
+                           не резать голову. -->
+                      <div class="fig-photo" use:slideDots style="--op: {focus}">
+                        {#if figurine.faceImageUrl}
+                          <AppImage
+                            src={wide ? (figurine.faceImageLargeUrl ?? figurine.faceImageUrl) : figurine.faceImageUrl}
+                            thumbUrl={figurine.thumbUrl}
+                            alt={figurine.name}
+                            class="fig-img-main"
+                            loading={i < 4 ? 'eager' : 'lazy'}
+                            fetchpriority={i < 2 ? 'high' : undefined}
+                            sizes={wide ? '(max-width: 680px) 100vw, 50vw' : '(max-width: 680px) 50vw, (max-width: 1024px) 33vw, 25vw'}
+                          />
+                          {#if figurine.detailImageUrl}
+                            <AppImage
+                              src={figurine.detailImageUrl}
+                              alt=""
+                              class="fig-img-alt"
+                              loading="lazy"
+                              sizes={wide ? '(max-width: 680px) 100vw, 50vw' : '(max-width: 680px) 50vw, (max-width: 1024px) 33vw, 25vw'}
+                            />
+                          {/if}
+                        {:else}
+                          <div class="fig-noimg"><span>?</span></div>
+                        {/if}
                       </div>
+                      {#if hasAlt}
+                        <span class="fig-dots" aria-hidden="true"><i></i><i></i></span>
+                      {/if}
                     {/if}
-                    </div>
-                  {/if}
+                  </a>
 
-                  {#if doorShut(figurine)}
-                    <div class="fig-glass fig-glass-sealed">
-                      <span class="fig-cap-meta">
-                        <span class="fig-cap-status status-soon">{$t('posterSoon')}</span>
-                        <span class="fig-cap-dot" aria-hidden="true">·</span>
-                        <span class="fig-cap-soon">{doorHeadlineOf(figurine)}</span>
-                      </span>
-                      <h2 class="fig-cap-name"><span class="fig-cap-name-text">{figurine.name}</span></h2>
-                    </div>
-                  {/if}
-
-                  <div class="absolute top-2 left-2 w-4 h-4 border-t border-l border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
-                  <div class="absolute bottom-2 right-2 w-4 h-4 border-b border-r border-[#34251c]/20 group-hover:border-[#34251c]/60 transition-colors pointer-events-none"></div>
-
-                  <!-- Badge stack — top-left: house-favorite medal, then "new" wax seal -->
                   <div class="fig-badges">
                     {#if figurine.houseFavorite}
-                      <span class="fig-favorite" title={$t('houseFavoriteBadge')}>
-                        <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                          <path d="M2 12C2 7 4 3 4 3M2 12L4 9.5M2 12L4.5 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-                          <path d="M12 12C12 7 10 3 10 3M12 12L10 9.5M12 12L9.5 11" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-                          <circle cx="7" cy="3" r="1.1" fill="currentColor"/>
-                        </svg>
-                        {$t('houseFavoriteBadge')}
-                      </span>
+                      <span class="fig-favorite" title={$t('houseFavoriteBadge')}>{$t('houseFavoriteBadge')}</span>
                     {/if}
                     {#if isNewArrival(figurine)}
                       <span class="fig-seal">{$t('archiveCardNew')}</span>
                     {/if}
                   </div>
 
-                  <!-- Heart button — always visible, top-right -->
+                  {#if !doorShut(figurine)}
+                    <button
+                      type="button"
+                      class="fig-heart fig-share"
+                      onclick={(e) => handleShare(e, figurine)}
+                      aria-label={shareCopiedId === figurine.id ? $t('cardLinkCopied') : $t('cardShare')}
+                      title={shareCopiedId === figurine.id ? $t('cardLinkCopied') : $t('cardShare')}
+                    >
+                      {#if shareCopiedId === figurine.id}
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M2 7L5.5 10.5L12 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      {:else}
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M9 2H12V5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 2L7 7" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><path d="M6 3H3C2.4 3 2 3.4 2 4V11C2 11.6 2.4 12 3 12H10C10.6 12 11 11.6 11 11V8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+                      {/if}
+                    </button>
+                  {/if}
                   <button
-                    class="absolute top-3 right-3 z-10 flex items-center justify-center w-[30px] h-[30px] rounded-full backdrop-blur-sm cursor-pointer transition-all duration-250
-                      {savedFigurines.has(figurine.id)
-                        ? 'bg-[rgba(198,95,60,0.12)] border border-[rgba(198,95,60,0.32)] text-[#c65f3c]'
-                        : 'bg-[rgba(255,249,240,0.65)] border border-[rgba(52,37,28,0.13)] text-[rgba(95,70,54,0.55)] hover:bg-[rgba(255,249,240,0.92)] hover:text-[#c65f3c] hover:border-[rgba(198,95,60,0.25)]'}"
+                    class="fig-heart {savedFigurines.has(figurine.id) ? 'fig-heart--on' : ''}"
                     class:fig-just-saved={justSavedId === figurine.id}
                     onclick={(e) => toggleLike(e, figurine.id)}
                     aria-label={savedFigurines.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
+                    aria-pressed={savedFigurines.has(figurine.id)}
                     title={savedFigurines.has(figurine.id) ? $t('cardSaved') : $t('cardSave')}
                   >
-                    <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
                       <path
                         d="M7 12.5C7 12.5 1 8.5 1 4.5C1 2.5 2.5 1 4.5 1C5.5 1 6.5 1.8 7 3C7.5 1.8 8.5 1 9.5 1C11.5 1 13 2.5 13 4.5C13 8.5 7 12.5 7 12.5Z"
                         fill={savedFigurines.has(figurine.id) ? 'currentColor' : 'none'}
-                        stroke="currentColor"
-                        stroke-width="1.1"
-                        stroke-linejoin="round"
+                        stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"
                       />
                     </svg>
                   </button>
+                </div>
 
-                  {#if !doorShut(figurine)}
-                  <!-- Frosted glass caption plaque — status · year · roman + hover-arrow -->
-                  <div class="fig-glass">
-                    <span class="fig-cap-meta">
-                      <span class="fig-cap-status status-{figurine.status}">
+                <div class="fig-cap">
+                  <h2 class="fig-name">
+                    <a
+                      href={doorShut(figurine) ? undefined : figurineHref(figurine)}
+                      onclick={(e) => onCardClick(e, figurine, i)}
+                    >{figurine.name}</a>
+                  </h2>
+                  {#if doorShut(figurine)}
+                    <p class="fig-meta"><span>{doorHeadlineOf(figurine)}</span></p>
+                  {:else}
+                    <p class="fig-meta">
+                      <span class="fig-status fig-status--{figurine.status}">
                         {figurine.status === 'available' ? $t('archiveStatusAvailableLabel') : figurine.status === 'reserved' ? $t('archiveStatusReservedLabel') : figurine.status === 'in_progress' ? $t('profileWishInProgress') : $t('archiveStatusSoldLabel')}
                       </span>
-                      {#if figurine.year}
-                        <span class="fig-cap-dot" aria-hidden="true">·</span>
-                        <span class="fig-cap-year">{figurine.year}</span>
+                      {#if figurine.year}<span>{figurine.year}</span>{/if}
+                      {#if figurine.dimensions}<span>{figurine.dimensions}</span>{/if}
+                    </p>
+                    {#if wide}
+                      {#if figurine.shortText}<p class="fig-lead">{figurine.shortText}</p>{/if}
+                      {#if angleShots[figurine.id] || hasAlt}
+                        <div class="fig-angles">
+                          {#each angleShots[figurine.id] ?? [{ url: figurine.faceImageUrl ?? '', thumb: figurine.thumbUrl ?? figurine.faceImageUrl ?? '' }, { url: figurine.detailImageUrl ?? '', thumb: figurine.detailImageUrl ?? '' }] as shot, i (i)}
+                            <button type="button" class="fig-angle" onclick={() => openPeek(figurine, i)} aria-label={figurine.name}>
+                              <AppImage src={shot.url} thumbUrl={shot.thumb} alt="" class="fig-angle-img" loading="lazy" sizes="64px" />
+                            </button>
+                          {/each}
+                        </div>
                       {/if}
-                      <span class="fig-cap-roman">{toRoman(figurine.sortOrder ?? i + 1)}</span>
-                    </span>
-                    <h2 class="fig-cap-name">
-                      <span class="fig-cap-name-text">{figurine.name}</span>
-                      <svg class="fig-cap-arrow" width="16" height="8" viewBox="0 0 16 8" fill="none" aria-hidden="true">
-                        <path d="M0 4H15M15 4L11 1M15 4L11 7" stroke="currentColor" stroke-width="1"/>
-                      </svg>
-                    </h2>
-                  </div>
-                  {/if}
-
-                  <!-- Slide-up action bar — appears on hover (and stays open on touch, see <style>) -->
-                  <div class="card-actions-bar absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-3.5 py-2.5
-                              bg-gradient-to-t from-[rgba(44,23,16,0.72)] to-transparent
-                              translate-y-full group-hover:translate-y-0
-                              transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
-
-                    <span class="text-[rgba(255,249,240,0.62)] text-[8.5px] tracking-[0.16em] uppercase select-none">
-                      {$t('cardActions')}
-                    </span>
-
-                    <div class="flex items-center gap-1.5">
-                      <!-- Quick View -->
-                      {#if figurine.faceImageUrl && !doorShut(figurine)}
-                      <button
-                        class="flex items-center justify-center w-7 h-7 rounded-full
-                               bg-[rgba(255,249,240,0.11)] border border-[rgba(255,249,240,0.20)]
-                               text-[rgba(255,249,240,0.62)] hover:text-white hover:bg-[rgba(255,249,240,0.22)] hover:border-[rgba(255,249,240,0.38)]
-                               cursor-pointer transition-all duration-200
-                               translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
-                               [transition-delay:50ms]"
-                        onclick={(e) => openQuickView(e, figurine)}
-                        title={$t('cardQuickView')}
-                        aria-label={$t('cardQuickView')}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                          <path d="M1 7C1 7 3.5 3 7 3C10.5 3 13 7 13 7C13 7 10.5 11 7 11C3.5 11 1 7 1 7Z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
-                          <circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1"/>
-                        </svg>
-                      </button>
-                      {/if}
-
-                      <!-- Share -->
-                      <button
-                        class="flex items-center justify-center w-7 h-7 rounded-full
-                               bg-[rgba(255,249,240,0.11)] border border-[rgba(255,249,240,0.20)]
-                               cursor-pointer transition-all duration-200
-                               translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
-                               [transition-delay:90ms]
-                               {shareCopiedId === figurine.id
-                                 ? 'text-[rgba(130,210,130,0.9)] border-[rgba(100,180,100,0.4)]'
-                                 : 'text-[rgba(255,249,240,0.62)] hover:text-white hover:bg-[rgba(255,249,240,0.22)] hover:border-[rgba(255,249,240,0.38)]'}"
-                        onclick={(e) => handleShare(e, figurine)}
-                        title={shareCopiedId === figurine.id ? $t('cardLinkCopied') : $t('cardShare')}
-                        aria-label={$t('cardShare')}
-                      >
-                        {#if shareCopiedId === figurine.id}
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                          <path d="M2 7L5.5 10.5L12 3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                        {:else}
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                          <path d="M9 2H12V5" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
-                          <path d="M12 2L7 7" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-                          <path d="M6 3H3C2.4 3 2 3.4 2 4V11C2 11.6 2.4 12 3 12H10C10.6 12 11 11.6 11 11V8" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-                        </svg>
-                        {/if}
-                      </button>
-
-                      <!-- Pin it — turns every visitor into a distributor -->
-                      {#if (figurine.faceImageUrl || figurine.detailImageUrl) && !doorShut(figurine)}
-                      <button
-                        class="flex items-center justify-center w-7 h-7 rounded-full
-                               bg-[rgba(255,249,240,0.11)] border border-[rgba(255,249,240,0.20)]
-                               text-[rgba(255,249,240,0.62)] hover:text-white hover:bg-[rgba(255,249,240,0.22)] hover:border-[rgba(255,249,240,0.38)]
-                               cursor-pointer transition-all duration-200
-                               translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
-                               [transition-delay:110ms]"
-                        onclick={(e) => pinterestPin(e, figurine)}
-                        title={$t('cardPinterest')}
-                        aria-label={$t('cardPinterest')}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                          <path d="M5 12.6C4.6 11 4.4 9 4.9 7.1C4.9 7.1 4.6 6.4 4.6 5.5C4.6 4.1 5.4 3.1 6.4 3.1C7.3 3.1 7.7 3.8 7.7 4.6C7.7 5.5 7.1 6.8 6.8 8C6.6 9 7.3 9.8 8.3 9.8C10 9.8 11.3 7.6 11.3 5.4C11.3 3.4 9.9 2 7.6 2C5 2 3.4 3.9 3.4 6C3.4 6.9 3.7 7.6 4.1 8.1" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                      </button>
-                      {/if}
-
+                    {/if}
+                    {#if wide}
+                    <div class="fig-actions fig-actions--row">
                       {#if figurine.status === 'available'}
-                        <!-- Artifact Request -->
-                        <button
-                          class="flex items-center justify-center w-7 h-7 rounded-full
-                                 bg-[rgba(198,95,60,0.18)] border border-[rgba(198,95,60,0.32)]
-                                 text-[rgba(255,200,170,0.88)] hover:bg-[rgba(198,95,60,0.38)] hover:border-[rgba(198,95,60,0.55)] hover:text-[rgba(255,224,208,1)]
-                                 cursor-pointer transition-all duration-200
-                                 translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
-                                 [transition-delay:130ms]"
-                          onclick={(e) => openOrder(e, figurine)}
-                          title={$t('buyAction')}
-                          aria-label={$t('buyAction')}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                            <rect x="2" y="4" width="10" height="7" rx="0.5" stroke="currentColor" stroke-width="1"/>
-                            <path d="M2 5L7 8.5L12 5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-                          </svg>
-                        </button>
+                        <button type="button" class="fig-buy" onclick={(e) => openOrder(e, figurine)}>{$t('buyAction')}</button>
                       {:else}
-                        <!-- Similar commission -->
-                        <button
-                          class="flex items-center justify-center w-7 h-7 rounded-full
-                                 bg-[rgba(198,95,60,0.18)] border border-[rgba(198,95,60,0.32)]
-                                 text-[rgba(255,200,170,0.88)] hover:bg-[rgba(198,95,60,0.38)] hover:border-[rgba(198,95,60,0.55)] hover:text-[rgba(255,224,208,1)]
-                                 cursor-pointer transition-all duration-200
-                                 translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100
-                                 [transition-delay:130ms]"
-                          onclick={(e) => openSimilarCommission(e, figurine)}
-                          title={$t('commissionCreateSimilarCta')}
-                          aria-label={$t('commissionCreateSimilarCta')}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                            <path d="M3 7.5C3 4.8 5.1 2.8 7.8 2.8H11" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-                            <path d="M8.5 1.4L11 2.8L8.5 4.4" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M11 6.5C11 9.2 8.9 11.2 6.2 11.2H3" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-                            <path d="M5.5 9.6L3 11.2L5.5 12.6" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
-                          </svg>
-                        </button>
+                        <button type="button" class="fig-similar" onclick={(e) => openSimilarCommission(e, figurine)}>{$t('commissionCreateSimilarShort')}</button>
                       {/if}
+                        <button type="button" class="fig-ask" onclick={() => openPeek(figurine, 0, true)} aria-label={$t('dockAsk')} title={$t('dockAsk')}>
+                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+                        </button>
                     </div>
-                  </div>
+                    {/if}
+                  {/if}
                 </div>
-              </a>
+              </div>
             </li>
           {/each}
         </ul>
 
         {#if hasMore}
-          <div class="mt-20 flex justify-center" in:fade>
-            <button
-              onclick={loadMore}
+          <div class="mt-16 flex flex-col items-center gap-3" in:fade>
+            <p class="text-xs tracking-wide text-[#7c6554] tabular-nums">{visible.length} / {resultList.length}</p>
+            <a
+              href={nextHref}
+              onclick={(e) => { e.preventDefault(); loadMore(); }}
               class="group flex items-center gap-4 px-10 py-4 border border-[#34251c]/20 hover:border-[#34251c]/50 text-[#5f4636] hover:text-[#34251c] font-['Instrument Sans'] text-xs tracking-[0.08em] uppercase transition-all duration-500"
             >
               <span>{$t('archiveLoadMore')}</span>
               <span class="text-[#34251c]/30 group-hover:text-[#34251c]/85 transition-colors">{Math.min(PAGE_SIZE, resultList.length - displayLimit)}</span>
               <span class="transition-transform group-hover:translate-y-0.5">↓</span>
-            </button>
+            </a>
           </div>
         {/if}
+        </div>
+
+        {#if peekWork}
+          <FigurinePeek
+            work={peekWork}
+            position={peekIndex + 1}
+            total={resultList.length}
+            saved={savedFigurines.has(peekWork.id)}
+            onClose={closePeek}
+            onPrev={() => stepPeek(-1)}
+            onNext={() => stepPeek(1)}
+            onBuy={() => { if (peekWork) buyFig = peekWork; }}
+            onSimilar={() => { if (peekWork) goto(`/commission?source=${encodeURIComponent(peekWork.id)}`); }}
+            onToggleSaved={() => { if (peekWork) savedFigurines.toggle(peekWork.id); }}
+            shareCopied={shareCopiedId === peekWork.id}
+            onShare={() => { if (peekWork) handleShare(null, peekWork); }}
+            onPin={() => { if (peekWork) pinterestPin(null, peekWork); }}
+            startPhoto={peekStart}
+            startAsk={peekAsk}
+            similar={peekSimilar}
+            onOpenWork={(id) => { const f = figById.get(id); if (f) openPeek(f); }}
+          />
+        {/if}
+        </div>
 
         <!--
           Соседняя комната, названная её собственными словами: карта — это
@@ -1041,12 +1176,7 @@
     </div>
   </div>
 
-{#if lightboxFig?.faceImageUrl}
-  <Lightbox
-    images={[{ url: lightboxFig.faceImageUrl!, alt: lightboxFig.name }]}
-    onClose={() => { lightboxFig = null; }}
-  />
-{/if}
+
 
 <EtsyBuyDialog
   isOpen={!!buyFig}
@@ -1085,132 +1215,198 @@
   .group:focus-within .fig-media :global(.fig-img-alt) {
     opacity: 1;
   }
-  @media (hover: none) {
-    .fig-media :global(.fig-img-alt) { display: none; }
-  }
 
-  /* ── GLASS PLATE: frosted caption plaque over the photo's foot ──────────── */
-  .fig-glass {
-    position: absolute;
-    left: 10px;
-    right: 10px;
-    bottom: 46px;
-    z-index: 3;
+
+  /* ── Журнальная сетка: две колонки на телефоне, крупная плитка 2×2 для новинок ── */
+  .fig-grid {
     display: grid;
-    gap: 5px;
-    padding: 12px 14px 11px;
-    border-radius: 3px;
-    background: linear-gradient(165deg, rgba(52,37,28,0.4), rgba(14,9,6,0.62));
-    backdrop-filter: blur(14px) saturate(150%);
-    -webkit-backdrop-filter: blur(14px) saturate(150%);
-    border: 1px solid rgba(255,247,234,0.28);
-    box-shadow:
-        0 10px 26px rgba(12,7,4,0.28),
-        inset 0 1px 0 rgba(255,255,255,0.2);
-    pointer-events: none;
-    transition: background 0.3s ease, border-color 0.3s ease;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: dense;
+    align-items: stretch;
+    gap: 26px 12px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
-  .group:hover .fig-glass {
-    background: linear-gradient(165deg, rgba(52,37,28,0.48), rgba(14,9,6,0.7));
-    border-color: rgba(255,247,234,0.4);
+  @media (min-width: 640px) {
+    .fig-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px 20px; }
+  }
+  @media (min-width: 1024px) {
+    .fig-grid--peek { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (min-width: 1280px) {
+    .fig-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 40px 24px; }
+    .fig-grid--peek { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  .fig-tile { min-width: 0; }
+  .fig-tile--wide { grid-column: span 2; grid-row: span 2; }
+  .fig-card { display: flex; flex-direction: column; height: 100%; }
+
+  .fig-media {
+    position: relative;
+    aspect-ratio: 4 / 5;
+    overflow: hidden;
+    border-radius: 3px;
+    background: linear-gradient(160deg, #f1e8da 0%, #e6d9c6 100%);
+  }
+  .fig-tile--wide .fig-media { flex: 1 1 auto; min-height: 0; }
+  .fig-photolink { position: absolute; inset: 0; display: block; }
+  .fig-photo { position: absolute; inset: 0; }
+  .fig-photo :global(.fig-img-main) { width: 100%; height: 100%; }
+  .fig-photo :global(.app-image-main),
+  .fig-photo :global(.app-image-thumb) { object-position: var(--op, 50% 12%); }
+  .fig-noimg { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; opacity: 0.25; font-family: 'Fraunces', serif; font-size: 28px; }
+
+  .fig-heart {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid rgba(52, 37, 28, 0.13);
+    background: rgba(255, 249, 240, 0.82);
+    color: rgba(95, 70, 54, 0.7);
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    transition: color 0.2s, background 0.2s, border-color 0.2s;
+  }
+  .fig-share { right: 52px; }
+  /* Видимый круг 34 px, нажимаемая область 44 px */
+  .fig-heart::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; }
+  .fig-heart:hover { color: #c65f3c; background: rgba(255, 249, 240, 0.96); }
+  .fig-heart--on { color: #c65f3c; border-color: rgba(198, 95, 60, 0.4); background: rgba(255, 240, 230, 0.95); }
+
+  /* Точки под фото: только там, где снимки листают пальцем */
+  .fig-dots { display: none; position: absolute; left: 0; right: 0; bottom: 8px; z-index: 3; justify-content: center; gap: 5px; pointer-events: none; }
+  .fig-dots i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 249, 240, 0.55); box-shadow: 0 0 0 1px rgba(44, 23, 16, 0.18); }
+  .fig-dots i:first-child { background: #fff9f0; }
+  .fig-photolink[data-i='1'] .fig-dots i:first-child { background: rgba(255, 249, 240, 0.55); }
+  .fig-photolink[data-i='1'] .fig-dots i:nth-child(2) { background: #fff9f0; }
+  @media (hover: none) {
+    .fig-dots { display: flex; }
+    .fig-photo { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+    .fig-photo::-webkit-scrollbar { display: none; }
+    .fig-photo > :global(.app-image-wrap) { flex: 0 0 100%; scroll-snap-align: start; }
+    .fig-media :global(.fig-img-alt) { position: relative; inset: auto; opacity: 1; pointer-events: auto; }
   }
 
-  .fig-cap-meta {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: 7px;
-    font-family: 'Instrument Sans', system-ui, sans-serif;
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    line-height: 1.2;
-    text-transform: uppercase;
-    color: rgba(255,247,234,0.86);
-  }
-  .fig-cap-dot { opacity: 0.5; }
-  .fig-cap-status::before {
-    content: '';
-    display: inline-block;
-    width: 5px;
-    height: 5px;
-    margin-right: 5px;
-    border-radius: 50%;
-    border: 1px solid currentColor;
-    vertical-align: middle;
-  }
-  .fig-cap-status.status-available::before,
-  .fig-cap-status.status-sold::before { background: currentColor; }
-  .fig-cap-status.status-reserved::before,
-  .fig-cap-status.status-in_progress::before { background: transparent; }
-  .fig-cap-status.status-sold { color: rgba(255,247,234,0.6); }
-  .fig-cap-status.status-sold::before { opacity: 0.4; }
-  .fig-cap-status.status-soon { color: #f0b48c; }
-  .fig-cap-status.status-soon::before { background: currentColor; }
-  .fig-cap-soon {
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    text-transform: none;
-    color: #f0b48c;
-  }
-  .fig-glass-sealed {
-    background: linear-gradient(165deg, rgba(84,58,40,0.55), rgba(38,24,15,0.62));
-    border-color: rgba(255,247,234,0.4);
-    box-shadow:
-        0 10px 26px rgba(12,7,4,0.4),
-        inset 0 1px 0 rgba(255,255,255,0.24);
-  }
-  .fig-cap-year { font-variant-numeric: tabular-nums; }
-  .fig-cap-roman {
-    margin-left: auto;
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-style: italic;
-    font-size: 14px;
-    font-weight: 400;
-    letter-spacing: 0.01em;
-    text-transform: none;
-    color: rgba(255,247,234,0.85);
-  }
-  .fig-cap-name {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
+  /* ── Подпись рядом с фото ── */
+  .fig-cap { flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; padding: 10px 2px 0; }
+  .fig-name {
     margin: 0;
-    min-width: 0;
-    font-family: 'Cormorant Garamond', Georgia, serif;
-    font-size: clamp(19px, 1.4vw, 26px);
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 16px;
     font-weight: 400;
-    line-height: 0.98;
-    color: #fdf5e8;
-    text-shadow: 0 1px 10px rgba(12,7,4,0.5);
-  }
-  .fig-cap-name-text {
+    line-height: 1.25;
+    color: #34251c;
     display: -webkit-box;
-    line-clamp: 2;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .fig-cap-arrow {
-    flex-shrink: 0;
-    align-self: center;
-    color: rgba(255,247,234,0.82);
-    opacity: 0;
-    transform: translateX(-4px);
-    transition: opacity 0.28s ease, transform 0.28s ease;
+  .fig-name a { color: inherit; text-decoration: none; }
+  .fig-name a:hover { color: #6f3b24; }
+  .fig-tile--wide .fig-name { font-size: 22px; }
+  .fig-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 0; font-size: 12px; color: #7c6554; font-variant-numeric: tabular-nums; }
+  .fig-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; letter-spacing: 0.04em; }
+  .fig-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .fig-status--available { color: #4d6b3a; }
+  .fig-status--reserved { color: #a2742a; }
+  .fig-status--sold,
+  .fig-status--in_progress { color: #8a7566; }
+  .fig-lead {
+    margin: 4px 0 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #4a392e;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
-  .group:hover .fig-cap-arrow,
-  .group:focus-within .fig-cap-arrow {
-    opacity: 1;
-    transform: none;
+  .fig-angles { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; height: 70px; overflow: hidden; }
+  .fig-angle { width: 56px; height: 70px; padding: 0; border: 1px solid transparent; border-radius: 2px; overflow: hidden; background: #efe5d6; cursor: pointer; transition: border-color 0.2s; }
+  .fig-angle:hover { border-color: #c65f3c; }
+  .fig-angle :global(.fig-angle-img) { width: 100%; height: 100%; }
+  .fig-angle :global(.app-image-main), .fig-angle :global(.app-image-thumb) { object-fit: cover; object-position: 50% 12%; }
+  .fig-actions { margin-top: auto; padding-top: 6px; }
+  .fig-actions--row { display: flex; gap: 8px; }
+  .fig-actions--row .fig-buy, .fig-actions--row .fig-similar { flex: 1; width: auto; }
+  .fig-ask { flex: none; width: 40px; min-height: 40px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(52, 37, 28, 0.2); border-radius: 2px; background: transparent; color: #5f4636; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+  .fig-ask:hover { background: rgba(52, 37, 28, 0.06); border-color: rgba(52, 37, 28, 0.4); }
+  .fig-buy,
+  .fig-similar {
+    width: 100%;
+    min-height: 40px;
+    padding: 0 12px;
+    border-radius: 2px;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
   }
-  @media (hover: none) {
-    .fig-cap-arrow { opacity: 1; transform: none; }
+  @media (max-width: 639px) {
+    .fig-buy, .fig-similar { font-size: 11px; letter-spacing: 0.05em; padding: 0 6px; }
   }
+  .fig-buy { background: #c65f3c; border: 1px solid #c65f3c; color: #fff9f0; }
+  .fig-buy:hover { background: #a94d2d; border-color: #a94d2d; }
+  .fig-similar { background: transparent; border: 1px solid rgba(111, 59, 36, 0.3); color: #6f3b24; }
+  .fig-similar:hover { background: rgba(198, 95, 60, 0.08); border-color: #c65f3c; }
 
-  /* ── BADGES (top-left) ───────────────────────────────────────────────── */
+  /* Работа, открытая в панели просмотра */
+  .fig-picked .fig-media { outline: 2px solid #c65f3c; outline-offset: 3px; }
+
+  .filter-chips.filter-chips--inner { width: 100%; flex-wrap: wrap; overflow: visible; }
+
+  /* ── Серии обложками ── */
+  .series-strip {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 2px 2px 8px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .series-card {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px 8px 10px;
+    border: 1px solid rgba(52, 37, 28, 0.14);
+    border-radius: 3px;
+    background: rgba(255, 249, 240, 0.55);
+    color: #5f4636;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, color 0.2s;
+  }
+  .series-card:hover { border-color: rgba(52, 37, 28, 0.4); color: #34251c; }
+  .series-card--on { border-color: #c65f3c; background: rgba(198, 95, 60, 0.1); color: #6f3b24; }
+  .series-card__stack { position: relative; display: block; width: 58px; height: 44px; }
+  .series-card__thumb {
+    position: absolute;
+    top: 0;
+    left: calc(var(--k) * 9px);
+    width: 36px;
+    height: 44px;
+    overflow: hidden;
+    border-radius: 2px;
+    border: 1px solid #f8f1e7;
+    box-shadow: 0 2px 6px rgba(44, 23, 16, 0.22);
+    transform: rotate(calc((var(--k) - 1) * 4deg));
+    z-index: calc(3 - var(--k));
+  }
+  .series-card__name { font-family: 'Fraunces', Georgia, serif; font-size: 15px; white-space: nowrap; }
+  .series-card__n { font-size: 11px; opacity: 0.6; font-variant-numeric: tabular-nums; }
+
   .fig-badges {
     position: absolute;
     left: 8px;
@@ -1264,39 +1460,11 @@
 
   @media (prefers-reduced-motion: reduce) {
     .fig-tile,
-    .fig-just-saved,
-    .fig-cap-arrow {
+    .fig-just-saved {
       animation: none !important;
       transition: opacity 0.2s ease, color 0.2s ease, background 0.2s ease, border-color 0.2s ease !important;
     }
     .fig-tile { opacity: 1 !important; transform: none !important; }
-    .fig-media :global(.fig-img-alt) { display: none !important; }
-    .fig-photo { filter: none !important; }
-  }
-
-  /* The figure sits as a plain, crisp full-colour photo filling the tile.
-     Badges/plaque/buttons live outside .fig-photo so they stay above it. */
-  .fig-media {
-    background: transparent;
-  }
-  .fig-photo {
-    position: absolute;
-    inset: 0;
-  }
-
-  /* Status-based image treatment removed — every work is shown in full colour,
-     no vignette, grayscale or opacity dimming. */
-
-  /* Touch devices have no hover: keep the action bar (quick view / share / request)
-     reachable instead of hidden off-screen. Scoped specificity beats the Tailwind utilities. */
-  @media (hover: none) {
-    .card-actions-bar {
-      transform: none;
-    }
-    .card-actions-bar button {
-      opacity: 1;
-      transform: none;
-    }
   }
 
   @media (pointer: coarse) {
@@ -1307,85 +1475,36 @@
       text-transform: none;
     }
     /* Larger filter chip tap targets */
-    .fchip {
-      padding: 9px 12px;
-    }
-    .fchip--sm {
-      padding: 7px 10px;
-    }
-    /* Increase back-link hit area */
-    .filter-bar__back {
-      min-height: 44px;
-      align-items: center;
-    }
+    .fchip { min-height: 44px; padding: 0 14px; }
+    .fchip--sm { min-height: 40px; padding: 0 12px; }
+    .refine-toggle, .filter-clear { min-height: 44px; }
   }
 
   .bg-noise {
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
   }
 
-  /* Skip rendering offscreen cards — major FCP improvement on long lists */
-  :global(.perspective-container) {
-    content-visibility: auto;
-    contain-intrinsic-size: 0 380px;
-  }
-
   /* ── FILTER BAR LAYOUT ─────────────────────────────────────────── */
   .filter-bar {
-    margin-bottom: clamp(56px, 8vw, 96px);
+    margin-bottom: clamp(20px, 3vw, 36px);
     border-bottom: 1px solid rgba(52,37,28,0.10);
-    padding-bottom: 28px;
+    padding-bottom: 16px;
   }
 
   .filter-bar__head {
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
-    margin-bottom: 28px;
+    margin-bottom: 18px;
   }
-
-  .filter-bar__back {
-    display: inline-flex;
-    align-items: center;
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: rgba(95,70,54,0.60);
-    text-decoration: none;
-    margin-bottom: 14px;
-    transition: color 0.22s, opacity 0.22s;
-    opacity: 0.7;
-  }
-  .filter-bar__back:hover { color: #34251c; opacity: 1; }
 
   .filter-bar__title {
     font-family: 'Fraunces', serif;
-    font-size: clamp(38px, 6vw, 72px);
+    font-size: clamp(32px, 4.4vw, 52px);
     color: rgba(111,59,36,0.90);
     letter-spacing: 0.02em;
     line-height: 1;
     margin: 0;
-  }
-
-  .filter-bar__count {
-    display: none;
-    text-align: right;
-  }
-  @media (min-width: 640px) { .filter-bar__count { display: block; } }
-
-  .filter-bar__count-label {
-    font-size: 9px;
-    letter-spacing: 0.10em;
-    text-transform: uppercase;
-    color: rgba(95,70,54,0.65);
-    margin-bottom: 4px;
-  }
-
-  .filter-bar__count-value {
-    font-size: 18px;
-    color: #34251c;
-    border-left: 2px solid rgba(52,37,28,0.18);
-    padding-left: 12px;
   }
 
   /* ── SEARCH + SORT ROW ─────────────────────────────────────────── */
@@ -1399,7 +1518,7 @@
   .filter-bar__search-wrap {
     position: relative;
     flex: 1;
-    max-width: 420px;
+    max-width: 640px;
   }
 
   .filter-bar__search-icon {
@@ -1606,6 +1725,7 @@
     transition: color 0.2s;
   }
   .refine-toggle:hover { color: #34251c; }
+  .filter-count { font-size: 11px; letter-spacing: 0.06em; color: #7c6554; font-variant-numeric: tabular-nums; }
   .refine-toggle--open { color: rgba(52,37,28,0.78); }
 
   .refine-toggle__mark {
