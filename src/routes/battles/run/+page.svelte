@@ -16,6 +16,10 @@
   import BattleDoor from '$lib/components/BattleDoor.svelte';
   import BattleModes from '$lib/components/BattleModes.svelte';
   import RunPlacement from '$lib/components/RunPlacement.svelte';
+  import CardPeek, { type PeekHover } from '$lib/components/CardPeek.svelte';
+  import RunReplay from '$lib/components/RunReplay.svelte';
+  import CardMenu, { type MenuItem, type MenuAt } from '$lib/components/CardMenu.svelte';
+  import { installRunStand } from '$lib/runStand/install';
   import { cellKey, reconcile, safeLayout, threatened, toRequest, type Placement } from '$lib/runPlacement';
   import { matchChrome } from '$lib/stores/match-chrome.svelte';
   import { sfx, soundOn, setSound } from '$lib/sfx';
@@ -26,6 +30,8 @@
     BattleFrame,
     BattleMatch,
     BattleRace,
+    BattleDaily,
+    RunWaveLog,
     BattleRoute,
     BattleRun,
     Foresight,
@@ -59,6 +65,8 @@
   /** Пыль, которую дала только что кончившаяся волна. */
   let paid = $state(0);
   /** Потери последней волны: кто ранен (и на сколько) и кто пал. */
+  /** Факты о проигранной волне: условие, сколько карт вышло, сколько вышло ранеными. */
+  let lostWhy = $state<string[]>([]);
   let report = $state<{ name: string; lost: number; fell: boolean }[] | null>(null);
   /** Выдвижная панель на экране забега: отряд или добыча. */
   let panel = $state<'squad' | 'loot' | null>(null);
@@ -171,13 +179,8 @@
         const rows = hurt.slice(0, 3).map((c) => line(c, c.health, Math.min(c.health + r.amount, c.maxHealth)));
         return hurt.length > 3 ? [...rows, `+${hurt.length - 3}`] : rows;
       }
-      case 'healOne': {
-        let worst: (typeof alive)[number] | null = null;
-        for (const c of alive) {
-          if (!worst || c.health - c.maxHealth < worst.health - worst.maxHealth) worst = c;
-        }
-        return worst ? [line(worst, worst.health, worst.maxHealth)] : [];
-      }
+      case 'healOne':
+        return alive.some((c) => c.health < c.maxHealth) ? [$t('runPrizeCharge')] : [];
       case 'revive': {
         const down = from.squad.find((c) => c.dead);
         return down ? [line(down, 0, Math.max(Math.floor(down.maxHealth / 2), 1))] : [];
@@ -255,6 +258,26 @@
     }
   }
 
+  // Подробности карты вне боя (список отряда и добычи): попап при наведении, лист по нажатию.
+  let hovered = $state<PeekHover | null>(null);
+  let looked = $state<BattleCard | null>(null);
+  let lookedNote = $state<string | undefined>();
+  function peekHover(e: Event, card: BattleCard | undefined, note?: string) {
+    if (!card || looked) return;
+    const r = (e.currentTarget as Element).getBoundingClientRect();
+    const w = Math.min(260, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
+    hovered = r.top > 280 ? { card, left, bottom: window.innerHeight - r.top + 8, note } : { card, left, top: r.bottom + 8, note };
+  }
+  const peekLeave = () => (hovered = null);
+  function peekOpen(card: BattleCard | undefined, note?: string) {
+    if (!card) return;
+    hovered = null;
+    looked = card;
+    lookedNote = note;
+    interact('battle_run_peek', card.slug);
+  }
+
   let sound = $state(soundOn());
   function toggleSound() {
     sound = !sound;
@@ -303,6 +326,9 @@
   }
 
   onMount(async () => {
+    // Стенд забега: страница на подставных данных по ссылке администратора (`?stand=…`, § 31).
+    const standId = new URLSearchParams(location.search).get('stand');
+    if (standId) await installRunStand(standId);
     guestToken = authStore.token ? null : readGuest();
     try {
       const [list, deck, gear, dressing, moving, kinds] = await Promise.all([
@@ -333,6 +359,7 @@
     }
     ready = true;
     void readMe();
+    void loadDaily();
   });
 
   /** Забег идёт и партии нет: экран на всю высоту окна, без прокрутки. */
@@ -376,6 +403,55 @@
     }
   }
 
+  // Как прошли волны: список законченных партий и пересмотр одной из них.
+  let waveLog = $state<RunWaveLog[]>([]);
+  let replayOf = $state<RunWaveLog | null>(null);
+  $effect(() => {
+    const id = run?.id;
+    run?.waveNo;
+    run?.state;
+    run?.phase;
+    const key = token;
+    if (!id || !key) return;
+    let alive = true;
+    api
+      .getBattleRunWaves(key, id)
+      .then((rows) => {
+        if (alive) waveLog = rows;
+      })
+      .catch(() => {
+        if (alive) waveLog = [];
+      });
+    return () => {
+      alive = false;
+    };
+  });
+
+  // Маршрут дня: только для вошедших, гостю заходить в него незачем.
+  let daily = $state<BattleDaily | null>(null);
+  async function loadDaily() {
+    if (!authStore.token) {
+      daily = null;
+      return;
+    }
+    try {
+      daily = await api.getBattleDaily(authStore.token);
+    } catch {
+      daily = null;
+    }
+  }
+  const startDaily = () =>
+    guarded(async () => {
+      const key = authStore.token;
+      if (!key || !daily) return;
+      paid = 0;
+      report = null;
+      lostWhy = [];
+      take(await api.startBattleRun(key, daily.route.slug, [], true));
+      interact('battle_run_daily', daily.route.slug);
+      void loadDaily();
+    });
+
   const start = (route: BattleRoute) =>
     guarded(async () => {
       const key = await tokenForRun(route);
@@ -385,19 +461,32 @@
       }
       paid = 0;
       report = null;
+      lostWhy = [];
       take(await api.startBattleRun(key, route.slug));
       interact('battle_run_start', route.slug);
     });
+
+  /** Тренировка проигранной волны: страница играет ту же волну, но в сервер уходит другая ручка. */
+  let practicing = $state(false);
+  function startPractice() {
+    if (!run?.practice) return;
+    const p = run.practice;
+    practicing = true;
+    take({ ...run, state: 'active', phase: 'wave', squad: p.squad, nextWave: p.wave, matchId: null, swapCost: null, freeSwaps: 0, reward: [], practice: null });
+    interact('battle_run_practice', run?.route.slug ?? null, p.wave.waveNo);
+  }
+  async function endPractice() {
+    practicing = false;
+    if (!token || !run) return;
+    take(await api.getBattleRun(token, run.id));
+  }
 
   const beginWave = () =>
     guarded(async () => {
       if (!run || !token) return;
       const wave = run.waveNo;
-      match = await api.beginBattleRunWave(
-        token,
-        run.id,
-        run.nextWave?.field ? toRequest(chosen, cells) : chosen.map((cardId) => ({ cardId })),
-      );
+      const placed = run.nextWave?.field ? toRequest(chosen, cells) : chosen.map((cardId) => ({ cardId }));
+      match = practicing ? await api.practiceBattleRunWave(token, run.id, placed) : await api.beginBattleRunWave(token, run.id, placed);
       banner = { n: wave, total: run.wavesTotal };
       sfx.start();
       interact('battle_wave_start', `${run.route.slug}:${wave}`, wave);
@@ -477,6 +566,15 @@
   async function finishWave(done: BattleMatch) {
     if (!token) return;
     const before = run;
+    // Тренировка (или её партия, открытая заново после перезагрузки): забег не менялся,
+    // страница берёт его таким, какой он, и только говорит, чем кончилась волна.
+    if (practicing || before?.state === 'lost') {
+      practicing = false;
+      if (before) take(await api.getBattleRun(token, before.id));
+      notice = done.outcome === 'player' ? $t('runPracticeWon') : $t('runPracticeLost');
+      interact('battle_run_practice_end', before ? `${before.route.slug}:${before.waveNo}` : null, done.outcome === 'player' ? 1 : 0);
+      return;
+    }
     let next = done.run ?? null;
     if (!next && before) next = await api.getBattleRun(token, before.id);
     paid = next?.paidDust ?? 0;
@@ -488,6 +586,15 @@
           return lost > 0 || now.dead ? [{ name: nameOf(was.cardId) || was.slug, lost, fell: now.dead }] : [];
         })
       : null;
+    lostWhy = [];
+    if (before && next && next.state === 'lost') {
+      const w = before.nextWave;
+      const fielded = before.squad.filter((c) => !c.dead && chosen.includes(c.cardId));
+      const wounded = fielded.filter((c) => c.health * 2 < c.maxHealth).length;
+      if (w) lostWhy.push(f('runLostGoal', { goal: goalLine(w.goal) }));
+      if (w && fielded.length < w.maxCards) lostWhy.push(f('runLostFewCards', { n: fielded.length, max: w.maxCards }));
+      if (wounded > 0) lostWhy.push(f('runLostWounded', { n: wounded }));
+    }
     take(next);
     if (before) {
       const won = done.outcome === 'player';
@@ -522,6 +629,7 @@
       return;
     }
     abandonAsked = false;
+    practicing = false;
     if (abandonTimer) clearTimeout(abandonTimer);
     // Автобой останавливаем и ждём, пока уйдёт его запрос: иначе `guarded` молча
     // отбросил бы нажатие.
@@ -553,6 +661,69 @@
       interact('battle_swap', run?.route.slug ?? null, run?.swaps ?? null);
     });
 
+  const heal = (cardId: string) =>
+    guarded(async () => {
+      if (!run || !token) return;
+      const name = nameOf(cardId);
+      take(await api.healBattleRunCard(token, run.id, cardId));
+      notice = f('runHealed', { name });
+      interact('battle_heal', run?.route.slug ?? null, run?.waveNo ?? null);
+    });
+
+  // Меню быстрых действий над картой отряда: нажатие по карте в ряду внизу.
+  let menu = $state<{ cardId: string; at: MenuAt } | null>(null);
+  function openMenu(e: Event, cardId: string) {
+    const r = (e.currentTarget as Element).getBoundingClientRect();
+    const w = Math.min(272, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
+    // Указатель смотрит на середину карты, но не выходит за скруглённые углы меню.
+    const arrow = Math.max(22, Math.min(r.left + r.width / 2 - left, w - 22));
+    const above = r.top > 330;
+    menu = { cardId, at: above ? { left, bottom: window.innerHeight - r.top + 12, arrow, above } : { left, top: r.bottom + 12, arrow, above } };
+    inspected = cardId;
+    inspectedFoe = null;
+    sfx.lift();
+  }
+  const menuItems = $derived.by((): MenuItem[] => {
+    const r = run;
+    const id = menu?.cardId;
+    const c = r?.squad.find((x) => x.cardId === id);
+    if (!r || !c) return [];
+    const out: MenuItem[] = [];
+    if (r.healCharges > 0 && !c.dead && c.health < c.maxHealth) {
+      out.push({ key: 'heal', label: $t('runMenuHeal'), note: f('runMenuHealNote', { n: r.healCharges }), onclick: () => void heal(c.cardId) });
+    }
+    if (!c.dead && r.nextWave) {
+      const on = chosen.includes(c.cardId);
+      const full = !on && chosen.length >= r.nextWave.maxCards;
+      out.push({
+        label: on ? $t('runPlaceRemove') : $t('runMenuField'),
+        key: on ? 'unfield' : 'field',
+        note: full ? f('runMenuFull', { max: r.nextWave.maxCards }) : undefined,
+        disabled: full,
+        onclick: () => toggle(c.cardId),
+      });
+    }
+    if (r.swapCost != null) {
+      const free = r.freeSwaps > 0;
+      const none = r.bench <= 0;
+      const poor = !free && !!me && me.dust < r.swapCost;
+      out.push({
+        key: 'swap',
+        label: free ? $t('runSwapFree') : $t('runMenuSwap'),
+        price: free ? undefined : r.swapCost,
+        note: none ? $t('runMenuNoBench') : poor ? $t('runFaultNotEnough') : $t('runMenuSwapNote'),
+        disabled: none || poor,
+        onclick: () => void swap(c.cardId),
+      });
+    }
+    const face = cardOf(c.cardId);
+    if (face) {
+      out.push({ key: 'details', label: $t('runMenuDetails'), onclick: () => peekOpen(face, f('runHealth', { h: c.health, m: c.maxHealth })) });
+    }
+    return out;
+  });
+
   const takeTrophy = (cardId: string) =>
     guarded(async () => {
       if (!run || !token) return;
@@ -572,6 +743,22 @@
       void readMe();
       interact('battle_trophy', run?.route.slug ?? null);
     });
+
+  /** Снять карту с выхода в волну: она остаётся в отряде, просто не выходит. */
+  function unfield(cardId: string) {
+    if (!chosen.includes(cardId)) return;
+    chosen = chosen.filter((id) => id !== cardId);
+    inspected = null;
+    sfx.lift();
+  }
+  /** Тащат свою карту с поля: ряд карт внизу становится местом, куда её отпустить. */
+  let dragging = $state(false);
+  function dropOnHand(e: DragEvent) {
+    e.preventDefault();
+    dragging = false;
+    const id = e.dataTransfer?.getData('application/x-gotiga-card');
+    if (id) unfield(id);
+  }
 
   function toggle(cardId: string) {
     if (!run?.nextWave) return;
@@ -616,11 +803,11 @@
   const shown = $derived.by(() => {
     if (!run) return null;
     const foe = inspectedFoe ? cards.find((c) => c.slug === inspectedFoe) : undefined;
-    if (foe) return { foe: true, card: foe, health: foe.health, maxHealth: foe.health, round: inspectedRound };
+    if (foe) return { foe: true, id: null as string | null, card: foe, health: foe.health, maxHealth: foe.health, round: inspectedRound };
     const id = inspected && run.squad.some((c) => c.cardId === inspected) ? inspected : (chosen[0] ?? null);
     const squad = run.squad.find((c) => c.cardId === id);
     const card = id ? cardOf(id) : undefined;
-    return squad && card ? { foe: false, card, health: squad.health, maxHealth: squad.maxHealth, round: null } : null;
+    return squad && card ? { foe: false, id, card, health: squad.health, maxHealth: squad.maxHealth, round: null } : null;
   });
 
   /** Меньше этого числа карт в волну не выйти (меньше, если живых осталось меньше). */
@@ -724,6 +911,18 @@
                 <span class="small">{f('runWaveOf', { n: run.waveNo, total: run.wavesTotal })}</span>
               </div>
               {#if paid > 0}<p class="dust-chip">{f('runPaid', { n: paid })}</p>{/if}
+              {#if kind === 'lost' && lostWhy.length}
+                <div class="report">
+                  <b>{$t('runLostWhyTitle')}</b>
+                  <ul>{#each lostWhy as why (why)}<li>{why}</li>{/each}</ul>
+                </div>
+              {/if}
+              {#if kind === 'lost'}{@render lossReport()}{/if}
+              {@render waveLogList()}
+              {#if kind === 'lost' && run.practice}
+                <button type="button" class="act" disabled={busy} onclick={startPractice}>{$t('runPractice')}</button>
+                <p class="small">{$t('runPracticeAbout')}</p>
+              {/if}
               {#if !signedIn}
                 <p class="note">{$t('runGuestNote')}</p>
                 <a class="act link" href={loginHref}>{$t('battleGuestSealLink')}</a>
@@ -752,6 +951,25 @@
               </li>
             {/each}
           </ol>
+        {/if}
+
+        {#if daily}
+          <section class="daily" aria-labelledby="daily-h">
+            <div class="daily-main">
+              <p class="kicker">{$t('runDaily')}</p>
+              <h2 id="daily-h">{titleOf(daily.route)}</h2>
+              <p class="small">{$t('runDailyAbout')}</p>
+              <p class="small">{f('runDailyStats', { a: daily.started, b: daily.won })}</p>
+              {#if daily.mine}
+                <p class="small daily-mine">
+                  {daily.mine.state === 'won' ? $t('runDailyWon') : f('runDailyMine', { n: daily.mine.waveNo, total: daily.mine.wavesTotal })}
+                </p>
+              {/if}
+            </div>
+            {#if !daily.mine}
+              <button type="button" class="act" disabled={busy} onclick={startDaily}>{$t('runDailyPlay')}</button>
+            {/if}
+          </section>
         {/if}
 
         <!-- Маршрут один — кнопка «Начать заново» уже в баннере итога. -->
@@ -791,6 +1009,23 @@
 {#if banner}
   <div class="banner" role="status"><span>{f('runWaveOf', { n: banner.n, total: banner.total })}</span></div>
 {/if}
+
+{#snippet waveLogList()}
+  {#if waveLog.length}
+    <div class="wave-log">
+      <b>{$t('runLog')}</b>
+      <ul>
+        {#each waveLog as w (w.matchId)}
+          <li>
+            <span class="wl-name">{f('runLogWave', { n: w.waveNo })}{w.practice ? ` · ${$t('runLogPractice')}` : ''}</span>
+            <span class="wl-out" class:wl-out--won={w.outcome === 'player'}>{w.outcome === 'player' ? $t('runLogWon') : $t('runLogLost')}</span>
+            <button type="button" class="quiet" onclick={() => (replayOf = w)}>{$t('runLogWatch')}</button>
+          </li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
+{/snippet}
 
 {#snippet lossReport()}
   {#if report}
@@ -833,9 +1068,13 @@
           {#if takeable > 0}<span class="badge badge--gold" title={$t('runTrophies')}>{f('runBadgeTrophies', { n: takeable })}</span>{/if}
           {#if r.freeSwaps > 0}<span class="badge" title={$t('runSwapFree')}>{f('runBadgeSwaps', { n: r.freeSwaps })}</span>{/if}
         </button>
-        <button type="button" class="tool tool--quiet" disabled={busy} onclick={abandon}>
-          {abandonAsked ? $t('runAbandonConfirm') : $t('runAbandon')}
-        </button>
+        {#if practicing}
+          <button type="button" class="tool tool--quiet" disabled={busy} onclick={endPractice}>{$t('runPracticeExit')}</button>
+        {:else}
+          <button type="button" class="tool tool--quiet" disabled={busy} onclick={abandon}>
+            {abandonAsked ? $t('runAbandonConfirm') : $t('runAbandon')}
+          </button>
+        {/if}
       </div>
     </header>
     {#if !signedIn}
@@ -891,12 +1130,15 @@
         </span>
         <span class="chips">
           <span class="chip">{f('runCardsRange', { min: w.minCards, max: w.maxCards })}</span>
+          {#if r.healCharges > 0}<span class="chip chip--heal">{f('runHealCharges', { n: r.healCharges })}</span>{/if}
           {#if w.raceHint && raceName(w.raceHint)}<span class="chip">{f('runRaceHint', { race: raceName(w.raceHint) })}</span>{/if}
           {#if signedIn && w.rewardDust > 0}<span class="chip chip--gold">+{f('runRewardDust', { n: w.rewardDust })}</span>{/if}
         </span>
       </section>
 
-      {#if w.waveNo === 1 && !tipsShut}
+      {#if practicing}
+        <p class="tip" role="note"><span>{$t('runPracticeAbout')}</span></p>
+      {:else if w.waveNo === 1 && !tipsShut}
         <p class="tip" role="note">
           <span>{$t('runTipText')}</span>
           <button type="button" class="tip-ok" onclick={shutTips}>{$t('runTipGot')}</button>
@@ -906,7 +1148,7 @@
       <div class="field">
         <div class="field-main">
           {#if w.field}
-            <RunPlacement compact field={w.field} {chosen} bind:cells {cards} onreset={resetCells} onpick={(id) => id && ((inspected = id), (inspectedFoe = null))} onlook={(slug, round) => ((inspectedFoe = slug), (inspectedRound = round ?? null), interact('battle_run_look', slug, round ?? null))} />
+            <RunPlacement compact quiet={practicing || (w.waveNo === 1 && !tipsShut)} field={w.field} {chosen} bind:cells {cards} onreset={resetCells} onremove={unfield} ondrag={(on) => (dragging = on)} onpick={(id) => id && ((inspected = id), (inspectedFoe = null))} onlook={(slug, round) => ((inspectedFoe = slug), (inspectedRound = round ?? null), interact('battle_run_look', slug, round ?? null))} />
           {:else}
             <p class="note">{$t('runPickWho')}</p>
           {/if}
@@ -916,6 +1158,9 @@
           <aside class="inspect" class:inspect--foe={shown.foe} aria-label={shown.foe ? $t('runFoeNow') : $t('runCardNow')}>
             <span class="kicker">{shown.foe ? $t('runFoeNow') : $t('runCardNow')}</span>
             <h2>{cardCopy(sc, $lang).title}</h2>
+            {#if shown.id && chosen.includes(shown.id)}
+              <button type="button" class="quiet" onclick={() => unfield(shown.id!)}>{$t('runPlaceRemove')}</button>
+            {/if}
             <span class="face" aria-hidden="true">
               <BattleCardFace card={sc} {frames} owned={true} uniform transition={false} interactive={false} />
             </span>
@@ -941,7 +1186,15 @@
         </p>
       {/if}
 
-      <footer class="hand">
+      <footer class="hand" class:hand--drop={dragging} ondragover={(e) => dragging && e.preventDefault()} ondrop={dropOnHand}>
+        {#if dragging}<p class="drop-note" role="status">{$t('runDropHere')}</p>{/if}
+        {#if chosen.length}
+          <div class="dropzone" class:dropzone--hot={dragging} aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v12M6 12l6 6 6-6" /></svg>
+            <b>{$t('runDropZone')}</b>
+            <span>{$t('runDropZoneHow')}</span>
+          </div>
+        {/if}
         <ul class="hand-cards" aria-label={$t('runPickWho')}>
           {#each r.squad as c (c.cardId)}
             {@const face = cardOf(c.cardId)}
@@ -951,11 +1204,11 @@
               <button
                 type="button"
                 class="hcard"
-                disabled={c.dead}
+                aria-haspopup="menu"
                 aria-pressed={c.dead ? undefined : on}
                 aria-label={`${nameOf(c.cardId) || c.slug}, ${f('runHealth', { h: c.health, m: c.maxHealth })}`}
                 title={nameOf(c.cardId) || c.slug}
-                onclick={() => (toggle(c.cardId), sfx.lift(), (inspected = c.cardId), (inspectedFoe = null))}
+                onclick={(e) => openMenu(e, c.cardId)}
               >
                 {#if face}
                   <span class="face">
@@ -970,12 +1223,15 @@
                 <span class="hp-num">{$t('runFallen')}</span>
               {:else}
                 <span class="hp-bar" aria-hidden="true"><i style:width="{pct}%" class:low={pct <= 34} class:mid={pct > 34 && pct <= 66}></i></span>
-                <span class="hp-num" aria-hidden="true">{c.health}/{c.maxHealth}</span>
+                <span class="hp-num" class:low={pct <= 34} class:mid={pct > 34 && pct <= 66} aria-hidden="true"><svg class="heart" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 5 6.4 5c2 0 3.6 1.1 4.6 2.7h2C14 6.1 15.6 5 17.6 5 21 5 23.1 8.4 21.6 11.8 19.5 16.4 12 21 12 21z" fill="currentColor" /></svg><b>{c.health}</b><span>/{c.maxHealth}</span></span>
               {/if}
             </li>
           {/each}
         </ul>
-        <p class="hand-note">{$t('runHandHealth')}</p>
+        <p class="hand-note">
+          {$t('runHandHealth')}<br />
+          {#if chosen.length}{$t('runRemoveHow')}<span class="drag-how"> {$t('runRemoveDrag')}</span>{/if}
+        </p>
         <div class="go">
           <span class="small">{f('runChosen', { n: chosen.length, max: w.maxCards })}</span>
           {#if whyNot}<span class="small why" id="why-not" role="status">{whyNot}</span>{/if}
@@ -1009,6 +1265,7 @@
             <p class="small">{$t('runLootNone')}</p>
           {/if}
           {#if r.freeSwaps > 0}<p class="chip chip--gold chip--inline">{f('runFreeSwaps', { n: r.freeSwaps })}</p>{/if}
+          {@render waveLogList()}
           {@render trophies(r)}
         {/if}
       </aside>
@@ -1025,10 +1282,13 @@
         <button
           type="button"
           class="pick"
-          disabled={!pick || c.dead}
+          class:pick--look={!pick}
+          disabled={pick && c.dead}
           aria-pressed={pick && !c.dead ? on : undefined}
           aria-label={nameOf(c.cardId) || c.slug}
-          onclick={() => toggle(c.cardId)}
+          onmouseenter={(e) => peekHover(e, face, f('runHealth', { h: c.health, m: c.maxHealth }))}
+          onmouseleave={peekLeave}
+          onclick={() => (pick ? toggle(c.cardId) : peekOpen(face, f('runHealth', { h: c.health, m: c.maxHealth })))}
         >
           {#if face}
             <span class="face">
@@ -1046,10 +1306,13 @@
           {@const pct = Math.max(0, Math.min(100, Math.round((c.health / Math.max(c.maxHealth, 1)) * 100)))}
           <span class="hp" role="img" aria-label={f('runHealth', { h: c.health, m: c.maxHealth })}>
             <span class="hp-bar"><i style:width="{pct}%" class:low={pct <= 34} class:mid={pct > 34 && pct <= 66}></i></span>
-            <span class="hp-num">{c.health}/{c.maxHealth}</span>
+            <span class="hp-num" class:low={pct <= 34} class:mid={pct > 34 && pct <= 66}><svg class="heart" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 5 6.4 5c2 0 3.6 1.1 4.6 2.7h2C14 6.1 15.6 5 17.6 5 21 5 23.1 8.4 21.6 11.8 19.5 16.4 12 21 12 21z" fill="currentColor" /></svg><b>{c.health}</b><span>/{c.maxHealth}</span></span>
           </span>
         {/if}
         {#if c.loaned && r.squad.some((x) => !x.loaned)}<span class="chip chip--tag">{$t('runLoaned')}</span>{/if}
+        {#if r.healCharges > 0 && !c.dead && c.health < c.maxHealth}
+          <button type="button" class="quiet quiet--heal" disabled={busy} onclick={() => heal(c.cardId)}>{$t('runMenuHeal')}</button>
+        {/if}
         {#if r.swapCost != null && r.bench > 0}
           <button type="button" class="quiet" disabled={busy} onclick={() => swap(c.cardId)}>
             {r.freeSwaps > 0 ? $t('runSwapFree') : f('runSwapDo', { n: r.swapCost })}
@@ -1118,14 +1381,21 @@
         {#each [...open, ...had] as tr (tr.cardId)}
           {@const face = cardOf(tr.cardId)}
           <li class:taken={done(tr)}>
-            <span class="trophy-face">
+            <button
+              type="button"
+              class="trophy-face trophy-face--look"
+              aria-label={nameOf(tr.cardId) || tr.slug}
+              onmouseenter={(e) => peekHover(e, face, f('runTrophyTake', { n: tr.priceDust }))}
+              onmouseleave={peekLeave}
+              onclick={() => peekOpen(face, done(tr) ? $t('runTrophyTaken') : f('runTrophyTake', { n: tr.priceDust }))}
+            >
               {#if face}
                 <span class="face">
                   <BattleCardFace card={face} {frames} owned={true} uniform transition={false} interactive={false} />
                 </span>
               {/if}
               {#if done(tr)}<span class="tick" aria-hidden="true">✓</span>{/if}
-            </span>
+            </button>
             <span class="card-name">{nameOf(tr.cardId) || tr.slug}</span>
             {#if done(tr)}
               <span class="small">{$t('runTrophyTaken')}</span>
@@ -1164,6 +1434,37 @@
     </section>
   {/if}
 {/snippet}
+
+{#if replayOf && token}
+  <RunReplay
+    matchId={replayOf.matchId}
+    {token}
+    title="{f('runLogWave', { n: replayOf.waveNo })}{replayOf.practice ? ` · ${$t('runLogPractice')}` : ''}"
+    {cards}
+    {frames}
+    {motions}
+    onclose={() => (replayOf = null)}
+  />
+{/if}
+
+{#if menu && menuItems.length}
+  <CardMenu
+    title={nameOf(menu.cardId)}
+    art={(() => {
+      const face = cardOf(menu.cardId);
+      return face?.artUrlOverride || face?.artUrl || null;
+    })()}
+    health={(() => {
+      const c = run?.squad.find((x) => x.cardId === menu?.cardId);
+      return c && !c.dead ? { h: c.health, m: c.maxHealth } : null;
+    })()}
+    items={menuItems}
+    at={menu.at}
+    onclose={() => (menu = null)}
+  />
+{/if}
+
+<CardPeek hover={hovered} look={looked} {frames} note={lookedNote} onclose={() => (looked = null)} />
 
 <style>
   /* Автобой: одна кнопка поверх сцены, в левом углу: справа у сцены своя кнопка. */
@@ -1427,6 +1728,17 @@
     position: relative;
     display: block;
     width: 100%;
+  }
+  .trophy-face--look {
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: zoom-in;
+    text-align: left;
+  }
+  .grid li:not(.on):not(.dead) .pick.pick--look:not(:disabled) {
+    opacity: 1;
+    cursor: zoom-in;
   }
   .grid li.taken .face {
     opacity: 0.55;
@@ -1803,26 +2115,59 @@
     width: 100%;
   }
   .hp-bar {
-    flex: 1;
-    height: 7px;
-    border: 1px solid #d8c6b1;
-    background: rgba(255, 255, 255, 0.5);
+    flex: 1 1 auto;
+    height: 8px;
+    min-height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e8dccb;
+    box-shadow: inset 0 1px 2px rgba(52, 37, 28, 0.3);
   }
   .hp-bar i {
     display: block;
     height: 100%;
-    background: #4a6b3a;
+    border-radius: 999px;
+    background: linear-gradient(#7aa561, #4a6b3a);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    transition: width 0.45s ease;
   }
   .hp-bar i.mid {
-    background: #b08a3a;
+    background: linear-gradient(#dbb85f, #b08a3a);
   }
   .hp-bar i.low {
-    background: #8f2f22;
+    background: linear-gradient(#c75a49, #8f2f22);
   }
   .hp-num {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    color: #4a6b3a;
     font-size: 0.82rem;
-    color: #34251c;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .hp-num.mid {
+    color: #8a6a22;
+  }
+  .hp-num.low {
+    color: #8f2f22;
+  }
+  .hp-num b {
+    font-family: Fraunces, Georgia, serif;
+    font-size: 1.05em;
+    font-weight: 700;
+  }
+  .hp-num span {
+    color: #8a6a55;
+    font-size: 0.9em;
+  }
+  .hp-num .heart {
+    flex: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hp-bar i {
+      transition: none;
+    }
   }
   ul {
     list-style: none;
@@ -2004,6 +2349,65 @@
     padding: 0.3rem 0.8rem;
     font-size: 0.82rem;
   }
+  .wave-log {
+    margin: 0.6rem 0;
+    font-size: 0.9rem;
+  }
+  .wave-log ul {
+    display: grid;
+    gap: 0.3rem;
+    margin: 0.3rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .wave-log li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 0.8rem;
+  }
+  .wl-name {
+    min-width: 9rem;
+  }
+  .wl-out {
+    color: #8f2f22;
+  }
+  .wl-out--won {
+    color: #4a6b3a;
+  }
+  .chip--heal {
+    border-color: #3d5a2f;
+    background: #e6efdc;
+    color: #3d5a2f;
+  }
+  .quiet--heal {
+    border-color: #3d5a2f;
+    color: #3d5a2f;
+  }
+  .daily {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem 1rem;
+    margin: 0 0 1rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid #d8c6b1;
+    border-left: 3px solid #b08a3a;
+    background: #fcf7ee;
+  }
+  .daily h2 {
+    margin: 0.1rem 0 0.3rem;
+    font-family: Fraunces, Georgia, serif;
+    font-size: 1.2rem;
+  }
+  .daily p {
+    margin: 0.15rem 0 0;
+  }
+  .daily-mine {
+    color: #6f3b24;
+    font-weight: 600;
+  }
   .report {
     display: flex;
     flex-wrap: wrap;
@@ -2148,6 +2552,7 @@
   /* Рука, число выбранных и кнопка — одна полоса по центру под полем: кнопка
      стоит рядом с картами, а не в дальнем углу окна. */
   .hand {
+    position: relative;
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: end;
@@ -2202,6 +2607,65 @@
     padding: 0.35rem 0.25rem 0.3rem;
     overflow-x: auto;
   }
+  /* Место, куда отпустить карту, чтобы убрать её с поля: видно всегда, пока на поле есть карты. */
+  .dropzone {
+    display: none;
+    grid-column: 1;
+    align-self: center;
+    justify-self: start;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    max-width: 11rem;
+    padding: 0.6rem 0.8rem;
+    border: 2px dashed #c9b49a;
+    background: rgba(255, 255, 255, 0.35);
+    color: #6f3b24;
+    font-size: 0.8rem;
+    line-height: 1.25;
+    text-align: center;
+  }
+  .dropzone b {
+    font-family: Fraunces, Georgia, serif;
+    font-size: 0.95rem;
+  }
+  .dropzone--hot {
+    border-color: #8f2f22;
+    background: rgba(143, 47, 34, 0.1);
+    color: #8f2f22;
+  }
+  @media (hover: hover) and (pointer: fine) and (min-width: 48rem) {
+    .dropzone {
+      display: flex;
+    }
+  }
+  /* Перетаскивание есть только там, где есть мышь. */
+  .drag-how {
+    display: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .drag-how {
+      display: inline;
+    }
+  }
+  .hand--drop {
+    outline: 2px dashed #8f2f22;
+    outline-offset: -4px;
+    background: rgba(143, 47, 34, 0.06);
+  }
+  .drop-note {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    background: rgba(252, 247, 238, 0.88);
+    color: #8f2f22;
+    font-weight: 600;
+    pointer-events: none;
+  }
   .hand-cards li {
     flex: none;
     display: flex;
@@ -2240,6 +2704,8 @@
   }
   .hand-cards .hp-bar {
     display: block;
+    flex: none;
+    width: 100%;
   }
   .go {
     display: flex;
@@ -2255,9 +2721,13 @@
     align-self: center;
   }
   .hand-cards .hp-num {
-    font-size: 0.72rem;
-    text-align: center;
-    color: #6f3b24;
+    justify-content: center;
+    font-size: 0.8rem;
+  }
+  .hand-cards li.dead .hp-num {
+    justify-content: center;
+    color: #8f2f22;
+    font-style: italic;
   }
   .go .why {
     color: #8f2f22;

@@ -110,7 +110,9 @@ import type {
     SaveBattleChallengeRequest,
     BattleMatch,
     BattleRoute,
+    BattleDaily,
     BattleRun,
+    RunWaveLog,
     AdminRoute,
     RouteProbeState,
     RunSettings,
@@ -4254,8 +4256,35 @@ export const api = {
         sessionToken: string,
         route: string,
         cardIds: string[] = [],
+        daily = false,
     ): Promise<BattleRun> {
-        return runCall(sessionToken, '/battles/runs', { route, cardIds });
+        return runCall(sessionToken, '/battles/runs', { route, cardIds, daily });
+    },
+
+    /** Потратить заряд лечения: полное здоровье названной карте. */
+    async healBattleRunCard(sessionToken: string, runId: string, cardId: string): Promise<BattleRun> {
+        return runCall(sessionToken, `/battles/runs/${runId}/heal`, { cardId });
+    },
+
+    /** Законченные партии забега: по ним открывается пересмотр. */
+    async getBattleRunWaves(sessionToken: string, runId: string): Promise<RunWaveLog[]> {
+        return webFetch(`/battles/runs/${runId}/waves`, {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Пересмотр своей законченной партии до заданного действия. */
+    async replayBattleMatch(sessionToken: string, matchId: string, upto: number): Promise<MatchReplay> {
+        return webFetch(`/battles/matches/${matchId}/replay?upto=${upto}`, {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Маршрут дня и общий счёт; null — режим выключен или маршрутов нет. */
+    async getBattleDaily(sessionToken: string): Promise<BattleDaily | null> {
+        return webFetch('/battles/daily', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
     },
 
     /** Начинает волну — или возвращает открытую. `placements` пусто: сервер ставит сам. */
@@ -4265,6 +4294,15 @@ export const api = {
         placements: { cardId: string; x?: number; y?: number }[] = [],
     ): Promise<BattleMatch> {
         return runCall(sessionToken, `/battles/runs/${runId}/wave`, { placements });
+    },
+
+    /** Тренировка: проигранную волну играют снова, забег не меняется. */
+    async practiceBattleRunWave(
+        sessionToken: string,
+        runId: string,
+        placements: { cardId: string; x?: number; y?: number }[] = [],
+    ): Promise<BattleMatch> {
+        return runCall(sessionToken, `/battles/runs/${runId}/practice`, { placements });
     },
 
     async getBattleRun(sessionToken: string, runId: string): Promise<BattleRun> {

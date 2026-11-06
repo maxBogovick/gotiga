@@ -270,10 +270,11 @@ impl Repository {
         waves_total: i16,
         squad: &str,
         seed: i64,
+        daily: Option<chrono::NaiveDate>,
     ) -> Result<Option<BattleRun>> {
         Ok(sqlx::query_as::<_, BattleRun>(
-            "INSERT INTO battle_runs (user_id, route_id, waves_total, squad, seed)
-             VALUES ($1,$2,$3,$4,$5)
+            "INSERT INTO battle_runs (user_id, route_id, waves_total, squad, seed, daily_date)
+             VALUES ($1,$2,$3,$4,$5,$6)
              ON CONFLICT DO NOTHING
              RETURNING id, user_id, route_id, wave_no, waves_total, state, squad, swaps, seed, phase, reward_options, free_swaps",
         )
@@ -282,7 +283,45 @@ impl Repository {
         .bind(waves_total)
         .bind(squad)
         .bind(seed)
+        .bind(daily)
         .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Законченные партии забега по порядку: номер волны, итог, раунды.
+    pub async fn list_run_finished_matches(
+        &self,
+        run_id: Uuid,
+    ) -> Result<Vec<(Uuid, i16, String, Option<i16>)>> {
+        Ok(sqlx::query_as::<_, (Uuid, i16, String, Option<i16>)>(
+            "SELECT id, run_wave, outcome, rounds FROM battle_matches
+              WHERE run_id = $1 AND run_wave IS NOT NULL AND outcome IS NOT NULL
+              ORDER BY created_at",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pg_pool)
+        .await?)
+    }
+
+    /// Забег дня этого человека за эти сутки, если он уже был.
+    pub async fn find_daily_battle_run(&self, user_id: Uuid, day: chrono::NaiveDate) -> Result<Option<BattleRun>> {
+        Ok(sqlx::query_as::<_, BattleRun>(
+            "SELECT id, user_id, route_id, wave_no, waves_total, state, squad, swaps, seed, phase, reward_options, free_swaps
+               FROM battle_runs WHERE user_id = $1 AND daily_date = $2",
+        )
+        .bind(user_id)
+        .bind(day)
+        .fetch_optional(&self.pg_pool)
+        .await?)
+    }
+
+    /// Сколько человек начали забег дня и сколько прошли маршрут до конца.
+    pub async fn daily_battle_run_counts(&self, day: chrono::NaiveDate) -> Result<(i64, i64)> {
+        Ok(sqlx::query_as::<_, (i64, i64)>(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE state = 'won') FROM battle_runs WHERE daily_date = $1",
+        )
+        .bind(day)
+        .fetch_one(&self.pg_pool)
         .await?)
     }
 
@@ -432,6 +471,7 @@ impl Repository {
         old_squad: &str,
         squad: &str,
         add_free_swaps: i32,
+        add_heal_charges: i32,
         dust: Option<(i32, i32)>,
         pick: (&str, i32),
     ) -> Result<Option<BattleRun>> {
@@ -439,7 +479,7 @@ impl Repository {
         lock_wallet(&mut tx, user_id).await?;
         let run = sqlx::query_as::<_, BattleRun>(
             "UPDATE battle_runs
-                SET squad = $4, free_swaps = free_swaps + $5,
+                SET squad = $4, free_swaps = free_swaps + $5, heal_charges = heal_charges + $6,
                     phase = 'wave', reward_options = NULL, updated_at = NOW()
               WHERE id = $1 AND user_id = $2 AND squad = $3
                 AND phase = 'reward' AND state = 'active'
@@ -451,6 +491,7 @@ impl Repository {
         .bind(old_squad)
         .bind(squad)
         .bind(add_free_swaps)
+        .bind(add_heal_charges)
         .fetch_optional(&mut *tx)
         .await?;
         let Some(run) = run else {
@@ -481,6 +522,41 @@ impl Repository {
         }
         tx.commit().await?;
         Ok(Some(run))
+    }
+
+    /// Сколько зарядов лечения у забега.
+    pub async fn run_heal_charges(&self, run_id: Uuid) -> Result<i32> {
+        Ok(sqlx::query_scalar::<_, i32>("SELECT heal_charges FROM battle_runs WHERE id = $1")
+            .bind(run_id)
+            .fetch_optional(&self.pg_pool)
+            .await?
+            .unwrap_or(0))
+    }
+
+    /// Потратить заряд лечения: отряд меняется только если он тот, по которому
+    /// лечение посчитано, и заряд есть. `None` — отряд уже другой или зарядов нет
+    /// (повтор или гонка).
+    pub async fn heal_run_card(
+        &self,
+        run_id: Uuid,
+        user_id: Uuid,
+        old_squad: &str,
+        squad: &str,
+    ) -> Result<Option<BattleRun>> {
+        Ok(sqlx::query_as::<_, BattleRun>(
+            "UPDATE battle_runs
+                SET squad = $4, heal_charges = heal_charges - 1, updated_at = NOW()
+              WHERE id = $1 AND user_id = $2 AND squad = $3
+                AND heal_charges > 0 AND state = 'active'
+              RETURNING id, user_id, route_id, wave_no, waves_total, state, squad, swaps, seed,
+                        phase, reward_options, free_swaps",
+        )
+        .bind(run_id)
+        .bind(user_id)
+        .bind(old_squad)
+        .bind(squad)
+        .fetch_optional(&self.pg_pool)
+        .await?)
     }
 
     /// Замена: одна транзакция под замком кошелька. Забег двигается только с

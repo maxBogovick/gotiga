@@ -5057,6 +5057,8 @@ export interface BattleRun {
     /** Цена следующей замены; null — гостю замены нет. */
     swapCost: number | null;
     freeSwaps: number;
+    /** Заряды лечения: каждый лечит одну раненую карту по выбору игрока. */
+    healCharges: number;
     trophies: RunTrophy[];
     /** Выбранные награды забега по порядку. */
     picks: RunPick[];
@@ -5064,6 +5066,27 @@ export interface BattleRun {
     bench: number;
     /** Пыль, записанная волной, которая кончилась этим ответом; иначе 0. */
     paidDust: number;
+    /** Проигранный забег: волну можно сыграть снова без наград. */
+    practice?: { wave: RunWavePreview; squad: RunSquadCard[] } | null;
+}
+
+/** Законченная партия забега: из списка открывается пересмотр. */
+export interface RunWaveLog {
+    matchId: string;
+    waveNo: number;
+    outcome: BattleOutcome;
+    rounds: number | null;
+    /** Повтор проигранной волны: тренировка. */
+    practice: boolean;
+}
+
+/** Маршрут дня: один на всех на сутки, общий счёт без имён. */
+export interface BattleDaily {
+    date: string;
+    route: BattleRoute;
+    started: number;
+    won: number;
+    mine: { waveNo: number; wavesTotal: number; state: 'active' | 'lost' | 'won' } | null;
 }
 
 /** Выбранная награда: перед какой волной, какая и на сколько. */

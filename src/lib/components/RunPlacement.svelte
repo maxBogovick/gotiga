@@ -23,7 +23,10 @@
     onreset,
     onpick,
     onlook,
+    onremove,
+    ondrag,
     compact = false,
+    quiet = false,
   }: {
     field: RunWaveField;
     /** Кто выходит в волну: номера карт отряда. */
@@ -35,13 +38,24 @@
     onpick?: (cardId: string | null) => void;
     /** Игрок нажал вражескую карту на поле: страница показывает её подробно. */
     onlook?: (slug: string, round?: number) => void;
+    /** Игрок убирает свою карту с поля: страница снимает её с выхода в волну. */
+    onremove?: (cardId: string) => void;
+    /** Идёт перетаскивание своей карты с поля: страница показывает, куда её отпустить, чтобы убрать. */
+    ondrag?: (on: boolean) => void;
     /** Экран без прокрутки: поле занимает всю высоту, ряд карт и подсказку даёт страница. */
     compact?: boolean;
+    /** Страница уже показывает подсказку: строку в полосе не повторять. */
+    quiet?: boolean;
   } = $props();
 
   /** Выбранная карта: следующее нажатие по клетке переставит её. */
   let picked = $state<string | null>(null);
+  /** Карта, которую тащат мышью с поля. Перетаскивание — дополнение, нажатие остаётся полноценным путём. */
+  let dragId = $state<string | null>(null);
   $effect(() => onpick?.(picked));
+  $effect(() => {
+    if (picked) pop = null;
+  });
 
   // Зоны ударов включены, пока игрок сам их не выключил: это главная подсказка
   // расстановки, а прятать её за кнопкой значит, что новичок её не увидит.
@@ -206,6 +220,8 @@
   }
 
   function showCell(e: Event, x: number, y: number, pinned = false) {
+    // Пока карта выбрана, игрок ставит её: карточка закрыла бы клетки, куда нажимать.
+    if (picked || dragId) return;
     if (pop?.pinned && !pinned) return;
     const info = cellInfo(x, y);
     if (!info) {
@@ -221,8 +237,11 @@
     const key = cellKey({ x, y });
     const moved = press(x, y);
     const same = pop?.pinned && pop.id === key;
+    // Свои карты и свободные клетки своей половины — места действия, а не справка:
+    // карточка с них не закрепляется и не заслоняет соседние клетки.
+    const acting = ownAt.has(key) || (playerHalf(y) && openKeys.has(key));
     pop = null;
-    if (!moved && !same) showCell(e, x, y, true);
+    if (!moved && !same && !acting) showCell(e, x, y, true);
   }
   function showText(e: Event, title: string, text: string) {
     if (pop?.pinned) return;
@@ -231,6 +250,39 @@
   function outside(e: PointerEvent) {
     if (pop?.pinned && !(e.target as Element | null)?.closest?.('.tile')) pop = null;
   }
+  function dragStart(e: DragEvent, id: string) {
+    dragId = id;
+    pop = null;
+    e.dataTransfer?.setData('application/x-gotiga-card', id);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    ondrag?.(true);
+  }
+  function dragEnd() {
+    dragId = null;
+    ondrag?.(false);
+  }
+  function dropOn(x: number, y: number) {
+    const id = dragId;
+    dragEnd();
+    if (!id) return;
+    cells = moveTo(cells, id, { x, y }, field.openCells);
+    picked = null;
+    sfx.drop();
+  }
+  /** Крестик на своей карте: убрать её с поля сразу, без выбора. */
+  function removeAt(x: number, y: number) {
+    const id = ownAt.get(cellKey({ x, y }));
+    picked = null;
+    pop = null;
+    if (id) onremove?.(id);
+  }
+  function removePicked() {
+    const id = picked;
+    picked = null;
+    pop = null;
+    if (id) onremove?.(id);
+  }
+
   function portal(node: HTMLElement) {
     document.body.appendChild(node);
     return { destroy: () => node.remove() };
@@ -273,7 +325,13 @@
       onblur={hideHover}
       onclick={() => ((picked = null), (pop = null), onreset())}
     >{$t('runPlaceReset')}</button>
-    {#if compact}<p class="hint hint--bar">{$t('runPlaceHint')}</p>{/if}
+    {#if picked && cells[picked]}
+      <span class="pickbar" role="group" aria-label={idName(picked)}>
+        <span class="pickbar-text">{$t('runPlaceMoving').replace('{name}', idName(picked))}<span class="pick-drag">{', ' + $t('runPlaceDragDown')}</span></span>
+        {#if onremove}<button type="button" class="chip-btn chip-btn--remove" onclick={removePicked}>{$t('runPlaceRemove')}</button>{/if}
+        <button type="button" class="chip-btn" onclick={() => (picked = null)}>{$t('runPlaceCancel')}</button>
+      </span>
+    {:else if compact && !quiet}<p class="hint hint--bar">{$t('runPlaceHint')}</p>{/if}
   </div>
 
   <div class="wrap">
@@ -305,19 +363,26 @@
               class:tile--picked={!!mine && mine === picked}
               class:tile--threat={showThreats && danger.has(key)}
               class:tile--idle={!usable && !(foe && onlook)}
+              class:tile--dragging={!!mine && mine === dragId}
+              draggable={!!mine}
+              ondragstart={(e) => mine && dragStart(e, mine)}
+              ondragend={dragEnd}
+              ondragover={(e) => dragId && usable && e.preventDefault()}
+              ondrop={(e) => (e.preventDefault(), dropOn(x, y))}
               aria-disabled={!usable && !(foe && onlook)}
               aria-label={label(x, y)}
               onmouseenter={(e) => showCell(e, x, y)}
               onmouseleave={hideHover}
               onfocus={(e) => showCell(e, x, y)}
               onblur={hideHover}
-              onclick={(e) => clickCell(e, x, y)}
+              onclick={(e) => ((e.target as Element).closest('.tile-x') ? removeAt(x, y) : clickCell(e, x, y))}
             >
               {#if ground}<BattleGroundMark {ground} occupied={!!(mine || foe || wall)} />{/if}
               {#if mine}
                 {@const c = byId.get(mine)}
                 {#if art(c)}<img class="art" src={art(c)} alt="" draggable="false" />{/if}
                 <span class="nm nm--mine">{idName(mine)}</span>
+                {#if onremove}<span class="tile-x" aria-hidden="true">✕</span>{/if}
               {:else if foe}
                 {@const c = bySlug.get(foe)}
                 {#if art(c)}<img class="art art--foe" src={art(c)} alt="" draggable="false" />{/if}
@@ -423,6 +488,7 @@
   .bar {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 0.5rem;
     margin-bottom: 0.6rem;
   }
@@ -574,6 +640,63 @@
     pointer-events: none;
     box-shadow: inset 0 0 0 2px rgba(214, 84, 62, 0.9), inset 0 0 14px rgba(214, 84, 62, 0.45);
   }
+  .pickbar {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.6rem;
+    flex: 1 1 14rem;
+    min-width: 0;
+  }
+  .pickbar-text {
+    font-size: 0.9rem;
+    color: #34251c;
+  }
+  .pick-drag {
+    display: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .pick-drag {
+      display: inline;
+    }
+  }
+  .chip-btn--remove {
+    border-color: #8f2f22;
+    color: #8f2f22;
+  }
+  .tile-x {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid rgba(241, 230, 212, 0.7);
+    border-radius: 50%;
+    background: rgba(27, 20, 16, 0.85);
+    color: #fff7ec;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  /* Нажимать крестик на телефоне должно быть легко: попадание шире самого значка. */
+  .tile-x::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+  }
+  .tile-x:hover {
+    background: #8f2f22;
+  }
+  .tile--mine {
+    cursor: grab;
+  }
+  .tile--dragging {
+    opacity: 0.45;
+  }
   .tile--idle {
     cursor: default;
   }
@@ -717,6 +840,15 @@
     gap: 0.4rem;
     font-size: 0.9rem;
     color: #6f3b24;
+  }
+  @media (max-width: 48rem) {
+    .legend-row {
+      gap: 0.15rem 0.7rem;
+    }
+    .legend {
+      font-size: 0.76rem;
+      line-height: 1.25;
+    }
   }
   .door--key {
     position: static;

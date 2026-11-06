@@ -69,7 +69,17 @@ impl AppService {
             return self.run_dto(&open).await;
         }
         self.assert_runs_are_on().await?;
-        let route = self.repo.get_battle_route_by_slug(&req.route).await?;
+        let today = chrono::Utc::now().date_naive();
+        let route = if req.daily {
+            // Забег дня один: сыгранный сегодня возвращается как есть.
+            if let Some(done) = self.repo.find_daily_battle_run(user_id, today).await? {
+                return self.run_dto(&done).await;
+            }
+            let slug = self.daily_route_slug(today).await?;
+            self.repo.get_battle_route_by_slug(&slug).await?
+        } else {
+            self.repo.get_battle_route_by_slug(&req.route).await?
+        };
         let total = self.repo.count_battle_route_waves(route.id).await? as i16;
         if total == 0 {
             return Err(AppError::NotFound("No such route".into()));
@@ -124,11 +134,11 @@ impl AppService {
             .collect();
         let written = serde_json::to_string(&squad)
             .map_err(|_| AppError::Internal("Squad will not serialise".into()))?;
-        let seed = Uuid::new_v4().as_u128() as i64;
+        let seed = if req.daily { daily_seed(today) } else { Uuid::new_v4().as_u128() as i64 };
 
         let run = match self
             .repo
-            .insert_battle_run(user_id, route.id, waves_total, &written, seed)
+            .insert_battle_run(user_id, route.id, waves_total, &written, seed, req.daily.then_some(today))
             .await?
         {
             Some(run) => run,
@@ -141,6 +151,50 @@ impl AppService {
         };
         Self::log_domain_event("battle_run_started", "battle_run", run.id, "ok");
         self.run_dto(&run).await
+    }
+
+    /// Законченные партии забега, чтобы игрок мог посмотреть, как прошла волна.
+    pub async fn list_run_waves(&self, user_id: Uuid, id: Uuid) -> Result<Vec<WaveLogDto>> {
+        self.repo.get_battle_run(id, user_id).await?;
+        Ok(wave_log(self.repo.list_run_finished_matches(id).await?))
+    }
+
+    /// Слаг маршрута дня; нет опубликованных маршрутов — отказ.
+    async fn daily_route_slug(&self, day: chrono::NaiveDate) -> Result<String> {
+        let slugs: Vec<String> = self
+            .repo
+            .list_published_battle_routes()
+            .await?
+            .into_iter()
+            .map(|(r, _)| r.slug)
+            .collect();
+        daily_pick(slugs, day).ok_or_else(|| AppError::NotFound("No such route".into()))
+    }
+
+    /// Маршрут дня и общий счёт; `None` — режим выключен или маршрутов нет.
+    pub async fn get_battle_daily(&self, user_id: Uuid) -> Result<Option<DailyDto>> {
+        if !self.get_run_settings().await?.enabled {
+            return Ok(None);
+        }
+        let today = chrono::Utc::now().date_naive();
+        let Ok(slug) = self.daily_route_slug(today).await else {
+            return Ok(None);
+        };
+        let route = self.repo.get_battle_route_by_slug(&slug).await?;
+        let waves = self.repo.count_battle_route_waves(route.id).await? as i16;
+        let (started, won) = self.repo.daily_battle_run_counts(today).await?;
+        let mine = self.repo.find_daily_battle_run(user_id, today).await?.map(|r| DailyMineDto {
+            wave_no: r.wave_no,
+            waves_total: r.waves_total,
+            state: r.state,
+        });
+        Ok(Some(DailyDto {
+            date: today.to_string(),
+            route: Self::route_dto(&route, waves),
+            started,
+            won,
+            mine,
+        }))
     }
 
     pub async fn current_battle_run(&self, user_id: Uuid) -> Result<Option<RunDto>> {
@@ -213,7 +267,59 @@ impl AppService {
             return Err(AppError::BadRequest("run:pickReward".into()));
         }
         self.assert_runs_are_on().await?;
+        let squad = read_squad(&run.squad);
+        self.start_wave_match(user_id, &run, squad, req).await
+    }
 
+    /// Тренировка: проигранную волну можно сыграть снова, с другой расстановкой.
+    /// Партия привязана к проигранному забегу, поэтому её итог (`settle_run_wave`)
+    /// забег не двигает, пыль и трофеи не пишет: забег не меняется.
+    pub async fn practice_run_wave(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        req: BeginWaveRequest,
+    ) -> Result<BattleMatchDto> {
+        let run = self.repo.get_battle_run(id, user_id).await?;
+        if run.state != STATE_LOST {
+            return Err(AppError::BadRequest("run:notOver".into()));
+        }
+        if let Some(open) = self.repo.find_open_run_match(run.id).await? {
+            let state = Self::match_state(&open)?;
+            return Ok(Self::match_dto(&open, state, Vec::new(), 0));
+        }
+        self.assert_runs_are_on().await?;
+        let squad = self.practice_squad(&run).await?;
+        self.start_wave_match(user_id, &run, squad, req).await
+    }
+
+    /// Отряд на начало последней сыгранной волны: карты, что выходили, с тем
+    /// здоровьем, с каким вышли (оно записано в замороженной расстановке партии);
+    /// остальные — как они лежат в забеге.
+    async fn practice_squad(&self, run: &BattleRun) -> Result<Vec<SquadCard>> {
+        let squad = read_squad(&run.squad);
+        let Some(rec) = self.repo.find_unsettled_run_match(run.id, run.wave_no).await? else {
+            return Ok(squad);
+        };
+        let fielded: Vec<Uuid> = rec
+            .run_cards
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok())
+            .unwrap_or_default();
+        let health = serde_json::from_str::<battle_core::Setup>(&rec.setup)
+            .map(|setup| setup.player_health)
+            .unwrap_or_default();
+        Ok(squad_at_wave_start(squad, &fielded, &health))
+    }
+
+    /// Собрать волну и завести партию. Общее для забега и тренировки.
+    async fn start_wave_match(
+        &self,
+        user_id: Uuid,
+        run: &BattleRun,
+        squad: Vec<SquadCard>,
+        req: BeginWaveRequest,
+    ) -> Result<BattleMatchDto> {
         let wave = self.repo.get_battle_route_wave(run.route_id, run.wave_no).await?;
         let etude_cards = self.cards_by_slug().await?;
         let shelf = self.list_battle_cards_public().await?;
@@ -222,7 +328,6 @@ impl AppService {
 
         // Отряд: живые карты, и выходят те, что названы, а иначе — сколько
         // позволяет волна.
-        let squad = read_squad(&run.squad);
         let alive: Vec<&SquadCard> = squad.iter().filter(|c| !c.dead).collect();
         if alive.is_empty() {
             self.repo.end_battle_run(run.id, user_id, STATE_LOST).await?;
@@ -472,6 +577,7 @@ impl AppService {
                 &run.squad,
                 &written,
                 applied.free_swaps,
+                applied.heal_charges,
                 dust,
                 (reward_kind_name(option.kind), option.amount),
             )
@@ -481,6 +587,40 @@ impl AppService {
             None => self.repo.get_battle_run(id, user_id).await?,
         };
         self.run_dto(&run).await
+    }
+
+    /// Потратить заряд лечения на названную карту: полное здоровье. Между волнами;
+    /// гостю лечение положено так же, как награда, из которой оно взялось.
+    pub async fn heal_run_card(&self, user_id: Uuid, id: Uuid, req: HealRequest) -> Result<RunDto> {
+        let run = self.repo.get_battle_run(id, user_id).await?;
+        let run = self.reconcile_run(run).await?;
+        if run.state != STATE_ACTIVE {
+            return Err(AppError::BadRequest("run:over".into()));
+        }
+        if self.repo.find_open_run_match(run.id).await?.is_some() {
+            return Err(AppError::BadRequest("run:waveOpen".into()));
+        }
+        // Зарядов нет: повтор уже сделанного нажатия, отвечаем тем, что есть.
+        if self.repo.run_heal_charges(run.id).await? == 0 {
+            return self.run_dto(&run).await;
+        }
+        let shelf = self.list_battle_cards_public().await?;
+        let max_health: std::collections::HashMap<Uuid, i32> = shelf
+            .iter()
+            .filter_map(|c| c.id.parse().ok().map(|id| (id, c.health as i32)))
+            .collect();
+        let mut squad = read_squad(&run.squad);
+        if !heal_card(&mut squad, req.card_id, |id| max_health.get(&id).copied().unwrap_or(1)) {
+            return Err(AppError::BadRequest("run:noNeedHeal".into()));
+        }
+        let written = serde_json::to_string(&squad)
+            .map_err(|_| AppError::Internal("Squad will not serialise".into()))?;
+        let saved = match self.repo.heal_run_card(run.id, user_id, &run.squad, &written).await? {
+            Some(saved) => saved,
+            None => self.repo.get_battle_run(id, user_id).await?,
+        };
+        Self::log_domain_event("battle_heal", "battle_run", saved.id, "ok");
+        self.run_dto(&saved).await
     }
 
     /// Замена карты отряда на случайную из собрания, не стоящую в отряде.
@@ -565,26 +705,36 @@ impl AppService {
         self.keeper_hand_depth(rec.challenge_id).await
     }
 
+    /// Что игрок видит о волне до её начала: условие, число карт, враги, поле.
+    async fn wave_preview(&self, route_id: Uuid, wave_no: i16) -> Result<WavePreviewDto> {
+        let wave = self.repo.get_battle_route_wave(route_id, wave_no).await?;
+        let board: Vec<String> = match self.repo.get_battle_challenge(wave.challenge_id).await {
+            Ok(base) => serde_json::from_str::<ChallengeSetup>(&base.setup)
+                .map(|setup| setup.keeper_board.into_iter().map(|p| p.card).collect())
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+        let entries: Vec<crate::runs::WaveEntry> =
+            serde_json::from_str(&wave.reinforcements).unwrap_or_default();
+        let enemies = crate::runs::wave_enemy_slugs(board, &entries);
+        let field = self.wave_field(&wave).await;
+        Ok(WavePreviewDto {
+            wave_no: wave.wave_no,
+            min_cards: wave.min_cards,
+            max_cards: wave.max_cards,
+            goal: read_goal(wave.goal.as_deref()).ok().flatten(),
+            race_hint: wave.race_hint,
+            reward_dust: wave.reward_dust,
+            enemies,
+            field,
+        })
+    }
+
     async fn run_dto(&self, run: &BattleRun) -> Result<RunDto> {
         let route = self.repo.get_battle_route(run.route_id).await?;
         let waves = self.repo.count_battle_route_waves(route.id).await? as i16;
         let shelf = self.list_battle_cards_public().await?;
-        let squad = read_squad(&run.squad)
-            .into_iter()
-            .map(|c| {
-                let card = shelf.iter().find(|s| s.id.parse().ok() == Some(c.card_id));
-                let max_health = card.map(|s| s.health as i32).unwrap_or(0);
-                SquadCardDto {
-                    card_id: c.card_id.to_string(),
-                    slug: card.map(|s| s.slug.clone()).unwrap_or_default(),
-                    health: if c.dead { 0 } else { c.health.unwrap_or(max_health) },
-                    max_health,
-                    dead: c.dead,
-                    loaned: c.loaned,
-                    cell: c.cell.and_then(|(x, y)| battle_core::Cell::new(x, y)),
-                }
-            })
-            .collect();
+        let squad = squad_dtos(read_squad(&run.squad), &shelf);
         let match_id = self.repo.find_open_run_match(run.id).await?.map(|m| m.id.to_string());
         let guest = self.repo.user_is_guest(run.user_id).await?;
         let settings = self.get_run_settings().await?;
@@ -634,27 +784,19 @@ impl AppService {
             Vec::new()
         };
         let next_wave = if run.state == STATE_ACTIVE {
-            let wave = self.repo.get_battle_route_wave(run.route_id, run.wave_no).await?;
-            let board: Vec<String> = match self.repo.get_battle_challenge(wave.challenge_id).await {
-                Ok(base) => serde_json::from_str::<ChallengeSetup>(&base.setup)
-                    .map(|setup| setup.keeper_board.into_iter().map(|p| p.card).collect())
-                    .unwrap_or_default(),
-                Err(_) => Vec::new(),
-            };
-            let entries: Vec<crate::runs::WaveEntry> =
-                serde_json::from_str(&wave.reinforcements).unwrap_or_default();
-            let enemies = crate::runs::wave_enemy_slugs(board, &entries);
-            let field = self.wave_field(&wave).await;
-            Some(WavePreviewDto {
-                wave_no: wave.wave_no,
-                min_cards: wave.min_cards,
-                max_cards: wave.max_cards,
-                goal: read_goal(wave.goal.as_deref()).ok().flatten(),
-                race_hint: wave.race_hint,
-                reward_dust: wave.reward_dust,
-                enemies,
-                field,
-            })
+            Some(self.wave_preview(run.route_id, run.wave_no).await?)
+        } else {
+            None
+        };
+        // Проигранный забег можно переиграть: волна и отряд на её начало.
+        let practice = if run.state == STATE_LOST && settings.enabled {
+            match self.wave_preview(run.route_id, run.wave_no).await {
+                Ok(wave) => Some(PracticeDto {
+                    wave,
+                    squad: squad_dtos(self.practice_squad(run).await?, &shelf),
+                }),
+                Err(_) => None,
+            }
         } else {
             None
         };
@@ -672,12 +814,47 @@ impl AppService {
             reward,
             swap_cost: (!guest).then(|| settings.swap_cost(run.swaps, run.free_swaps)),
             free_swaps: run.free_swaps,
+            heal_charges: self.repo.run_heal_charges(run.id).await?,
             trophies,
             picks,
             bench,
             paid_dust: 0,
+            practice,
         })
     }
+}
+
+/// Отряд на начало волны: карты, что выходили, встают с тем здоровьем, с каким
+/// вышли (`health` идёт в порядке `fielded`), даже если волна их убила; остальные
+/// остаются как есть, и павшие раньше остаются павшими.
+pub(crate) fn squad_at_wave_start(mut squad: Vec<SquadCard>, fielded: &[Uuid], health: &[i32]) -> Vec<SquadCard> {
+    for (i, card_id) in fielded.iter().enumerate() {
+        if let Some(card) = squad.iter_mut().find(|c| c.card_id == *card_id) {
+            card.dead = false;
+            card.health = health.get(i).copied();
+        }
+    }
+    squad
+}
+
+/// Отряд для ответа: здоровье и имя по полке.
+fn squad_dtos(squad: Vec<SquadCard>, shelf: &[BattleCardDto]) -> Vec<SquadCardDto> {
+    squad
+        .into_iter()
+        .map(|c| {
+            let card = shelf.iter().find(|s| s.id.parse().ok() == Some(c.card_id));
+            let max_health = card.map(|s| s.health as i32).unwrap_or(0);
+            SquadCardDto {
+                card_id: c.card_id.to_string(),
+                slug: card.map(|s| s.slug.clone()).unwrap_or_default(),
+                health: if c.dead { 0 } else { c.health.unwrap_or(max_health) },
+                max_health,
+                dead: c.dead,
+                loaned: c.loaned,
+                cell: c.cell.and_then(|(x, y)| battle_core::Cell::new(x, y)),
+            }
+        })
+        .collect()
 }
 
 const SLUG_MAX: usize = 60;
@@ -1079,6 +1256,85 @@ impl AppService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn card(dead: bool, health: Option<i32>) -> SquadCard {
+        SquadCard { card_id: Uuid::new_v4(), health, dead, loaned: false, cell: None }
+    }
+
+    #[test]
+    fn practice_starts_from_the_health_the_wave_started_with() {
+        let (fell, wounded, spare, long_dead) =
+            (card(true, Some(0)), card(false, Some(1)), card(false, Some(9)), card(true, Some(0)));
+        let ids = (fell.card_id, wounded.card_id, spare.card_id, long_dead.card_id);
+        let squad = vec![fell, wounded, spare, long_dead];
+        // В волну вышли две карты: упавшая в ней и раненая; здоровье — с начала волны.
+        let back = squad_at_wave_start(squad, &[ids.0, ids.1], &[7, 5]);
+        let get = |id: Uuid| back.iter().find(|c| c.card_id == id).unwrap();
+        assert!(!get(ids.0).dead);
+        assert_eq!(get(ids.0).health, Some(7));
+        assert_eq!(get(ids.1).health, Some(5));
+        // Не выходившая карта не меняется, павшая раньше остаётся павшей.
+        assert_eq!(get(ids.2).health, Some(9));
+        assert!(get(ids.3).dead);
+    }
+
+    /// Заряд лечения тратится ровно один раз, и только на тот отряд, по которому посчитан.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_heal_charge_is_spent_once(pool: sqlx::PgPool) {
+        let repo = crate::db::Repository::new(pool.clone());
+        let ctx = crate::models::ClientContext { ip: None, user_agent: None, country_code: None, city: None };
+        let user = repo.create_guest_user(&ctx).await.unwrap();
+        let route: Uuid = sqlx::query_scalar(
+            "INSERT INTO battle_routes (slug, title_en, title_ru, status) VALUES ('h', 'H', 'Н', 'published') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let run = repo.insert_battle_run(user.id, route, 3, "[1]", 1, None).await.unwrap().unwrap();
+        assert_eq!(repo.run_heal_charges(run.id).await.unwrap(), 0);
+        // Зарядов нет: лечить нечем.
+        assert!(repo.heal_run_card(run.id, user.id, "[1]", "[2]").await.unwrap().is_none());
+
+        sqlx::query("UPDATE battle_runs SET heal_charges = 1 WHERE id = $1").bind(run.id).execute(&pool).await.unwrap();
+        // Отряд уже другой (гонка с наградой или заменой): заряд не тратится.
+        assert!(repo.heal_run_card(run.id, user.id, "[stale]", "[2]").await.unwrap().is_none());
+        assert_eq!(repo.run_heal_charges(run.id).await.unwrap(), 1);
+        // Нужный отряд: лечение записано, заряд потрачен, повтор ничего не делает.
+        let healed = repo.heal_run_card(run.id, user.id, "[1]", "[2]").await.unwrap().unwrap();
+        assert_eq!(healed.squad, "[2]");
+        assert_eq!(repo.run_heal_charges(run.id).await.unwrap(), 0);
+        assert!(repo.heal_run_card(run.id, user.id, "[2]", "[3]").await.unwrap().is_none());
+    }
+
+    /// Один забег дня на человека в сутки держит база, а не код: проверяем индекс.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_database_allows_one_daily_run_a_day(pool: sqlx::PgPool) {
+        let repo = crate::db::Repository::new(pool.clone());
+        let ctx = crate::models::ClientContext { ip: None, user_agent: None, country_code: None, city: None };
+        let user = repo.create_guest_user(&ctx).await.unwrap();
+        let route: Uuid = sqlx::query_scalar(
+            "INSERT INTO battle_routes (slug, title_en, title_ru, status) VALUES ('t', 'T', 'Т', 'published') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 5).unwrap();
+        let next = day.succ_opt().unwrap();
+
+        let first = repo.insert_battle_run(user.id, route, 3, "[]", 1, Some(day)).await.unwrap();
+        assert!(first.is_some());
+        // Закончили забег (иначе второй не вставится по другой причине — один незаконченный).
+        repo.end_battle_run(first.unwrap().id, user.id, "lost").await.unwrap();
+
+        // Тот же день — отказ базы; обычный забег и забег следующего дня проходят.
+        assert!(repo.insert_battle_run(user.id, route, 3, "[]", 2, Some(day)).await.unwrap().is_none());
+        let plain = repo.insert_battle_run(user.id, route, 3, "[]", 3, None).await.unwrap().unwrap();
+        repo.end_battle_run(plain.id, user.id, "lost").await.unwrap();
+        assert!(repo.insert_battle_run(user.id, route, 3, "[]", 4, Some(next)).await.unwrap().is_some());
+
+        assert!(repo.find_daily_battle_run(user.id, day).await.unwrap().is_some());
+        assert_eq!(repo.daily_battle_run_counts(day).await.unwrap(), (1, 0));
+    }
 
     fn route() -> AdminRoute {
         AdminRoute {

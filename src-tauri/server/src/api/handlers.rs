@@ -7305,6 +7305,48 @@ pub async fn begin_battle_run_wave(
     Ok((StatusCode::CREATED, Json(service.begin_run_wave(user.id, id, body).await?)))
 }
 
+/// Законченные волны забега: по ним игрок открывает пересмотр.
+pub async fn list_battle_run_waves(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<crate::runs::WaveLogDto>>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.list_run_waves(user.id, id).await?))
+}
+
+/// Пересмотр своей законченной партии до ступени `upto`.
+pub async fn replay_battle_match(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Query(q): Query<ReplayQuery>,
+) -> Result<Json<crate::models::MatchReplayDto>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.replay_own_battle_match(user.id, id, q.upto).await?))
+}
+
+/// Маршрут дня и общий счёт за сутки.
+pub async fn get_battle_daily(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Option<crate::runs::DailyDto>>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.get_battle_daily(user.id).await?))
+}
+
+/// Сыграть проигранную волну снова: тренировка, забег не меняется.
+pub async fn practice_battle_run_wave(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    body: Option<Json<crate::runs::BeginWaveRequest>>,
+) -> Result<(StatusCode, Json<BattleMatchDto>)> {
+    let user = current_player(&service, &headers).await?;
+    let body = body.map(|b| b.0).unwrap_or_default();
+    Ok((StatusCode::CREATED, Json(service.practice_run_wave(user.id, id, body).await?)))
+}
+
 pub async fn abandon_battle_run(
     State(service): State<AppService>,
     headers: HeaderMap,
@@ -7368,6 +7410,17 @@ pub async fn swap_battle_run_card(
 ) -> Result<Json<crate::runs::RunDto>> {
     let user = current_player(&service, &headers).await?;
     Ok(Json(service.swap_run_card(user.id, id, body).await?))
+}
+
+/// Потратить заряд лечения на карту отряда.
+pub async fn heal_battle_run_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::runs::HealRequest>,
+) -> Result<Json<crate::runs::RunDto>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.heal_run_card(user.id, id, body).await?))
 }
 
 pub async fn take_battle_run_trophy(

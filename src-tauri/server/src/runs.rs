@@ -462,6 +462,23 @@ pub fn reward_kind_name(kind: RewardKind) -> &'static str {
 pub struct Applied {
     pub dust: i32,
     pub free_swaps: i32,
+    /// Заряд лечения: награда «вылечить одну карту» ждёт, пока игрок назовёт карту.
+    pub heal_charges: i32,
+}
+
+/// Вылечить выбранную карту полностью. `false` — карта не из отряда, пала или
+/// и так целая: заряд тратить не на что.
+pub fn heal_card(squad: &mut [SquadCard], card_id: Uuid, max_health: impl Fn(Uuid) -> i32) -> bool {
+    let Some(card) = squad.iter_mut().find(|c| c.card_id == card_id) else {
+        return false;
+    };
+    match card.health {
+        Some(h) if !card.dead && h < max_health(card_id) => {
+            card.health = None;
+            true
+        }
+        _ => false,
+    }
 }
 
 pub fn apply_reward(
@@ -481,16 +498,8 @@ pub fn apply_reward(
                 }
             }
         }
-        RewardKind::HealOne => {
-            let worst = squad
-                .iter_mut()
-                .filter(|c| !c.dead)
-                .filter(|c| c.health.is_some())
-                .min_by_key(|c| c.health.unwrap_or(0) - max_health(c.card_id));
-            if let Some(c) = worst {
-                c.health = None;
-            }
-        }
+        // Отряд не меняется: игрок сам выберет, кого лечить (`heal_card`).
+        RewardKind::HealOne => applied.heal_charges = 1,
         RewardKind::Revive => {
             if let Some(c) = squad.iter_mut().find(|c| c.dead) {
                 c.dead = false;
@@ -639,6 +648,8 @@ pub struct RunDto {
     /// Сколько стоит следующая замена; `None` — гостю замены нет.
     pub swap_cost: Option<i32>,
     pub free_swaps: i32,
+    /// Заряды лечения: каждый полностью лечит одну раненую карту по выбору игрока.
+    pub heal_charges: i32,
     /// Побеждённые враги, которых можно взять на полку.
     pub trophies: Vec<TrophyDto>,
     /// Сколько пыли записала волна, только что кончившаяся этим ответом.
@@ -649,6 +660,79 @@ pub struct RunDto {
     /// Ноль — замена невозможна, и страница говорит об этом заранее.
     pub bench: i32,
     pub paid_dust: i32,
+    /// Проигранный забег: волну можно сыграть снова без наград и без изменения забега.
+    pub practice: Option<PracticeDto>,
+}
+
+/// Законченная партия забега для списка «как прошли волны».
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaveLogDto {
+    pub match_id: String,
+    pub wave_no: i16,
+    pub outcome: String,
+    pub rounds: Option<i16>,
+    /// Повторная партия той же волны после проигрыша: тренировка.
+    pub practice: bool,
+}
+
+/// Первая законченная партия волны — сама волна, следующие — тренировка.
+pub fn wave_log(rows: Vec<(Uuid, i16, String, Option<i16>)>) -> Vec<WaveLogDto> {
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .map(|(id, wave_no, outcome, rounds)| WaveLogDto {
+            match_id: id.to_string(),
+            wave_no,
+            outcome,
+            rounds,
+            practice: !seen.insert(wave_no),
+        })
+        .collect()
+}
+
+/// Маршрут дня: один на всех на сутки (UTC), общее зерно, один забег на человека.
+/// Чужих имён и мест нет: только сколько человек начали и прошли и итог самого игрока.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyDto {
+    pub date: String,
+    pub route: RouteDto,
+    pub started: i64,
+    pub won: i64,
+    pub mine: Option<DailyMineDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyMineDto {
+    pub wave_no: i16,
+    pub waves_total: i16,
+    pub state: String,
+}
+
+/// Маршрут дня по номеру суток: из опубликованных, в порядке слагов. Пусто — `None`.
+pub fn daily_pick(mut slugs: Vec<String>, day: chrono::NaiveDate) -> Option<String> {
+    if slugs.is_empty() {
+        return None;
+    }
+    slugs.sort();
+    let n = day.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1)?).num_days();
+    let i = n.rem_euclid(slugs.len() as i64) as usize;
+    slugs.into_iter().nth(i)
+}
+
+/// Зерно дня: одно для всех, и завтра другое.
+pub fn daily_seed(day: chrono::NaiveDate) -> i64 {
+    let n = day.signed_duration_since(chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()).num_days();
+    (n as i64).wrapping_mul(0x9E37_79B9_7F4A_7C15u64 as i64) ^ 0x5DEE_CE66D
+}
+
+/// Тренировка: проигранная волна и отряд на её начало.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PracticeDto {
+    pub wave: WavePreviewDto,
+    pub squad: Vec<SquadCardDto>,
 }
 
 // ── Стол маршрутов ───────────────────────────────────────────────────────────
@@ -708,6 +792,13 @@ pub struct PickRewardRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct HealRequest {
+    /// Карта отряда, которую вылечить.
+    pub card_id: Uuid,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SwapRequest {
     /// Карта отряда, которую заменить.
     pub card_id: Uuid,
@@ -728,6 +819,9 @@ pub struct StartRunRequest {
     /// Отряд по выбору из собрания. Пусто — сильнейшие.
     #[serde(default)]
     pub card_ids: Vec<Uuid>,
+    /// Забег дня: маршрут и зерно общие на сутки, `route` не читается.
+    #[serde(default)]
+    pub daily: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -987,9 +1081,17 @@ mod tests {
         apply_reward(&RewardOption { kind: RewardKind::HealAll, amount: 3 }, &mut a, max);
         assert_eq!((a[0].health, a[1].health, a[2].dead), (Some(5), Some(10), true));
 
+        // Лечение одной карты — заряд: отряд сам не меняется.
         let mut b = squad.clone();
-        apply_reward(&RewardOption { kind: RewardKind::HealOne, amount: 0 }, &mut b, max);
-        assert_eq!((b[0].health, b[1].health), (None, Some(8)), "полное — самой раненой");
+        let got = apply_reward(&RewardOption { kind: RewardKind::HealOne, amount: 0 }, &mut b, max);
+        assert_eq!((got.heal_charges, b == squad), (1, true));
+        // Заряд тратится на названную карту: раненую лечит полностью, целую и павшую не трогает.
+        let ids: Vec<Uuid> = squad.iter().map(|c| c.card_id).collect();
+        assert!(heal_card(&mut b, ids[0], max));
+        assert_eq!(b[0].health, None);
+        assert!(!heal_card(&mut b, ids[0], max), "целая карта заряд не берёт");
+        assert!(!heal_card(&mut b, ids[2], max), "павшую лечит только возвращение");
+        assert!(!heal_card(&mut b, Uuid::new_v4(), max), "чужая карта не из отряда");
 
         let mut c = squad.clone();
         apply_reward(&RewardOption { kind: RewardKind::Revive, amount: 0 }, &mut c, max);
@@ -1000,5 +1102,42 @@ mod tests {
         assert_eq!((got.free_swaps, d == squad), (1, true));
         let got = apply_reward(&RewardOption { kind: RewardKind::Dust, amount: 10 }, &mut d, max);
         assert_eq!(got.dust, 10);
+    }
+}
+
+#[cfg(test)]
+mod daily_tests {
+    use super::*;
+
+    fn day(d: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap()
+    }
+
+    #[test]
+    fn the_daily_route_is_the_same_for_everyone_and_changes_with_the_day() {
+        let slugs = vec!["b".to_string(), "a".to_string(), "c".to_string()];
+        let one = daily_pick(slugs.clone(), day(5));
+        assert_eq!(one, daily_pick(vec!["c".into(), "b".into(), "a".into()], day(5)));
+        let week: std::collections::HashSet<_> =
+            (1..=7).filter_map(|d| daily_pick(slugs.clone(), day(d))).collect();
+        assert_eq!(week.len(), 3);
+        assert_eq!(daily_pick(Vec::new(), day(5)), None);
+    }
+
+    #[test]
+    fn a_repeat_of_a_wave_is_practice() {
+        let id = Uuid::new_v4;
+        let log = wave_log(vec![
+            (id(), 1, "player".into(), Some(4)),
+            (id(), 2, "keeper".into(), Some(6)),
+            (id(), 2, "player".into(), Some(5)),
+        ]);
+        assert_eq!(log.iter().map(|w| w.practice).collect::<Vec<_>>(), [false, false, true]);
+    }
+
+    #[test]
+    fn the_daily_seed_is_shared_and_moves() {
+        assert_eq!(daily_seed(day(5)), daily_seed(day(5)));
+        assert_ne!(daily_seed(day(5)), daily_seed(day(6)));
     }
 }

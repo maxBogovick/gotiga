@@ -119,6 +119,7 @@
   import BattleFramePicker from "$lib/components/admin/BattleFramePicker.svelte";
   import BattleErrandsPanel from "$lib/components/admin/BattleErrandsPanel.svelte";
   import BattleRoutesPanel from "$lib/components/admin/BattleRoutesPanel.svelte";
+  import RunStandPanel from "$lib/components/admin/RunStandPanel.svelte";
   import BattleMotionsPanel from "$lib/components/admin/BattleMotionsPanel.svelte";
   import BattleMotionWear from "$lib/components/admin/BattleMotionWear.svelte";
   import BattleRaceCards from "$lib/components/admin/BattleRaceCards.svelte";
@@ -190,6 +191,7 @@
     | "matches"
     | "errands"
     | "routes"
+    | "stand"
   >("cards");
   let cards = $state<BattleCardDto[]>([]);
   let frames = $state<BattleFrame[]>(DEFAULT_FRAMES.map(completeSlices));
@@ -3309,6 +3311,12 @@
           : ''}">{$t("adminBattlesRoutes")}</button
       >
       <button
+        onclick={() => (view = "stand")}
+        class="px-3 py-1 {view === 'stand'
+          ? 'bg-[#34251c] text-[#f8f1e7]'
+          : ''}">{$t("adminBattlesStand")}</button
+      >
+      <button
         onclick={() => (view = "errands")}
         class="px-3 py-1 {view === 'errands'
           ? 'bg-[#34251c] text-[#f8f1e7]'
@@ -5021,6 +5029,8 @@
     </div>
   {:else if view === "routes"}
     <BattleRoutesPanel {flash} />
+  {:else if view === "stand"}
+    <RunStandPanel />
   {:else if view === "errands"}
     <!-- Стол поручений живёт отдельным файлом: эта панель и без него на пять
          тысяч строк, а справочник поручений ничего из неё не переиспользует. -->

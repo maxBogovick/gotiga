@@ -16671,13 +16671,32 @@ impl AppService {
             .admin_get_battle_match(id)
             .await?
             .ok_or_else(|| AppError::NotFound("No such match".into()))?;
+        Self::replay_record(&rec, upto)
+    }
 
+    /// Пересмотр своей законченной партии (волны забега). Открытую не отдаёт:
+    /// пересмотр нужен после игры, а не вместо неё.
+    pub async fn replay_own_battle_match(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        upto: usize,
+    ) -> Result<crate::models::MatchReplayDto> {
+        let rec = self.repo.get_battle_match(id, user_id).await?;
+        if rec.outcome.is_none() {
+            return Err(AppError::BadRequest("match:open".into()));
+        }
+        Self::replay_record(&rec, upto)
+    }
+
+    /// Доиграть записанную партию до ступени `upto` и вернуть доску на ней.
+    fn replay_record(rec: &crate::models::BattleMatch, upto: usize) -> Result<crate::models::MatchReplayDto> {
         let setup: battle_core::Setup = serde_json::from_str(&rec.setup)
             .map_err(|_| AppError::Internal("Frozen arrangement will not read".into()))?;
         let actions: Vec<battle_core::Action> = serde_json::from_str(&rec.actions)
             .map_err(|_| AppError::Internal("Match journal will not read".into()))?;
 
-        let rules = Self::match_rules(&rec);
+        let rules = Self::match_rules(rec);
 
         let want = upto.min(actions.len());
         let mut state = battle_core::MatchState::begin_with(setup, rules);
