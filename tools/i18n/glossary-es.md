@@ -244,3 +244,19 @@ Regla del proyecto (CLAUDE.md § 1.1): nombres directos, sin metáforas; una cos
 | Заказать фигурку | **Encargar una figura** |
 | Почему оплата через Etsy | **Por qué el pago se hace en Etsy** |
 | В наличии | **Disponible** |
+
+## Забег (ноябрь 2026)
+
+| ru | es |
+|---|---|
+| Забег | **Carrera** |
+| Волна | **Oleada** |
+| Маршрут | **Ruta** |
+| Замена (карты за пыль) | **Cambio** |
+| Трофей | **Trofeo** |
+| Награда (на выбор из трёх) | **Recompensa** |
+| Боевой уровень | **Nivel de combate** |
+| Автобой | **Batalla automática** |
+| Проба (первые волны без входа) | **Prueba** |
+| Сдать забег | **Abandonar la carrera** |
+| Возвращение (награда) | **Regreso** |

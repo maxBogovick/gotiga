@@ -27,6 +27,7 @@ fn on(field: Field) -> MatchState {
         keeper_hand: vec![],
         terrain: vec![],
         field,
+        ..Default::default()
     };
     MatchState::begin_with(setup, Rules { idle_toll: 0, ..Rules::default() })
 }
@@ -91,6 +92,7 @@ fn breakthrough_counts_the_far_row_of_this_field() {
         keeper_hand: vec![],
         terrain: vec![],
         field: big(),
+        ..Default::default()
     };
     let rules = Rules { breakthrough: true, idle_toll: 0, ..Rules::default() };
     let st = MatchState::begin_with(setup, rules);

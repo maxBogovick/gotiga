@@ -195,3 +195,19 @@ Haltungen (Hold): Bound **Erstarrt**, Silenced **Verstummt**, Disarmed **Entwaff
 | Заказать фигурку | **Figur anfragen** |
 | Почему оплата через Etsy | **Warum die Zahlung über Etsy läuft** |
 | В наличии | **Verfügbar** |
+
+## Забег (ноябрь 2026)
+
+| ru | de |
+|---|---|
+| Забег | **Durchlauf** |
+| Волна | **Welle** |
+| Маршрут | **Route** |
+| Замена (карты за пыль) | **Tausch** |
+| Трофей | **Trophäe** |
+| Награда (на выбор из трёх) | **Belohnung** |
+| Боевой уровень | **Kampfstufe** |
+| Автобой | **Automatischer Kampf** |
+| Проба (первые волны без входа) | **Probe** |
+| Сдать забег | **Durchlauf aufgeben** |
+| Возвращение (награда) | **Rückkehr** |

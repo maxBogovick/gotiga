@@ -42,6 +42,7 @@ fn table(ability: AbilitySnapshot) -> Setup {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     }
 }
 
@@ -316,6 +317,7 @@ fn a_guard_takes_the_blow_meant_for_a_neighbour() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = begin(setup);
 
@@ -632,6 +634,7 @@ fn everything_offered_can_be_done_for_every_verb() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = begin(setup);
 
@@ -671,6 +674,7 @@ fn a_journal_of_every_verb_folds_back_into_the_same_board() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let journal = vec![
         cast(0, "порча", 1),

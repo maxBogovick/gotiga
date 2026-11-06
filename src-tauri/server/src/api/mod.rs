@@ -239,10 +239,24 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/battles/challenges/:id/begin",
                 post(handlers::begin_battle_match),
             )
+            // Забег: маршруты видны без имени, играть — с именем (гость тоже).
+            .route("/battles/routes", get(handlers::list_battle_routes))
+            .route("/battles/runs", post(handlers::start_battle_run))
+            .route("/battles/runs/current", get(handlers::current_battle_run))
+            .route("/battles/runs/:id", get(handlers::get_battle_run))
+            .route("/battles/runs/:id/wave", post(handlers::begin_battle_run_wave))
+            .route("/battles/runs/:id/abandon", post(handlers::abandon_battle_run))
+            .route("/battles/runs/:id/reward", post(handlers::pick_battle_run_reward))
+            .route("/battles/runs/:id/swap", post(handlers::swap_battle_run_card))
+            .route("/battles/runs/:id/trophy", post(handlers::take_battle_run_trophy))
             .route("/battles/matches/:id", get(handlers::get_battle_match))
             .route(
                 "/battles/matches/:id/act",
                 post(handlers::act_in_battle_match),
+            )
+            .route(
+                "/battles/matches/:id/auto",
+                post(handlers::auto_act_in_battle_match),
             )
             .route(
                 "/battles/matches/:id/foresee",
@@ -879,6 +893,50 @@ pub fn router(service: AppService, config: Config, log_store: AdminLogStore) -> 
                 "/admin/battles/frames/presets",
                 get(handlers::admin_get_battle_frame_presets)
                     .post(handlers::admin_save_battle_frame_presets)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // Маршруты забега: список, сохранение целиком, удаление, проба ботами.
+            .route(
+                "/admin/battles/routes",
+                get(handlers::admin_list_battle_routes)
+                    .post(handlers::admin_save_battle_route)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/routes/:id",
+                delete(handlers::admin_delete_battle_route)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/routes/:id/probe",
+                post(handlers::admin_start_battle_route_probe)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            .route(
+                "/admin/battles/route-probe/:id",
+                get(handlers::admin_read_battle_route_probe)
+                    .route_layer(middleware::from_fn_with_state(
+                        config.clone(),
+                        auth_middleware,
+                    )),
+            )
+            // Рубильник и числа режима «Забег».
+            .route(
+                "/admin/battles/run-settings",
+                get(handlers::admin_get_battle_run_settings)
+                    .post(handlers::admin_save_battle_run_settings)
                     .route_layer(middleware::from_fn_with_state(
                         config.clone(),
                         auth_middleware,
@@ -2083,6 +2141,7 @@ fn is_public_cacheable(path: &str) -> bool {
         "/battles/races",
         "/battles/keywords",
         "/battles/challenges",
+        "/battles/routes",
         // Библиотека дома: из этих деталей собирают рамку в простом сборщике.
         // Видна без имени — на неё приходят смотреть.
         "/studio/library",

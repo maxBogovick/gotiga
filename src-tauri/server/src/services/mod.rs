@@ -23,6 +23,7 @@ mod insights;
 mod jobs;
 mod oauth_login;
 mod push;
+mod runs;
 mod release;
 mod readiness;
 mod translations;
@@ -17051,6 +17052,7 @@ impl AppService {
             keeper_hand: hand(&setup.keeper_hand)?,
             terrain: crate::battles::check_terrain(setup).map_err(|e| AppError::BadRequest(e.into()))?,
             field,
+            ..Default::default()
         })
     }
 
@@ -17270,6 +17272,7 @@ impl AppService {
             outcome: rec.outcome.clone(),
             reward_dust,
             marks: None,
+            run: None,
         }
     }
 
@@ -17366,7 +17369,10 @@ impl AppService {
             return Ok(Self::match_dto(&rec, state, Vec::new(), 0));
         };
         Self::log_domain_event("battle_match_yielded", "battle_match", id, "ok");
-        Ok(Self::match_dto(&saved, state, Vec::new(), 0))
+        let run = self.settle_run_wave(&saved, &state).await?;
+        let mut dto = Self::match_dto(&saved, state, Vec::new(), 0);
+        dto.run = run;
+        Ok(dto)
     }
 
     /// Start this challenge from the first position, dropping the open match
@@ -17387,6 +17393,34 @@ impl AppService {
         let rec = self.repo.get_battle_match(id, user_id).await?;
         let state = Self::match_state(&rec)?;
         Ok(Self::match_dto(&rec, state, Vec::new(), 0))
+    }
+
+    /// Автобой: ход за игрока выбирает бот движка на той же глубине, что и в
+    /// пробе маршрута, а дальше всё идёт обычной дорогой хода: проверка номера,
+    /// ответ противника, журнал, итог волны. Только волны забега.
+    pub async fn auto_act_in_battle_match(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        seq: i32,
+    ) -> Result<BattleMatchDto> {
+        let rec = self.repo.get_battle_match(id, user_id).await?;
+        if rec.run_id.is_none() {
+            return Err(AppError::BadRequest("Auto play is for run waves only".into()));
+        }
+        let state = Self::match_state(&rec)?;
+        // Повтор или конец партии: тот же ответ, что и у обычного хода.
+        if rec.outcome.is_some() || seq != rec.seq {
+            return Ok(Self::match_dto(&rec, state, Vec::new(), 0));
+        }
+        if state.active != battle_core::Side::Player {
+            return Err(AppError::BadRequest("Not your turn".into()));
+        }
+        let mut action = battle_core::bot::choose_at(&state, crate::runs_probe::DEFENDER_DEPTH);
+        if battle_core::reduce(&state, &action).is_err() {
+            action = battle_core::Action::EndTurn;
+        }
+        self.act_in_battle_match(user_id, id, BattleActRequest { seq, action }).await
     }
 
     /// One move by the guest, and the keeper's answer, in a single round trip.
@@ -17432,7 +17466,7 @@ impl AppService {
         // Рука хранителя — та, что задана испытанием. До этого поле `bot_depth`
         // писалось в базу, показывалось на полке этюдов и не читалось никем:
         // единственная ручка сложности всего PvE ничего не делала.
-        let depth = self.keeper_hand_depth(rec.challenge_id).await?;
+        let depth = self.match_hand_depth(&rec).await?;
         let mut guard = 0;
         while state.outcome.is_none() && state.active == battle_core::Side::Keeper {
             let action = battle_core::bot::choose_at(&state, depth);
@@ -17561,7 +17595,14 @@ impl AppService {
             self.settle_errands_quietly(user_id).await;
         }
 
+        // Волна забега: итог возвращается в отряд в тот же ход, которым она кончилась.
+        let run = if outcome.is_some() {
+            self.settle_run_wave(&saved, &state).await?
+        } else {
+            None
+        };
         let mut dto = Self::match_dto(&saved, state, events, reward);
+        dto.run = run;
         dto.marks = line.map(|(acts, lost)| crate::models::MatchMarks {
             acts: acts as i32,
             bodies_lost: lost as i32,
@@ -17624,7 +17665,7 @@ impl AppService {
 
         let mut theirs = Vec::new();
         if state.outcome.is_none() {
-            let depth = self.keeper_hand_depth(rec.challenge_id).await?;
+            let depth = self.match_hand_depth(&rec).await?;
             if let Ok((next, produced)) =
                 battle_core::reduce(&state, &battle_core::Action::EndTurn)
             {

@@ -39,6 +39,7 @@ fn open_lane() -> Setup {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     }
 }
 
@@ -86,6 +87,7 @@ fn a_runner_killed_on_the_edge_wins_nothing() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, to_the_edge());
@@ -114,6 +116,7 @@ fn a_swayed_runner_wins_nothing() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, to_the_edge());
@@ -139,6 +142,7 @@ fn the_keeper_breaks_through_the_same_way() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, Action::EndTurn);
@@ -209,6 +213,7 @@ fn the_greedy_hand_strikes_whoever_stands_on_its_edge() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, Action::EndTurn);

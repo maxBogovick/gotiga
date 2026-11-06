@@ -21,6 +21,7 @@ fn keeper(card: CardSnapshot, at: Cell, terrain: Vec<Tile>, rules: Rules) -> Mat
         keeper_hand: vec![],
         terrain,
         field: Default::default(),
+        ..Default::default()
     };
     MatchState::begin_with(setup, rules)
 }

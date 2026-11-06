@@ -20,6 +20,7 @@
   import { interact } from '$lib/analytics';
   import BattleScene from '$lib/components/BattleScene.svelte';
   import BattleDoor from '$lib/components/BattleDoor.svelte';
+  import BattleModes from '$lib/components/BattleModes.svelte';
   import BattleLineup from '$lib/components/BattleLineup.svelte';
   import EtudeMap, { type EtudeKind } from '$lib/components/EtudeMap.svelte';
   import EtudeRoad from '$lib/components/EtudeRoad.svelte';
@@ -244,7 +245,10 @@
 
   // Работы и байки героинь этюда: из этюда ведёт дорога к их историям.
   let world = $state<World | null>(null);
+  /** Есть ли опубликованный маршрут забега: только тогда режим виден. */
+  let runOpen = $state(false);
   onMount(() => {
+    api.getBattleRoutes().then((r) => (runOpen = r.length > 0)).catch(() => {});
     loadWorld()
       .then((w) => (world = w))
       .catch(() => {});
@@ -797,22 +801,7 @@
            высоту первого экрана. -->
       <BattleDoor>
         {#if ready && challenges.length}
-          <nav class="modes" aria-label={$t('battleModesLabel')}>
-            <a
-              href="?mode=training"
-              class:on={mode === 'training'}
-              aria-current={mode === 'training' ? 'page' : undefined}
-              data-sveltekit-noscroll
-              data-sveltekit-replacestate>{$t('battleModeTraining')}</a
-            >
-            <a
-              href="?mode=campaign"
-              class:on={mode === 'campaign'}
-              aria-current={mode === 'campaign' ? 'page' : undefined}
-              data-sveltekit-noscroll
-              data-sveltekit-replacestate>{$t('battleModeCampaign')}</a
-            >
-          </nav>
+          <BattleModes current={mode} {runOpen} />
         {/if}
         {#if !signedIn}
           <a class="sign" href={loginFrom()}
@@ -1190,51 +1179,6 @@
   /* Режимы — переключатель из двух половин в строке двери, после комнат:
      это второй уровень той же навигации. Обычные ссылки: у каждого режима
      свой адрес. */
-  .modes {
-    display: inline-flex;
-    margin-left: 0.4rem;
-    border: 1px solid #d8c6b1;
-  }
-
-  .modes a {
-    padding: 0.32rem 0.85rem;
-    color: #6f3b24;
-    font-family: Georgia, 'Fraunces', serif;
-    font-size: 0.74rem;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    text-decoration: none;
-  }
-
-  .modes a + a {
-    border-left: 1px solid #d8c6b1;
-  }
-
-  .modes a:hover:not(.on) {
-    color: #c65f3c;
-  }
-
-  .modes a.on {
-    background: #6f3b24;
-    color: #f8f1e7;
-  }
-
-  /* На телефоне строка двери переносится (BattleDoor: комнаты и кошелёк,
-     разрыв, кнопки). Режимы встают отдельной строкой во всю ширину после
-     разрыва: рядом с кошельком им места нет, и кошелёк рвался пополам. */
-  @media (max-width: 40rem) {
-    .modes {
-      order: 2;
-      flex-basis: 100%;
-      margin-left: 0;
-    }
-
-    .modes a {
-      flex: 1;
-      text-align: center;
-    }
-  }
-
   .quiet {
     position: absolute;
     width: 1px;

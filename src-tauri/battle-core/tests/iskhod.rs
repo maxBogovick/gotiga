@@ -30,6 +30,7 @@ fn a_bare_board_is_lost_at_once() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin(setup);
     let (st, events) = reduce(&st, &Action::EndTurn).expect("конец хода законен");
@@ -48,6 +49,7 @@ fn a_card_too_dear_this_turn_does_not_save_a_bare_board() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin(setup);
     assert!(st.player.mana < 4, "иначе испытание проверяет не то");
@@ -65,6 +67,7 @@ fn even_an_affordable_card_does_not_save_a_bare_board() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin(setup);
     let (st, _) = reduce(&st, &Action::EndTurn).expect("конец хода законен");
@@ -82,6 +85,7 @@ fn playing_the_card_saves_the_match() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin(setup);
     let cell = st.free_cells(Side::Player).into_iter().next().expect("своя клетка свободна");
@@ -101,6 +105,7 @@ fn taking_the_last_body_wins_however_full_the_other_hand() {
         keeper_hand: vec![body(1, 9, 9), body(1, 9, 9)],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin(setup);
     let (st, _) = reduce(&st, &Action::Attack { attacker: 0, target: 1 }).expect("удар законен");
@@ -118,6 +123,7 @@ fn passing_back_and_forth_still_ends() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let mut st = MatchState::begin(setup);
     let mut guard = 0;

@@ -109,6 +109,11 @@ import type {
     SaveBattleDeckRequest,
     SaveBattleChallengeRequest,
     BattleMatch,
+    BattleRoute,
+    BattleRun,
+    AdminRoute,
+    RouteProbeState,
+    RunSettings,
     Foresight,
     BattleAction,
     BenchRequest,
@@ -539,6 +544,15 @@ function webBattleAssetSheet<T extends { sourceUrl: string }>(row: T): T {
 
 function webBattleAsset<T extends { url: string }>(row: T): T {
     return { ...row, url: webPublicUrl(row.url) ?? row.url };
+}
+
+/** Запрос забега: тело JSON, ключ — имя или гостевой. */
+function runCall<T>(sessionToken: string, path: string, body: unknown): Promise<T> {
+    return webFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        body: JSON.stringify(body),
+    });
 }
 
 export class ApiError extends Error {
@@ -4218,9 +4232,84 @@ export const api = {
         });
     },
 
+    // ── Забег ────────────────────────────────────────────────────────────
+
+    async getBattleRoutes(): Promise<BattleRoute[]> {
+        try {
+            return await webFetch('/battles/routes');
+        } catch {
+            return [];
+        }
+    },
+
+    /** Незаконченный забег человека; null — его нет. */
+    async getCurrentBattleRun(sessionToken: string): Promise<BattleRun | null> {
+        return webFetch('/battles/runs/current', {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Начинает забег — или возвращает тот, что оставлен незаконченным. */
+    async startBattleRun(
+        sessionToken: string,
+        route: string,
+        cardIds: string[] = [],
+    ): Promise<BattleRun> {
+        return runCall(sessionToken, '/battles/runs', { route, cardIds });
+    },
+
+    /** Начинает волну — или возвращает открытую. `placements` пусто: сервер ставит сам. */
+    async beginBattleRunWave(
+        sessionToken: string,
+        runId: string,
+        placements: { cardId: string; x?: number; y?: number }[] = [],
+    ): Promise<BattleMatch> {
+        return runCall(sessionToken, `/battles/runs/${runId}/wave`, { placements });
+    },
+
+    async getBattleRun(sessionToken: string, runId: string): Promise<BattleRun> {
+        return webFetch(`/battles/runs/${runId}`, {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    async abandonBattleRun(sessionToken: string, runId: string): Promise<BattleRun> {
+        return runCall(sessionToken, `/battles/runs/${runId}/abandon`, {});
+    },
+
+    async pickBattleRunReward(sessionToken: string, runId: string, index: number): Promise<BattleRun> {
+        return runCall(sessionToken, `/battles/runs/${runId}/reward`, { index });
+    },
+
+    /** `swaps` — сколько замен уже сделано: повтор того же запроса ничего не меняет. */
+    async swapBattleRunCard(
+        sessionToken: string,
+        runId: string,
+        cardId: string,
+        swaps: number,
+    ): Promise<BattleRun> {
+        return runCall(sessionToken, `/battles/runs/${runId}/swap`, { cardId, swaps });
+    },
+
+    async takeBattleRunTrophy(sessionToken: string, runId: string, cardId: string): Promise<BattleRun> {
+        return runCall(sessionToken, `/battles/runs/${runId}/trophy`, { cardId });
+    },
+
     async getBattleMatch(sessionToken: string, id: string): Promise<BattleMatch> {
         return webFetch(`/battles/matches/${id}`, {
             headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+    },
+
+    /** Автобой: один ход за игрока делает бот сервера (только волны забега). */
+    async autoActInBattleMatch(sessionToken: string, id: string, seq: number): Promise<BattleMatch> {
+        return webFetch(`/battles/matches/${id}/auto`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${sessionToken}`,
+            },
+            body: JSON.stringify({ seq }),
         });
     },
 
@@ -4656,6 +4745,46 @@ export const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify({ ids }),
+        });
+    },
+
+    // ── Стол маршрутов ───────────────────────────────────────────────────
+
+    async adminListBattleRoutes(): Promise<AdminRoute[]> {
+        return webFetch('/admin/battles/routes', { headers: authHeaders() });
+    },
+
+    /** Сохраняет маршрут целиком — со всеми волнами. */
+    async adminSaveBattleRoute(route: AdminRoute): Promise<AdminRoute> {
+        return webFetch('/admin/battles/routes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(route),
+        });
+    },
+
+    async adminDeleteBattleRoute(id: string): Promise<void> {
+        await webFetch(`/admin/battles/routes/${id}`, { method: 'DELETE', headers: authHeaders() });
+    },
+
+    /** Проба маршрута ботами по трём ступеням отрядов — в фоне. */
+    async adminStartRouteProbe(id: string): Promise<{ id: string }> {
+        return webFetch(`/admin/battles/routes/${id}/probe`, { method: 'POST', headers: authHeaders() });
+    },
+
+    async adminReadRouteProbe(id: string): Promise<RouteProbeState> {
+        return webFetch(`/admin/battles/route-probe/${id}`, { headers: authHeaders() });
+    },
+
+    async adminGetRunSettings(): Promise<RunSettings> {
+        return webFetch('/admin/battles/run-settings', { headers: authHeaders() });
+    },
+
+    async adminSaveRunSettings(settings: RunSettings): Promise<RunSettings> {
+        return webFetch('/admin/battles/run-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(settings),
         });
     },
 

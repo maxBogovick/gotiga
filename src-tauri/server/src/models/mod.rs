@@ -6268,6 +6268,11 @@ pub struct BattleMatch {
     /// правилам дала бы другую доску, а `board_cache` затем и кэш, что его в
     /// любой момент можно выбросить.
     pub rules: Option<String>,
+    /// Забег, в котором сыграна эта партия-волна, и номер волны. `None` — обычная партия.
+    pub run_id: Option<Uuid>,
+    pub run_wave: Option<i16>,
+    /// Карты отряда в порядке `player_board` (JSON): по нему здоровье возвращается в отряд.
+    pub run_cards: Option<String>,
     /// Сколько дел сделал гость, прежде чем партия кончилась. Конец хода делом
     /// не считается. `None` — партия ещё идёт.
     pub player_acts: Option<i16>,
@@ -6405,6 +6410,9 @@ pub struct BattleMatchDto {
     /// она кончилась: печать ставится один раз и в одном месте.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub marks: Option<MatchMarks>,
+    /// Забег, если это волна: где он теперь после этого хода.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<crate::runs::RunDto>,
 }
 
 /// Печать под сыгранной партией.
@@ -6455,6 +6463,13 @@ pub struct ForeseeDto {
 pub struct BattleActRequest {
     pub seq: i32,
     pub action: battle_core::Action,
+}
+
+/// Автобой: ход за игрока делает бот сервера, клиент называет только номер.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BattleAutoRequest {
+    pub seq: i32,
 }
 
 /// One copy of one card, belonging to one person.

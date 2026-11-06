@@ -7259,6 +7259,141 @@ pub async fn restart_battle_match(
     Ok((StatusCode::CREATED, Json(dto)))
 }
 
+/// Маршруты забега: видны и без имени.
+pub async fn list_battle_routes(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::runs::RouteDto>>> {
+    Ok(Json(service.list_battle_routes().await?))
+}
+
+/// Начать забег или вернуть незаконченный.
+pub async fn start_battle_run(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Json(body): Json<crate::runs::StartRunRequest>,
+) -> Result<(StatusCode, Json<crate::runs::RunDto>)> {
+    let user = current_player(&service, &headers).await?;
+    Ok((StatusCode::CREATED, Json(service.start_battle_run(user.id, body).await?)))
+}
+
+pub async fn current_battle_run(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+) -> Result<Json<Option<crate::runs::RunDto>>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.current_battle_run(user.id).await?))
+}
+
+pub async fn get_battle_run(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::runs::RunDto>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.read_battle_run(user.id, id).await?))
+}
+
+/// Начать волну забега или вернуть открытую.
+pub async fn begin_battle_run_wave(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    body: Option<Json<crate::runs::BeginWaveRequest>>,
+) -> Result<(StatusCode, Json<BattleMatchDto>)> {
+    let user = current_player(&service, &headers).await?;
+    let body = body.map(|b| b.0).unwrap_or_default();
+    Ok((StatusCode::CREATED, Json(service.begin_run_wave(user.id, id, body).await?)))
+}
+
+pub async fn abandon_battle_run(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::runs::RunDto>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.abandon_battle_run(user.id, id).await?))
+}
+
+pub async fn admin_list_battle_routes(
+    State(service): State<AppService>,
+) -> Result<Json<Vec<crate::runs::AdminRoute>>> {
+    Ok(Json(service.admin_list_battle_routes().await?))
+}
+
+pub async fn admin_save_battle_route(
+    State(service): State<AppService>,
+    Json(body): Json<crate::runs::AdminRoute>,
+) -> Result<Json<crate::runs::AdminRoute>> {
+    Ok(Json(service.admin_save_battle_route(body).await?))
+}
+
+pub async fn admin_delete_battle_route(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    service.admin_delete_battle_route(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn admin_start_battle_route_probe(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>> {
+    let probe = service.admin_start_route_probe(id).await?;
+    Ok(Json(serde_json::json!({ "id": probe })))
+}
+
+pub async fn admin_read_battle_route_probe(
+    State(service): State<AppService>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::runs_probe::RouteProbeState>> {
+    Ok(Json(service.admin_read_route_probe(id)?))
+}
+
+pub async fn pick_battle_run_reward(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::runs::PickRewardRequest>,
+) -> Result<Json<crate::runs::RunDto>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.pick_run_reward(user.id, id, body).await?))
+}
+
+pub async fn swap_battle_run_card(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::runs::SwapRequest>,
+) -> Result<Json<crate::runs::RunDto>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.swap_run_card(user.id, id, body).await?))
+}
+
+pub async fn take_battle_run_trophy(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::runs::TakeTrophyRequest>,
+) -> Result<Json<crate::runs::RunDto>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.take_run_trophy(user.id, id, body).await?))
+}
+
+/// Рубильник и числа режима «Забег».
+pub async fn admin_get_battle_run_settings(
+    State(service): State<AppService>,
+) -> Result<Json<crate::runs::RunSettings>> {
+    Ok(Json(service.get_run_settings().await?))
+}
+
+pub async fn admin_save_battle_run_settings(
+    State(service): State<AppService>,
+    Json(body): Json<crate::runs::RunSettings>,
+) -> Result<Json<crate::runs::RunSettings>> {
+    Ok(Json(service.save_run_settings(body).await?))
+}
+
 pub async fn get_battle_match(
     State(service): State<AppService>,
     headers: HeaderMap,
@@ -7277,6 +7412,18 @@ pub async fn act_in_battle_match(
 ) -> Result<Json<BattleMatchDto>> {
     let user = current_player(&service, &headers).await?;
     Ok(Json(service.act_in_battle_match(user.id, id, body).await?))
+}
+
+/// Автобой: один ход за игрока делает бот и сразу ответ противника. Только
+/// для волн забега; чьей рукой ходит игрок, выбирает он сам, включая и выключая.
+pub async fn auto_act_in_battle_match(
+    State(service): State<AppService>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<crate::models::BattleAutoRequest>,
+) -> Result<Json<BattleMatchDto>> {
+    let user = current_player(&service, &headers).await?;
+    Ok(Json(service.auto_act_in_battle_match(user.id, id, body.seq).await?))
 }
 
 /// Предвестие: чем хранитель ответит, если ход закончить этим.

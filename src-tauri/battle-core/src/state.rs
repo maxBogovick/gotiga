@@ -368,6 +368,46 @@ pub struct Setup {
     /// тогда не пишется вовсе: замороженные партии не меняются ни на байт.
     #[serde(default, skip_serializing_if = "Field::is_default")]
     pub field: Field,
+    /// Подкрепление: враги, которые выходят на поле по кругам. Пусто на всякой
+    /// партии, начатой до волн, — и тогда не пишется вовсе.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reinforcements: Vec<Reinforcement>,
+    /// Как выигрывается волна. Не названное — обычные правила партии.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<WaveGoal>,
+    /// Здоровье карт игрока на входе в волну, по порядку `player_board`.
+    /// Карта выходит в волну с тем, что осталось; не названная — с полным.
+    /// Движок не знает, откуда число: волны считает сервер.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub player_health: Vec<i32>,
+}
+
+/// Враг, которому назначен круг и клетка входа. Выходит в начале этого круга,
+/// а если клетка занята, ждёт: карту не теряют, выход откладывается.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reinforcement {
+    pub round: u8,
+    pub cell: Cell,
+    pub card: CardSnapshot,
+}
+
+/// Условие победы волны. Список закрыт по той же причине, что и словарь
+/// глаголов: новое условие — новое сочетание этих, а не ещё одна ветка кода.
+///
+/// Волна — это оборона: игрок (`Side::Player`) держится, враг нападает.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum WaveGoal {
+    /// Продержаться `rounds` кругов. Кончились круги — победил игрок; перебиты
+    /// все враги и подкрепление кончилось — тоже он.
+    HoldRounds { rounds: u8 },
+    /// Защитить строение игрока. Оно разрушено — победил враг. Дожил до лимита
+    /// кругов — игрок.
+    DefendStructure,
+    /// Убить карту врага по имени. Убита (и не ждёт выхода) — победил игрок.
+    /// Дожила до лимита кругов — враг.
+    KillTarget { name: String },
 }
 
 /// Что за земля под клеткой. Три рода, и список закрыт по той же причине, по
@@ -562,6 +602,12 @@ pub struct MatchState {
     /// Величина поля. Партия, начатая до неё, играется на 3 × 3.
     #[serde(default, skip_serializing_if = "Field::is_default")]
     pub field: Field,
+    /// Враги, ещё не вышедшие на поле.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending: Vec<Reinforcement>,
+    /// Условие победы волны.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<WaveGoal>,
 }
 
 /// What was asked for. May be refused; refusal is an ordinary answer.
@@ -693,12 +739,20 @@ impl MatchState {
             poised: Vec::new(),
             terrain: Vec::new(),
             field: setup.field.normalized(),
+            pending: setup.reinforcements,
+            goal: setup.goal,
         };
         // The coin is laid before the first turn, so that turn's rise adds to it.
         st.keeper.mana_max = rules.second_side_coin.max(0);
 
-        for (card, cell) in setup.player_board {
-            st.raise(&card, cell, Side::Player);
+        for (i, (card, cell)) in setup.player_board.into_iter().enumerate() {
+            let id = st.raise(&card, cell, Side::Player);
+            // Карта входит в волну с тем, что у неё осталось: не больше
+            // предела и не меньше единицы — павшая в волну не входит вовсе.
+            if let Some(carried) = setup.player_health.get(i) {
+                let u = &mut st.units[id as usize];
+                u.health.current = (*carried).clamp(1, u.health.max);
+            }
         }
         for (card, cell) in setup.keeper_board {
             st.raise(&card, cell, Side::Keeper);
@@ -717,6 +771,9 @@ impl MatchState {
             }
         }
 
+        // Враги первого круга стоят с самого начала, как расставленные.
+        st.enter_scheduled(None);
+
         // Bodies standing before the first turn are not newly played and may
         // swing at once; only what is played from a hand waits a turn.
         for u in st.units.iter_mut() {
@@ -727,6 +784,33 @@ impl MatchState {
         st.breathe();
         st.open_turn();
         st
+    }
+
+    /// Выпустить на поле тех, чей круг настал. Занятая клетка входа откладывает
+    /// выход на следующий круг: карта остаётся в расписании, а не пропадает.
+    /// `events` — `None` в начале партии: там выходящие просто стоят.
+    fn enter_scheduled(&mut self, mut events: Option<&mut Vec<Event>>) {
+        if self.pending.is_empty() {
+            return;
+        }
+        let round = self.round;
+        let mut waiting = Vec::new();
+        for r in std::mem::take(&mut self.pending) {
+            if r.round > round || !self.open(r.cell) {
+                waiting.push(r);
+                continue;
+            }
+            let id = self.raise(&r.card, r.cell, Side::Keeper);
+            self.units[id as usize].acted = false;
+            if let Some(ev) = events.as_deref_mut() {
+                ev.push(Event::Played { side: Side::Keeper, unit: id, cell: r.cell, cost: 0 });
+                self.arrive(id, ev);
+                let since = ev.len();
+                self.reacts("onPlay", id, None, ev);
+                self.answer(Some(id), since, ev);
+            }
+        }
+        self.pending = waiting;
     }
 
     fn raise(&mut self, card: &CardSnapshot, cell: Cell, owner: Side) -> UnitId {
@@ -2009,9 +2093,48 @@ impl MatchState {
         // одиночное не должно кончать её тихо. Смута вернётся — поражение нет.
         // Строения не держат сторону: город, в котором остались одни стены,
         // взят (`CardSnapshot::structure`).
+        // Враг, которому назначен выход, ещё не побеждён: пока подкрепление
+        // не кончилось, пустое поле — это затишье между группами.
+        if side == Side::Keeper && !self.pending.is_empty() {
+            return false;
+        }
         self.owned_standing(side)
             .iter()
             .all(|id| self.units[*id as usize].card.structure)
+    }
+
+    /// Сколько кругов идёт партия: у волны «продержаться» — столько, сколько
+    /// в условии, у остальных — лимит правил.
+    fn round_limit(&self) -> u8 {
+        match &self.goal {
+            Some(WaveGoal::HoldRounds { rounds }) => *rounds,
+            _ => self.rules.max_rounds,
+        }
+    }
+
+    /// Исход, который даёт условие волны, если он уже наступил.
+    fn goal_outcome(&self) -> Option<Outcome> {
+        match self.goal.as_ref()? {
+            WaveGoal::HoldRounds { .. } => None,
+            WaveGoal::DefendStructure => {
+                let had = self.units.iter().any(|u| u.owner == Side::Player && u.card.structure);
+                let stands = self
+                    .owned_standing(Side::Player)
+                    .iter()
+                    .any(|id| self.units[*id as usize].card.structure);
+                (had && !stands).then_some(Outcome::Keeper)
+            }
+            WaveGoal::KillTarget { name } => {
+                let named = |c: &CardSnapshot| c.name == *name;
+                let ever = self.units.iter().any(|u| u.owner == Side::Keeper && named(&u.card));
+                let alive = self
+                    .owned_standing(Side::Keeper)
+                    .iter()
+                    .any(|id| named(&self.units[*id as usize].card));
+                let coming = self.pending.iter().any(|r| named(&r.card));
+                (ever && !alive && !coming).then_some(Outcome::Player)
+            }
+        }
     }
 
     fn settle(&mut self, events: &mut Vec<Event>) {
@@ -2020,7 +2143,9 @@ impl MatchState {
         }
         let player_out = self.is_spent(Side::Player);
         let keeper_out = self.is_spent(Side::Keeper);
+        let by_goal = self.goal_outcome();
         let outcome = match (player_out, keeper_out) {
+            _ if by_goal.is_some() => by_goal,
             (true, true) => Some(Outcome::Draw),
             (true, false) => Some(Outcome::Keeper),
             (false, true) => Some(Outcome::Player),
@@ -2033,6 +2158,16 @@ impl MatchState {
     }
 
     fn settle_on_time(&mut self, events: &mut Vec<Event>) {
+        let held = match &self.goal {
+            Some(WaveGoal::KillTarget { .. }) => Some(Outcome::Keeper),
+            Some(_) => Some(Outcome::Player),
+            None => None,
+        };
+        if let Some(outcome) = held {
+            self.outcome = Some(outcome);
+            events.push(Event::Finished { outcome });
+            return;
+        }
         if self.rules.keeper_holds_on_time {
             self.outcome = Some(Outcome::Keeper);
             events.push(Event::Finished { outcome: Outcome::Keeper });
@@ -2632,9 +2767,12 @@ pub fn reduce(state: &MatchState, action: &Action) -> Result<(MatchState, Vec<Ev
                     return Ok((st, events));
                 }
             }
-            if st.round > st.rules.max_rounds {
+            if st.round > st.round_limit() {
                 st.settle_on_time(&mut events);
                 return Ok((st, events));
+            }
+            if st.active == Side::Player {
+                st.enter_scheduled(Some(&mut events));
             }
             st.open_turn();
             // Родник поит стоящих на нём — до поводов начала хода: вода в

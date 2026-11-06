@@ -4951,6 +4951,126 @@ export interface BattleMatch {
     /** Чем кончилась именно эта партия. Есть только в ответе на тот ход,
      *  которым она кончилась: печать ставится один раз и в одном месте. */
     marks?: MatchMarks;
+    /** Волна забега: где забег после этого хода. Есть только когда партия кончилась. */
+    run?: BattleRun;
+}
+
+/** Условие победы волны (закрытый список движка). */
+export type WaveGoal =
+    | { kind: 'holdRounds'; rounds: number }
+    | { kind: 'defendStructure' }
+    | { kind: 'killTarget'; name: string };
+
+export interface BattleRoute {
+    slug: string;
+    titleEn: string;
+    titleRu: string;
+    titleUk: string;
+    titleEs: string;
+    titleDe: string;
+    titleIt: string;
+    waves: number;
+    /** Сколько волн видит гость; null — маршрут ему закрыт. */
+    guestWaves: number | null;
+}
+
+export interface RunSquadCard {
+    cardId: string;
+    slug: string;
+    health: number;
+    maxHealth: number;
+    dead: boolean;
+    /** Выдана забегом, а не взята из собрания. */
+    loaned: boolean;
+    /** Где карта начала прошлую волну; нет — не выходила. */
+    cell: BattleCell | null;
+}
+
+export interface RunWavePreview {
+    waveNo: number;
+    minCards: number;
+    maxCards: number;
+    goal: WaveGoal | null;
+    /** Слаг расы врагов — подсказка перед боем. */
+    raceHint: string | null;
+    rewardDust: number;
+    /** Слаги врагов волны: стоящие с начала и подкрепление. */
+    enemies: string[];
+    /** Поле для расстановки. Нет — не собралось, и клетки назовёт сервер. */
+    field: RunWaveField | null;
+}
+
+/** Карта на клетке поля волны: враг или строение. */
+export interface RunPlaced {
+    slug: string;
+    x: number;
+    y: number;
+}
+
+/** Поле следующей волны: что на нём стоит и куда может встать игрок. */
+export interface RunWaveField {
+    width: number;
+    depth: number;
+    terrain: BattleTile[];
+    enemies: RunPlaced[];
+    structures: RunPlaced[];
+    entrances: { round: number; x: number; y: number; slug: string }[];
+    /** Клетки, на которые можно встать, в порядке, которым сервер ставит сам. */
+    openCells: BattleCell[];
+    /** Куда достают враги с мест (без карт игрока). */
+    threats: StrikeZone[];
+}
+
+export type RunRewardKind = 'dust' | 'healAll' | 'healOne' | 'revive' | 'freeSwap';
+
+export interface RunReward {
+    kind: RunRewardKind;
+    amount: number;
+}
+
+export interface RunTrophy {
+    cardId: string;
+    slug: string;
+    waveNo: number;
+    /** Ноль — не продаётся. */
+    priceDust: number;
+    taken: boolean;
+    /** Карта уже на полке игрока. */
+    owned: boolean;
+    /** Карта опубликована: её можно взять на полку. */
+    onShelf: boolean;
+}
+
+export interface BattleRun {
+    id: string;
+    route: BattleRoute;
+    waveNo: number;
+    wavesTotal: number;
+    state: 'active' | 'lost' | 'won';
+    squad: RunSquadCard[];
+    swaps: number;
+    /** Идущая партия-волна, если открыта. */
+    matchId: string | null;
+    nextWave: RunWavePreview | null;
+    phase: 'wave' | 'reward';
+    reward: RunReward[];
+    /** Цена следующей замены; null — гостю замены нет. */
+    swapCost: number | null;
+    freeSwaps: number;
+    trophies: RunTrophy[];
+    /** Выбранные награды забега по порядку. */
+    picks: RunPick[];
+    /** Сколько карт из собрания можно взять на замену. Ноль — заменить нечем. */
+    bench: number;
+    /** Пыль, записанная волной, которая кончилась этим ответом; иначе 0. */
+    paidDust: number;
+}
+
+/** Выбранная награда: перед какой волной, какая и на сколько. */
+export interface RunPick {
+    waveNo: number;
+    kind: RunRewardKind;
+    amount: number;
 }
 
 /** Печать под сыгранной партией. */
@@ -5413,6 +5533,77 @@ export interface TaleSceneData {
     /** На один меньше, чем кадров: переход `i` ведёт из кадра `i` в `i + 1`. */
     transitions: SceneTransition[];
 }
+
+// ── Стол маршрутов ───────────────────────────────────────────────────────────
+
+export interface AdminWaveEntry {
+    round: number;
+    x: number;
+    y: number;
+    /** Слаг карты врага. */
+    card: string;
+}
+
+export interface AdminWave {
+    waveNo: number;
+    challengeId: string;
+    reinforcements: AdminWaveEntry[];
+    goal: WaveGoal | null;
+    minCards: number;
+    maxCards: number;
+    rewardDust: number;
+    raceHint: string | null;
+}
+
+export interface AdminRoute {
+    id: string | null;
+    slug: string;
+    titleEn: string;
+    titleRu: string;
+    titleUk: string;
+    titleEs: string;
+    titleDe: string;
+    titleIt: string;
+    guestWaves: number | null;
+    status: 'draft' | 'published' | 'retired';
+    sortOrder: number | null;
+    waves: AdminWave[];
+    /** Что не доделано: `код` или `код:…`, считает сервер. */
+    warnings: string[];
+}
+
+/** Рубильник и числа режима «Забег». */
+export interface RunSettings {
+    enabled: boolean;
+    dailyDustCap: number;
+    swapBase: number;
+    swapStep: number;
+    rewardDust: number;
+    rewardHeal: number;
+    lossSharePercent: number;
+    trophyTierPrices: number[];
+    /** Цена трофея по слагу карты; ноль — не продаётся. */
+    trophyPrices: Record<string, number>;
+}
+
+export interface RouteProbeTier {
+    tier: 'weakest' | 'middle' | 'strong';
+    planned: number;
+    played: number;
+    cleared: number[];
+    avgCleared: number;
+    won: number;
+}
+
+export interface RouteProbeReport {
+    waves: number;
+    tiers: RouteProbeTier[];
+    finished: boolean;
+}
+
+export type RouteProbeState =
+    | { state: 'running' }
+    | { state: 'done'; report: RouteProbeReport };
 
 /** Итог проверки проходимости (`siege::ProbeReport`). */
 export interface BattleProbeReport {

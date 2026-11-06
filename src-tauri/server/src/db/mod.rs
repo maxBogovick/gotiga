@@ -9,6 +9,7 @@ mod insights;
 mod jobs;
 mod prepared;
 mod push;
+mod runs;
 
 pub use digest::{DIGEST_MAX_TRIES, DigestRow};
 pub use jobs::JobRow;

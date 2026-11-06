@@ -91,6 +91,7 @@
     onleave,
     onnext,
     onexit,
+    doorLabels,
     guestLoginHref,
     fill = false,
     backdrop = null,
@@ -124,6 +125,9 @@
     onnext?: () => void;
     /** Шапка комнаты: спросить, уйти. Не `onleave` — тот уже «назад к списку» под печатью. */
     onexit?: () => void;
+    /** Подписи кнопок под печатью, если комната не этюды (забег). Нет — этюдные;
+     *  `next` под печатью стоит при любом исходе, а не только при победе. */
+    doorLabels?: { next?: string; leave?: string; replay?: string; nextAlways?: boolean };
     /**
      * Этюд занимает окно: доска берёт оставшуюся высоту, шапка кабинета
      * при этом снята. Стол хранителя в 24rem это не передаёт — там сцена
@@ -2714,9 +2718,9 @@
           {/if}
           {#if onleave || onreplay || onnext}
             <p class="seal-doors">
-              {#if onnext && position.outcome === 'player'}<button type="button" class="door door--next" onclick={onnext}>{$t('battleNextStudy')}</button>{/if}
-              {#if onleave}<button type="button" class="door" onclick={onleave}>{$t('battleBackToStudies')}</button>{/if}
-              {#if onreplay}<button type="button" class="door" onclick={onreplay}>{$t('battleReplay')}</button>{/if}
+              {#if onnext && (position.outcome === 'player' || doorLabels?.nextAlways)}<button type="button" class="door door--next" onclick={onnext}>{doorLabels?.next ?? $t('battleNextStudy')}</button>{/if}
+              {#if onleave}<button type="button" class="door" onclick={onleave}>{doorLabels?.leave ?? $t('battleBackToStudies')}</button>{/if}
+              {#if onreplay}<button type="button" class="door" onclick={onreplay}>{doorLabels?.replay ?? $t('battleReplay')}</button>{/if}
             </p>
           {/if}
         </div>

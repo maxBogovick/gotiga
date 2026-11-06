@@ -4171,7 +4171,7 @@ pub fn default_motions() -> Vec<Motion> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // ── Окна поручений ────────────────────────────────────────────────
@@ -5505,7 +5505,7 @@ mod tests {
         assert!(normalize_rules(&raw).keeper_holds_on_time);
     }
 
-    fn sample_card() -> crate::models::BattleCardDto {
+    pub(crate) fn sample_card() -> crate::models::BattleCardDto {
         crate::models::BattleCardDto {
             id: String::new(),
             slug: "vedma".into(),

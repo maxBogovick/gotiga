@@ -206,3 +206,19 @@ Una cosa — una parola in tutti i posti (sito, gioco, studio).
 | Заказать фигурку | **Richiedi una figura** |
 | Почему оплата через Etsy | **Perché il pagamento passa da Etsy** |
 | В наличии | **Disponibile** |
+
+## Забег (ноябрь 2026)
+
+| ru | it |
+|---|---|
+| Забег | **Corsa** |
+| Волна | **Ondata** |
+| Маршрут | **Percorso** |
+| Замена (карты за пыль) | **Scambio** |
+| Трофей | **Trofeo** |
+| Награда (на выбор из трёх) | **Ricompensa** |
+| Боевой уровень | **Livello di combattimento** |
+| Автобой | **Battaglia automatica** |
+| Проба (первые волны без входа) | **Prova** |
+| Сдать забег | **Abbandonare la corsa** |
+| Возвращение (награда) | **Ritorno** |

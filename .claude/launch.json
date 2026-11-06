@@ -72,6 +72,201 @@
         "VITE_API_URL=http://localhost:3055 npm run dev -- --port 1425"
       ],
       "port": 1425
+    },
+    {
+      "name": "gotiga-telegram-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3100 npm run dev -- --port 1430"
+      ],
+      "port": 1430
+    },
+    {
+      "name": "gotiga-tales-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && PORT=3120 TELEGRAM_CHANNEL_ID=@ritunia_tales cargo run"
+      ],
+      "port": 3120
+    },
+    {
+      "name": "gotiga-tales-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3120 npm run dev -- --port 1440"
+      ],
+      "port": 1440
+    },
+    {
+      "name": "mage-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        "/private/tmp/claude-501/-Users-maxim-Projects-Rita-gotiga/f612315b-0122-4c74-a399-7c86f641dc5c/scratchpad/mage"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "gotiga-tales-prod-read",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=https://ritunia.com VITE_API_BASE=https://ritunia.com/api/v1 npm run dev -- --port 1450"
+      ],
+      "port": 1450
+    },
+    {
+      "name": "gotiga-oauth-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && PORT=3200 PUBLIC_URL=http://localhost:3200 ALLOWED_ORIGINS=http://localhost:1460 GOOGLE_CLIENT_ID=dev.apps.googleusercontent.com GOOGLE_CLIENT_SECRET=dev-secret cargo run"
+      ],
+      "port": 3200
+    },
+    {
+      "name": "gotiga-oauth-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3200 npm run dev -- --port 1460"
+      ],
+      "port": 1460
+    },
+    {
+      "name": "gotiga-siege-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && PORT=3300 cargo run"
+      ],
+      "port": 3300
+    },
+    {
+      "name": "gotiga-siege-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3300 npm run dev -- --port 1470"
+      ],
+      "port": 1470
+    },
+    {
+      "name": "gotiga-etude-map",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3000 npm run dev -- --port 1480"
+      ],
+      "port": 1480
+    },
+    {
+      "name": "gotiga-lineup-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && PORT=3400 cargo run"
+      ],
+      "port": 3400
+    },
+    {
+      "name": "gotiga-lineup-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3400 npm run dev -- --port 1490"
+      ],
+      "port": 1490
+    },
+    {
+      "name": "gotiga-races-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && PORT=3500 cargo run"
+      ],
+      "port": 3500
+    },
+    {
+      "name": "gotiga-races-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3500 npm run dev -- --port 1500"
+      ],
+      "port": 1500
+    },
+    {
+      "name": "gotiga-home-duel",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3000 npm run dev -- --port 1510"
+      ],
+      "port": 1510
+    },
+    {
+      "name": "gotiga-header-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && PORT=3600 cargo run"
+      ],
+      "port": 3600
+    },
+    {
+      "name": "gotiga-header-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3600 npm run dev -- --port 1520"
+      ],
+      "port": 1520
+    },
+    {
+      "name": "header-lab",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8777",
+        "--directory",
+        "/private/tmp/claude-501/-Users-maxim-Projects-Rita-gotiga/170c7f88-9b19-454e-ae23-c72a049e131d/scratchpad/lab"
+      ],
+      "port": 8777
+    },
+    {
+      "name": "gotiga-nav-api",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd src-tauri/server && PORT=3700 cargo run"
+      ],
+      "port": 3700
+    },
+    {
+      "name": "gotiga-nav-web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "VITE_API_URL=http://localhost:3700 npm run dev -- --port 1530"
+      ],
+      "port": 1530
+    },
+    {
+      "name": "gotiga-pwa-build",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "npx vite preview --port 4179 --strictPort"
+      ],
+      "port": 4179
     }
   ]
 }

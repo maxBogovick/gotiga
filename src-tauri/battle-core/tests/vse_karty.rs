@@ -230,6 +230,7 @@ fn duel(a: &CardSnapshot, ga: Option<Ground>, t: &CardSnapshot, gt: Option<Groun
             keeper_hand: vec![],
             terrain,
             field: long(),
+            ..Default::default()
         },
         rules(),
     )
@@ -262,6 +263,7 @@ fn duel_with(
             keeper_hand: vec![],
             terrain,
             field: long(),
+            ..Default::default()
         },
         rules(),
     )
@@ -390,6 +392,7 @@ fn retaliation_reaches_as_far_as_the_hill_lets_it() {
                         keeper_hand: vec![],
                         terrain,
                         field: long(),
+                        ..Default::default()
                     },
                     Rules { retaliation: true, ..rules() },
                 );
@@ -422,6 +425,7 @@ fn stepping_on_and_off_a_hill_changes_reach_at_once() {
                 keeper_hand: vec![],
                 terrain: vec![tile(1, 4, Ground::Hill)],
                 field: long(),
+                ..Default::default()
             },
             rules(),
         );
@@ -459,6 +463,7 @@ fn hill_does_not_stretch_healing() {
                         keeper_hand: vec![],
                         terrain,
                         field: long(),
+                        ..Default::default()
                     },
                     rules(),
                 );
@@ -732,6 +737,7 @@ fn the_basket_woman_heals_whoever_stands_on_any_ground() {
                             keeper_hand: vec![],
                             terrain: gt.map(|g| tile(1, 6, g)).into_iter().collect(),
                             field: long(),
+                            ..Default::default()
                         },
                         rules(),
                     );
@@ -768,6 +774,7 @@ fn the_ointment_works_on_every_ground() {
                     keeper_hand: vec![],
                     terrain: gt.map(|g| tile(1, 6, g)).into_iter().collect(),
                     field: long(),
+                    ..Default::default()
                 },
                 rules(),
             );
@@ -848,6 +855,7 @@ fn a_pit_wounds_every_card_played_into_it() {
                 keeper_hand: vec![],
                 terrain: vec![tile(1, 6, Ground::Pit)],
                 field: long(),
+                ..Default::default()
             },
             rules(),
         );
@@ -884,6 +892,7 @@ fn pit_and_mire_hold_every_card_that_could_run_through() {
                         tile(2, 6, Ground::Wall),
                     ],
                     field: long(),
+                    ..Default::default()
                 },
                 rules(),
             );
@@ -912,6 +921,7 @@ fn from_a_mire_every_card_leaves_by_one_cell() {
                 keeper_hand: vec![],
                 terrain: vec![tile(1, 7, Ground::Mire)],
                 field: long(),
+                ..Default::default()
             },
             rules(),
         );
@@ -942,6 +952,7 @@ fn walls_and_ravines_are_never_stood_on_and_ravines_are_leapt_only_by_two() {
                     tile(0, 5, Ground::Ravine),
                 ],
                 field: long(),
+                ..Default::default()
             },
             rules(),
         );

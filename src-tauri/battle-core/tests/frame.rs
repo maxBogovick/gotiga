@@ -24,6 +24,7 @@ fn face_off() -> Setup {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     }
 }
 
@@ -332,6 +333,7 @@ fn skirmish() -> Setup {
         keeper_hand: vec![boec("Кот", 2, 5, 2), boec("Котёл", 3, 7, 3)],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     }
 }
 

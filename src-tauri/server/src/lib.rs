@@ -27,6 +27,8 @@ pub mod ask;
 pub mod search;
 pub mod services;
 pub mod sheet;
+pub mod runs;
+pub mod runs_probe;
 pub mod siege;
 pub mod tale_covers;
 pub mod slug;

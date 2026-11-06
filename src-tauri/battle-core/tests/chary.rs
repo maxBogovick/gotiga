@@ -35,6 +35,7 @@ fn witchcraft(ability: AbilitySnapshot) -> Setup {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     }
 }
 
@@ -445,6 +446,7 @@ fn everything_offered_can_be_done() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin(setup);
 
@@ -502,6 +504,7 @@ fn the_keeper_reaches_for_a_spell_when_a_spell_is_the_best_thing_to_do() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin(setup);
     let (theirs, _) = act(&st, Action::EndTurn);

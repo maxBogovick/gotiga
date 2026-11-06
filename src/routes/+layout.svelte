@@ -131,7 +131,9 @@
   function inReaderLang(href: string): string | null {
     let url: URL;
     try {
-      url = new URL(href, window.location.origin);
+      // Относительно текущей страницы, а не корня: `?mode=campaign` — это та же
+      // страница, а не главная.
+      url = new URL(href, window.location.href);
     } catch {
       return null;
     }

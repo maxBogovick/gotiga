@@ -44,6 +44,7 @@ fn runner_at(x: u8, y: u8, step: u8, terrain: Vec<Tile>) -> MatchState {
         keeper_hand: vec![],
         terrain,
         field: Default::default(),
+        ..Default::default()
     };
     MatchState::begin_with(setup, rules())
 }
@@ -115,6 +116,7 @@ fn archer_and_target(cover: bool) -> MatchState {
         keeper_hand: vec![],
         terrain: if cover { vec![tile(1, 0, Ground::Cover)] } else { vec![] },
         field: Default::default(),
+        ..Default::default()
     };
     MatchState::begin_with(setup, rules())
 }
@@ -150,6 +152,7 @@ fn cover_does_not_help_against_a_blow_from_the_next_cell() {
         keeper_hand: vec![],
         terrain: vec![tile(1, 2, Ground::Cover)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, Action::Attack { attacker: 0, target: 1 });
@@ -180,6 +183,7 @@ fn dead_end() -> MatchState {
         keeper_hand: vec![],
         terrain: vec![tile(0, 3, Ground::Wall), tile(1, 3, Ground::Wall)],
         field: Default::default(),
+        ..Default::default()
     };
     MatchState::begin_with(setup, rules())
 }
@@ -213,6 +217,7 @@ fn the_hand_steps_around_a_mire() {
         keeper_hand: vec![],
         terrain: vec![tile(0, 4, Ground::Mire)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     assert_eq!(bot::choose_blind(&st), Action::Move { unit: 0, to: cell(0, 4) }, "иначе испытание проверяет не то");
@@ -229,6 +234,7 @@ fn among_equal_steps_the_hand_takes_cover() {
         keeper_hand: vec![],
         terrain: vec![tile(2, 4, Ground::Cover)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     assert_eq!(bot::choose(&st), Action::Move { unit: 0, to: cell(2, 4) });
@@ -273,6 +279,7 @@ fn a_body_shoved_into_a_ravine_falls() {
         keeper_hand: vec![],
         terrain: vec![tile(1, 1, Ground::Ravine)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, events) = act(&st, Action::Cast { caster: 0, ability: "толчок".into(), target: Mark::Unit(1) });
@@ -293,6 +300,7 @@ fn the_hand_shoves_into_a_ravine() {
         keeper_hand: vec![],
         terrain: vec![tile(1, 1, Ground::Ravine)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     assert!(matches!(bot::choose(&st), Action::Cast { target: Mark::Unit(1), .. }), "{:?}", bot::choose(&st));
@@ -308,6 +316,7 @@ fn the_hand_leaps_a_ravine_when_it_can() {
         keeper_hand: vec![],
         terrain: vec![tile(0, 3, Ground::Ravine), tile(1, 3, Ground::Ravine), tile(2, 3, Ground::Ravine)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     assert!(matches!(bot::choose(&st), Action::Move { unit: 0, to } if to.y == 2), "{:?}", bot::choose(&st));
@@ -348,6 +357,7 @@ fn an_archer_on_a_hill_reaches_one_cell_further() {
         keeper_hand: vec![],
         terrain: if hill { vec![tile(1, 3, Ground::Hill)] } else { vec![] },
         field: Default::default(),
+        ..Default::default()
     };
     let low = MatchState::begin_with(setup(false), rules());
     let (low, _) = act(&low, Action::Attack { attacker: 0, target: 1 });
@@ -369,6 +379,7 @@ fn a_hill_gives_nothing_to_a_fist() {
             keeper_hand: vec![],
             terrain: vec![tile(1, 3, Ground::Hill)],
             field: Default::default(),
+            ..Default::default()
         },
         rules(),
     );
@@ -387,6 +398,7 @@ fn a_spring_mends_at_the_start_of_the_turn() {
         keeper_hand: vec![],
         terrain: vec![tile(1, 4, Ground::Spring)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, Action::EndTurn);
@@ -408,6 +420,7 @@ fn camper_on(ground: Ground) -> MatchState {
         keeper_hand: vec![],
         terrain: vec![tile(1, 4, ground)],
         field: Default::default(),
+        ..Default::default()
     };
     MatchState::begin_with(setup, rules())
 }
@@ -468,6 +481,7 @@ fn two_altars_pay_once() {
         keeper_hand: vec![],
         terrain: vec![tile(0, 4, Ground::Altar), tile(2, 4, Ground::Altar)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let plain = camper_on(Ground::Hill);
@@ -515,6 +529,7 @@ fn dealt_by_a_body_on(ground: Option<Ground>) -> i32 {
         keeper_hand: vec![],
         terrain: ground.map(|g| vec![tile(1, 4, g)]).unwrap_or_default(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, Action::Attack { attacker: 0, target: 1 });
@@ -530,6 +545,7 @@ fn taken_by_a_body_on(ground: Option<Ground>) -> i32 {
         keeper_hand: vec![],
         terrain: ground.map(|g| vec![tile(1, 4, g)]).unwrap_or_default(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, Action::EndTurn);
@@ -562,6 +578,7 @@ fn the_earths_gift_is_gone_when_the_body_steps_off() {
         keeper_hand: vec![],
         terrain: vec![tile(1, 4, Ground::Storm)],
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     assert_eq!(st.units[0].aura.len(), 1, "на плите аура есть с первой минуты");
@@ -584,6 +601,7 @@ fn charm_taken_on(ground: Option<Ground>, ward: i32) -> i32 {
         keeper_hand: vec![],
         terrain: ground.map(|g| vec![tile(1, 4, g)]).unwrap_or_default(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     let (st, _) = act(&st, Action::EndTurn);
@@ -620,6 +638,7 @@ fn a_maelstrom_washes_off_armor_it_finds() {
             keeper_hand: vec![],
             terrain: g.map(|g| vec![tile(1, 4, g)]).unwrap_or_default(),
             field: Default::default(),
+            ..Default::default()
         };
         let st = MatchState::begin_with(setup, rules());
         let (st, _) = act(&st, Action::EndTurn);

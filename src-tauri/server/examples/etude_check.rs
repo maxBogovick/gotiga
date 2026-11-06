@@ -59,6 +59,7 @@ fn raise(setup: &ChallengeSetup, cards: &BTreeMap<String, BattleCardDto>) -> Res
         keeper_hand: hand(&setup.keeper_hand)?,
         terrain: check_terrain(setup).map_err(|e| e.to_string())?,
         field,
+        ..Default::default()
     })
 }
 

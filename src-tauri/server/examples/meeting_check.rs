@@ -103,7 +103,7 @@ fn main() {
                     board.push((snap(name), field.cell(x as u8, y as u8).unwrap()));
                 }
                 let hand: Vec<_> = names.iter().skip(3).map(|s| snap(s)).collect();
-                let setup = Setup { player_board: board, player_hand: hand, keeper_board: keeper_board.clone(), keeper_hand: keeper_hand.clone(), terrain: terrain.clone(), field };
+                let setup = Setup { player_board: board, player_hand: hand, keeper_board: keeper_board.clone(), keeper_hand: keeper_hand.clone(), terrain: terrain.clone(), field, ..Default::default() };
                 let mut st = MatchState::begin_with(setup, rules);
                 let mut guard = 0;
                 while st.outcome.is_none() && guard < 4000 {

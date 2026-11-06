@@ -58,6 +58,7 @@ fn face_off(mine: CardSnapshot, theirs: CardSnapshot) -> MatchState {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     MatchState::begin_with(setup, rules())
 }
@@ -175,6 +176,7 @@ fn a_dying_gift_that_kills_does_not_start_a_second_chain() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
 
@@ -218,6 +220,7 @@ fn turn_start_goes_off_for_your_own_bodies_on_your_own_turn() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
 
@@ -279,6 +282,7 @@ fn an_aura_holds_by_the_body_that_breathes_it_and_not_by_a_term() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
 
@@ -304,6 +308,7 @@ fn an_aura_moves_with_the_body() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let st = MatchState::begin_with(setup, rules());
     assert_eq!(st.units[1].printed_power(), 3, "ворон рядом — 5 − 2");
@@ -373,6 +378,7 @@ fn a_journal_of_occasions_folds_back_into_the_same_board() {
         keeper_hand: vec![],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     };
     let journal = vec![
         Action::Attack { attacker: 0, target: 2 },

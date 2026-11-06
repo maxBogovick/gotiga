@@ -17,7 +17,7 @@
   import BattleGreeting from '$lib/components/BattleGreeting.svelte';
   import type { BattleErrand, BattleMe } from '$lib/types/api';
 
-  type Room = 'shelf' | 'table' | 'etude';
+  type Room = 'shelf' | 'table' | 'etude' | 'run';
 
   let {
     me = null,
@@ -34,17 +34,25 @@
     children?: Snippet;
   } = $props();
 
-  const ROOMS: { id: Room; href: string; key: TranslationKey }[] = [
+  const ALL_ROOMS: { id: Room; href: string; key: TranslationKey }[] = [
     { id: 'shelf', href: '/battles', key: 'battlesRoomShelf' },
     // Колода собирается перед встречей, на поле этюда (`BattleLineup`), и
     // отдельной двери у неё пока нет: `/battles/table` скрыт.
     { id: 'etude', href: '/battles/etude', key: 'battlesRoomEtude' },
+    { id: 'run', href: '/battles/run', key: 'battlesRoomRun' },
   ];
+
+  /** Забег показывается, только когда режим включён и есть маршрут. На страницах
+   *  битв и забега он стоит в полосе режимов (`BattleModes`), здесь — только на полке. */
+  let runOpen = $state(false);
+  const ROOMS = $derived(ALL_ROOMS.filter((r) => r.id !== 'run' || (runOpen && here === 'shelf')));
 
   let here = $derived<Room>(
     page.url.pathname.startsWith('/battles/etude')
       ? 'etude'
-      : page.url.pathname.startsWith('/battles/table')
+      : page.url.pathname.startsWith('/battles/run')
+        ? 'run'
+        : page.url.pathname.startsWith('/battles/table')
         ? 'table'
         : 'shelf',
   );
@@ -66,6 +74,8 @@
   let historyOpen = $state(false);
   let errandsOpen = $state(false);
   let about = $state(false);
+  /** Куда прилипает дверь: высота шапки сайта (см. `.door { top }`). */
+  const STICK_TOP = 54;
   let stuck = $state(false);
   let mark = $state<HTMLElement | null>(null);
 
@@ -74,10 +84,12 @@
     if (!el || typeof IntersectionObserver === 'undefined') return;
     const watcher = new IntersectionObserver(
       ([entry]) => {
-        stuck = !entry.isIntersecting && entry.boundingClientRect.top < 0;
+        // Дверь прилипает на 54px от верха (под шапкой сайта), а не на нуле: порог
+        // тот же, иначе в промежутке она висит без фона поверх текста.
+        stuck = !entry.isIntersecting && entry.boundingClientRect.top < STICK_TOP;
         if (!stuck) historyOpen = false;
       },
-      { threshold: 0 },
+      { threshold: 0, rootMargin: `-${STICK_TOP}px 0px 0px 0px` },
     );
     watcher.observe(el);
     return () => watcher.disconnect();
@@ -94,6 +106,7 @@
   }
 
   onMount(async () => {
+    api.getBattleRoutes().then((r) => (runOpen = r.length > 0));
     const token = authStore.token;
     if (!token) return;
     if (me == null) {

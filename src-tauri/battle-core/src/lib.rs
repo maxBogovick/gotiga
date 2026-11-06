@@ -85,7 +85,7 @@ pub use event::{Event, Outcome};
 pub use heal::{Mending, apply_mend, resolve_mend};
 pub use spell::{Aim, Casting, lay_hold, lay_rider, lift_riders, raise_shield, rider};
 pub use state::{
-    Action, ALTAR_COIN, COVER_KEPT, CRYSTAL_ARMOR, EMBERS_HARM, GLASS_WARD, GRAVE_CURSE, Ground, ICE_GLIDE, MAELSTROM_SOAK, RIFT_FRAGILE, RIFT_POWER, STORM_POWER, Illegal, Mark, MatchState, PIT_HARM, Rules, SPRING_MEND, Setup,
+    Action, ALTAR_COIN, COVER_KEPT, CRYSTAL_ARMOR, EMBERS_HARM, GLASS_WARD, GRAVE_CURSE, Ground, ICE_GLIDE, MAELSTROM_SOAK, RIFT_FRAGILE, RIFT_POWER, STORM_POWER, Illegal, Mark, MatchState, PIT_HARM, Reinforcement, Rules, SPRING_MEND, Setup, WaveGoal,
     SideState, Tile, Zone,
     legal_actions, reduce,
 };

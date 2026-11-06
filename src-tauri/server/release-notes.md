@@ -12,6 +12,28 @@
 Новые работы, байки, карты и битвы в пункты не пишутся — сервер считает их
 сам по журналу.
 
+## 2026-11-03 · Забег
+
+### en
+new: A new mode, the Run: a chain of waves with your own squad, a reward after each wave, swaps and trophies from defeated enemies
+better: Health and wounds carry over between waves; a lost wave still pays a little dust
+
+### ru
+new: Новый режим «Забег»: цепочка волн со своим отрядом, награда после каждой волны, замена карт и трофеи с побеждённых врагов
+better: Здоровье и раны переходят из волны в волну; за проигранную волну тоже платят немного пыли
+
+### de
+new: Ein neuer Modus, der Durchlauf: eine Kette von Wellen mit dem eigenen Trupp, eine Belohnung nach jeder Welle, Tausch und Trophäen besiegter Gegner
+better: Leben und Verletzungen bleiben zwischen den Wellen erhalten; auch eine verlorene Welle bringt etwas Staub
+
+### es
+new: Un modo nuevo, la Carrera: una cadena de oleadas con tu propia escuadra, una recompensa tras cada oleada, cambios y trofeos de los enemigos derrotados
+better: La salud y las heridas se mantienen entre oleadas; una oleada perdida también da un poco de polvo
+
+### it
+new: Una nuova modalità, la Corsa: una catena di ondate con la tua squadra, una ricompensa dopo ogni ondata, scambi e trofei dei nemici sconfitti
+better: Salute e ferite restano tra un’ondata e l’altra; anche un’ondata persa dà un po’ di polvere
+
 ## 2026-10-29 · Уведомления об игре
 
 ### en

@@ -30,6 +30,7 @@ fn setup() -> Setup {
         ],
         terrain: Vec::new(),
         field: Default::default(),
+        ..Default::default()
     }
 }
 
